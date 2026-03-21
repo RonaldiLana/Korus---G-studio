@@ -77,18 +77,23 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     client_id INTEGER NOT NULL,
     agency_id INTEGER NOT NULL,
-    visa_type_id INTEGER NOT NULL,
+    visa_type_id INTEGER,
+    destination_id INTEGER,
+    plan_id INTEGER,
     consultant_id INTEGER,
     analyst_id INTEGER,
     status TEXT NOT NULL, -- 'started', 'payment_confirmed', 'analyzing', 'final_phase', 'completed'
     internal_status TEXT NOT NULL, -- 'pending', 'documents_requested', 'reviewing', 'submitted', 'completed'
     is_dependent BOOLEAN DEFAULT 0,
     parent_process_id INTEGER,
+    travel_date TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     finished_at DATETIME,
     FOREIGN KEY (client_id) REFERENCES users(id),
     FOREIGN KEY (agency_id) REFERENCES agencies(id),
     FOREIGN KEY (visa_type_id) REFERENCES visa_types(id),
+    FOREIGN KEY (destination_id) REFERENCES destinations(id),
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
     FOREIGN KEY (consultant_id) REFERENCES users(id),
     FOREIGN KEY (analyst_id) REFERENCES users(id),
     FOREIGN KEY (parent_process_id) REFERENCES processes(id)
@@ -100,6 +105,7 @@ db.exec(`
     amount REAL NOT NULL,
     status TEXT NOT NULL, -- 'pending', 'proof_received', 'confirmed'
     payment_method TEXT,
+    proof_url TEXT,
     confirmed_at DATETIME,
     commission_amount REAL,
     commission_status TEXT, -- 'pending', 'approved', 'paid'
@@ -198,12 +204,52 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     agency_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    flag TEXT,
+    code TEXT,
     description TEXT,
-    bg_image TEXT,
+    image TEXT,
+    highlight_points TEXT, -- JSON array
     is_active BOOLEAN DEFAULT 1,
+    "order" INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (agency_id) REFERENCES agencies(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS form_fields (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agency_id INTEGER NOT NULL,
+    destination_id INTEGER,
+    label TEXT NOT NULL,
+    type TEXT NOT NULL, -- 'text', 'select', 'radio', 'date'
+    required BOOLEAN DEFAULT 0,
+    options TEXT, -- JSON array
+    "order" INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (agency_id) REFERENCES agencies(id),
+    FOREIGN KEY (destination_id) REFERENCES destinations(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agency_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    price REAL NOT NULL,
+    features TEXT, -- JSON array
+    is_recommended BOOLEAN DEFAULT 0,
+    icon TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (agency_id) REFERENCES agencies(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS dependents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    relationship TEXT NOT NULL,
+    age INTEGER NOT NULL,
+    passport TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (process_id) REFERENCES processes(id)
   );
 
   CREATE TABLE IF NOT EXISTS client_password_resets (
@@ -217,6 +263,123 @@ db.exec(`
     FOREIGN KEY (reset_by_user_id) REFERENCES users(id)
   );
 `);
+
+try {
+  db.prepare("ALTER TABLE destinations ADD COLUMN flag TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN travel_date TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN destination_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN plan_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN consultant_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN analyst_id INTEGER").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN visa_type_name TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN plan_name TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE processes ADD COLUMN destination_name TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE financials ADD COLUMN type TEXT NOT NULL DEFAULT 'income'").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE financials ADD COLUMN category TEXT NOT NULL DEFAULT 'Consultoria'").run();
+} catch (e) {}
+
+// Migration to make visa_type_id nullable if it's NOT NULL
+try {
+  const info = db.prepare("PRAGMA table_info(processes)").all() as any[];
+  const visaTypeCol = info.find(c => c.name === 'visa_type_id');
+  const amountCol = info.find(c => c.name === 'amount');
+  
+  if ((visaTypeCol && visaTypeCol.notnull === 1) || !amountCol) {
+    // Recreate table to make it nullable and add missing columns
+    db.exec(`
+      PRAGMA foreign_keys=OFF;
+      BEGIN TRANSACTION;
+      CREATE TABLE processes_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        agency_id INTEGER NOT NULL,
+        visa_type_id INTEGER,
+        destination_id INTEGER,
+        plan_id INTEGER,
+        consultant_id INTEGER,
+        analyst_id INTEGER,
+        status TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        internal_status TEXT NOT NULL,
+        is_dependent BOOLEAN DEFAULT 0,
+        parent_process_id INTEGER,
+        travel_date TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        finished_at DATETIME,
+        visa_type_name TEXT,
+        plan_name TEXT,
+        destination_name TEXT,
+        FOREIGN KEY (client_id) REFERENCES users(id),
+        FOREIGN KEY (agency_id) REFERENCES agencies(id),
+        FOREIGN KEY (visa_type_id) REFERENCES visa_types(id),
+        FOREIGN KEY (destination_id) REFERENCES destinations(id),
+        FOREIGN KEY (plan_id) REFERENCES plans(id),
+        FOREIGN KEY (consultant_id) REFERENCES users(id),
+        FOREIGN KEY (analyst_id) REFERENCES users(id),
+        FOREIGN KEY (parent_process_id) REFERENCES processes(id)
+      );
+      
+      -- Map existing columns, handle missing ones
+      INSERT INTO processes_new (
+        id, client_id, agency_id, visa_type_id, destination_id, plan_id, 
+        consultant_id, analyst_id, status, internal_status, is_dependent, 
+        parent_process_id, travel_date, created_at, finished_at, 
+        visa_type_name, plan_name, destination_name
+      )
+      SELECT 
+        id, client_id, agency_id, visa_type_id, destination_id, plan_id, 
+        consultant_id, analyst_id, status, internal_status, is_dependent, 
+        parent_process_id, travel_date, created_at, finished_at, 
+        visa_type_name, plan_name, destination_name 
+      FROM processes;
+      
+      DROP TABLE processes;
+      ALTER TABLE processes_new RENAME TO processes;
+      COMMIT;
+      PRAGMA foreign_keys=ON;
+    `);
+  }
+} catch (e) {
+  console.error("Migration failed:", e);
+}
+
+try {
+  db.prepare("ALTER TABLE destinations ADD COLUMN \"order\" INTEGER DEFAULT 0").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE form_fields ADD COLUMN \"order\" INTEGER DEFAULT 0").run();
+} catch (e) {}
 
 try {
   db.prepare("ALTER TABLE users ADD COLUMN phone TEXT").run();
@@ -266,7 +429,7 @@ if (agencyCount.count === 0) {
   const agency1 = insertAgency.run("Global Visa Solutions", "global-visa").lastInsertRowid;
   
   const insertUser = db.prepare("INSERT INTO users (email, password, name, role, agency_id) VALUES (?, ?, ?, ?, ?)");
-  insertUser.run("master@korus.com", "korus123", "Master Korus", "master", null);
+  // Master user is already handled above, so we don't insert it again here
   insertUser.run("supervisor@globalvisa.com", "password", "Agency Supervisor", "supervisor", agency1);
   const consultant1 = insertUser.run("consultant@globalvisa.com", "password", "Senior Consultant", "consultant", agency1).lastInsertRowid;
   const analyst1 = insertUser.run("analyst@globalvisa.com", "password", "Visa Analyst", "analyst", agency1).lastInsertRowid;
@@ -276,10 +439,46 @@ if (agencyCount.count === 0) {
   const insertVisa = db.prepare("INSERT INTO visa_types (agency_id, name, description, base_price, required_docs) VALUES (?, ?, ?, ?, ?)");
   const visa1 = insertVisa.run(agency1, "B1/B2 Tourist Visa", "USA Tourist Visa", 160.0, JSON.stringify(["Passport", "Photo", "DS-160 Confirmation"])).lastInsertRowid;
   
+  // Seed initial destinations
+  const insertDest = db.prepare("INSERT INTO destinations (name, code, flag, description, is_active, agency_id) VALUES (?, ?, ?, ?, ?, ?)");
+  insertDest.run("Estados Unidos", "US", "🇺🇸", "Oportunidades ilimitadas no maior mercado do mundo.", 1, agency1);
+  insertDest.run("Canadá", "CA", "🇨🇦", "Qualidade de vida e acolhimento.", 1, agency1);
+  insertDest.run("Austrália", "AU", "🇦🇺", "Estilo de vida único e economia forte.", 1, agency1);
+
+  // Seed initial plans
+  const insertPlan = db.prepare("INSERT INTO plans (name, description, price, agency_id) VALUES (?, ?, ?, ?)");
+  insertPlan.run("Consultoria Básica", "Ideal para quem já tem experiência.", 497, agency1);
+  insertPlan.run("Consultoria Completa", "Acompanhamento total do início ao fim.", 1497, agency1);
+  insertPlan.run("Consultoria Premium", "Experiência exclusiva com concierge.", 2997, agency1);
+
   const insertProcess = db.prepare("INSERT INTO processes (client_id, agency_id, visa_type_id, consultant_id, analyst_id, status, internal_status) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const proc1 = insertProcess.run(client1, agency1, visa1, consultant1, analyst1, "analyzing", "reviewing").lastInsertRowid;
 
   db.prepare("INSERT INTO financials (process_id, amount, status) VALUES (?, ?, ?)").run(proc1, 160.0, "pending");
+}
+
+// Seed destinations if empty
+const destCount = db.prepare("SELECT count(*) as count FROM destinations").get() as { count: number };
+if (destCount.count === 0) {
+  const agencies = db.prepare("SELECT id FROM agencies").all() as { id: number }[];
+  const insertDest = db.prepare("INSERT INTO destinations (name, code, flag, description, is_active, agency_id) VALUES (?, ?, ?, ?, ?, ?)");
+  for (const agency of agencies) {
+    insertDest.run("Estados Unidos", "US", "🇺🇸", "Oportunidades ilimitadas no maior mercado do mundo.", 1, agency.id);
+    insertDest.run("Canadá", "CA", "🇨🇦", "Qualidade de vida e acolhimento.", 1, agency.id);
+    insertDest.run("Austrália", "AU", "🇦🇺", "Estilo de vida único e economia forte.", 1, agency.id);
+  }
+}
+
+// Seed plans if empty
+const planCount = db.prepare("SELECT count(*) as count FROM plans").get() as { count: number };
+if (planCount.count === 0) {
+  const agencies = db.prepare("SELECT id FROM agencies").all() as { id: number }[];
+  const insertPlan = db.prepare("INSERT INTO plans (name, description, price, agency_id) VALUES (?, ?, ?, ?)");
+  for (const agency of agencies) {
+    insertPlan.run("Consultoria Básica", "Ideal para quem já tem experiência.", 497, agency.id);
+    insertPlan.run("Consultoria Completa", "Acompanhamento total do início ao fim.", 1497, agency.id);
+    insertPlan.run("Consultoria Premium", "Experiência exclusiva com concierge.", 2997, agency.id);
+  }
 }
 
 // Round Robin Helper
@@ -387,34 +586,133 @@ async function startServer() {
   });
 
   app.post("/api/processes/start", (req, res) => {
-    const { client_id, agency_id, visa_type_id, is_dependent, parent_process_id } = req.body;
-    
-    const consultant_id = getNextConsultant(agency_id);
-    const visa = db.prepare("SELECT base_price FROM visa_types WHERE id = ?").get(visa_type_id) as { base_price: number } | undefined;
-    if (!visa) {
-      return res.status(400).json({ error: "Tipo de visto inválido" });
+    try {
+      const { client_id, agency_id, visa_type_id, destination_id, plan_id, is_dependent, parent_process_id, dependents, travel_date, form_responses } = req.body;
+      
+      if (!client_id || !agency_id) {
+        return res.status(400).json({ error: "client_id and agency_id are required" });
+      }
+
+      const consultant_id = getNextConsultant(agency_id);
+      
+      // Get price from plan if provided, otherwise from visa type
+      let amount = 0;
+      let planName = null;
+      let visaTypeName = null;
+      let destinationName = null;
+
+      if (plan_id) {
+        // Handle numeric ID or string ID (for default plans)
+        const plan = db.prepare("SELECT name, price FROM plans WHERE id = ?").get(plan_id) as { name: string, price: number } | undefined;
+        if (plan) {
+          amount = plan.price;
+          planName = plan.name;
+        } else {
+          // Fallback for default plans if not in DB
+          if (plan_id === 'basic') { amount = 497; planName = 'Consultoria Básica'; }
+          else if (plan_id === 'complete') { amount = 1497; planName = 'Consultoria Completa'; }
+          else if (plan_id === 'premium') { amount = 2997; planName = 'Consultoria Premium'; }
+        }
+      }
+
+      // Handle visa_type_id (can be numeric ID or string name/goal)
+      let db_visa_type_id = typeof visa_type_id === 'number' ? visa_type_id : null;
+      if (!db_visa_type_id && typeof visa_type_id === 'string') {
+        const existing = db.prepare("SELECT id, name, base_price FROM visa_types WHERE agency_id = ? AND LOWER(name) = LOWER(?)").get(agency_id, visa_type_id) as { id: number, name: string, base_price: number } | undefined;
+        if (existing) {
+          db_visa_type_id = existing.id;
+          visaTypeName = existing.name;
+          if (amount === 0) amount = existing.base_price;
+        } else {
+          // Use the string as name
+          visaTypeName = visa_type_id.charAt(0).toUpperCase() + visa_type_id.slice(1);
+        }
+      } else if (db_visa_type_id) {
+        const visa = db.prepare("SELECT name, base_price FROM visa_types WHERE id = ?").get(db_visa_type_id) as { name: string, base_price: number } | undefined;
+        if (visa) {
+          visaTypeName = visa.name;
+          if (amount === 0) amount = visa.base_price;
+        }
+      }
+
+      // Handle destination_id
+      let db_destination_id = typeof destination_id === 'number' ? destination_id : null;
+      if (db_destination_id) {
+        const dest = db.prepare("SELECT name FROM destinations WHERE id = ?").get(db_destination_id) as { name: string } | undefined;
+        if (dest) destinationName = dest.name;
+      } else if (typeof destination_id === 'string') {
+        destinationName = destination_id;
+      }
+
+      const db_plan_id = typeof plan_id === 'number' ? plan_id : null;
+
+      // Fallback for visa_type_id if it's still null (due to NOT NULL constraint in some DB versions)
+      if (db_visa_type_id === null) {
+        // Try to find ANY visa type for this agency to use as a placeholder
+        const anyVisa = db.prepare("SELECT id FROM visa_types WHERE agency_id = ? LIMIT 1").get(agency_id) as { id: number } | undefined;
+        if (anyVisa) {
+          db_visa_type_id = anyVisa.id;
+        } else {
+          // If no visa types exist at all for this agency, create a default one
+          const result = db.prepare("INSERT INTO visa_types (agency_id, name, base_price) VALUES (?, ?, ?)").run(agency_id, visaTypeName || 'Visto Geral', 0);
+          db_visa_type_id = Number(result.lastInsertRowid);
+        }
+      }
+
+      const result = db.prepare(`
+        INSERT INTO processes (
+          client_id, agency_id, visa_type_id, destination_id, plan_id, 
+          consultant_id, status, amount, internal_status, is_dependent, 
+          parent_process_id, travel_date, visa_type_name, plan_name, destination_name
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'waiting_payment', ?, 'pending', ?, ?, ?, ?, ?, ?)
+      `).run(
+        client_id, agency_id, db_visa_type_id, db_destination_id, db_plan_id, 
+        consultant_id, amount, is_dependent ? 1 : 0, parent_process_id || null, 
+        travel_date || null, visaTypeName, planName, destinationName
+      );
+
+      const processId = result.lastInsertRowid;
+      
+      // Save form responses if any
+      if (form_responses) {
+        let formId = null;
+        if (db_visa_type_id) {
+          const form = db.prepare("SELECT id FROM forms WHERE visa_type_id = ?").get(db_visa_type_id) as { id: number } | undefined;
+          if (form) formId = form.id;
+        }
+        
+        if (formId) {
+          db.prepare("INSERT INTO form_responses (process_id, form_id, data, status) VALUES (?, ?, ?, ?)").run(processId, formId, JSON.stringify(form_responses), 'submitted');
+        }
+      }
+
+      // Create mandatory financial record
+      db.prepare("INSERT INTO financials (process_id, type, category, amount, status) VALUES (?, ?, ?, ?, ?)").run(processId, 'income', 'Consultoria', amount, "pending");
+
+      // Save dependents if any
+      if (dependents && Array.isArray(dependents)) {
+        const insertDependent = db.prepare("INSERT INTO dependents (process_id, name, relationship, age, passport) VALUES (?, ?, ?, ?, ?)");
+        for (const dep of dependents) {
+          insertDependent.run(processId, dep.name, dep.relationship, dep.age, dep.passport || null);
+        }
+      }
+
+      // Create process tasks from agency tasks
+      const agencyTasks = db.prepare("SELECT id FROM tasks WHERE agency_id = ? AND is_active = 1").all(agency_id) as { id: number }[];
+      for (const task of agencyTasks) {
+        db.prepare("INSERT INTO process_tasks (process_id, task_id) VALUES (?, ?)").run(processId, task.id);
+      }
+
+      // Log action
+      db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id, client_id, "process_started", `Process ID: ${processId}`);
+
+      res.json({ id: processId, success: true });
+    } catch (error: any) {
+      console.error('Error in /api/processes/start:', error);
+      if (error.stack) console.error(error.stack);
+      res.status(500).json({ error: error.message || "Internal server error", stack: error.stack });
     }
-
-    const result = db.prepare(`
-      INSERT INTO processes (client_id, agency_id, visa_type_id, consultant_id, status, internal_status, is_dependent, parent_process_id)
-      VALUES (?, ?, ?, ?, 'started', 'pending', ?, ?)
-    `).run(client_id, agency_id, visa_type_id, consultant_id, is_dependent ? 1 : 0, parent_process_id || null);
-
-    const processId = result.lastInsertRowid;
-    
-    // Create mandatory financial record
-    db.prepare("INSERT INTO financials (process_id, amount, status) VALUES (?, ?, ?)").run(processId, visa.base_price, "pending");
-
-    // Create process tasks from agency tasks
-    const agencyTasks = db.prepare("SELECT id FROM tasks WHERE agency_id = ? AND is_active = 1").all(agency_id) as { id: number }[];
-    for (const task of agencyTasks) {
-      db.prepare("INSERT INTO process_tasks (process_id, task_id) VALUES (?, ?)").run(processId, task.id);
-    }
-
-    // Log action
-    db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id, client_id, "process_started", `Process ID: ${processId}`);
-
-    res.json({ id: processId });
   });
 
   app.get("/api/audit-logs", (req, res) => {
@@ -612,16 +910,20 @@ async function startServer() {
       query += " WHERE agency_id = ?";
       params.push(agency_id);
     }
-    const destinations = db.prepare(query).all(...params);
+    query += " ORDER BY \"order\" ASC, name ASC";
+    const destinations = db.prepare(query).all(...params).map((d: any) => ({
+      ...d,
+      highlight_points: JSON.parse(d.highlight_points || '[]')
+    }));
     res.json(destinations);
   });
 
   app.post("/api/destinations", (req, res) => {
-    const { agency_id, name, flag, description, bg_image } = req.body;
+    const { agency_id, name, code, description, image, highlight_points, order } = req.body;
     try {
       const result = db.prepare(
-        "INSERT INTO destinations (agency_id, name, flag, description, bg_image) VALUES (?, ?, ?, ?, ?)"
-      ).run(agency_id, name, flag, description, bg_image);
+        "INSERT INTO destinations (agency_id, name, code, description, image, highlight_points, \"order\") VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(agency_id, name, code, description, image, JSON.stringify(highlight_points || []), order || 0);
       res.json({ id: result.lastInsertRowid });
     } catch (e: any) {
       console.error("Error creating destination:", e);
@@ -630,11 +932,11 @@ async function startServer() {
   });
 
   app.put("/api/destinations/:id", (req, res) => {
-    const { name, flag, description, bg_image, is_active } = req.body;
+    const { name, code, description, image, highlight_points, is_active, order } = req.body;
     try {
       db.prepare(
-        "UPDATE destinations SET name = ?, flag = ?, description = ?, bg_image = ?, is_active = ? WHERE id = ?"
-      ).run(name, flag, description, bg_image, is_active ? 1 : 0, req.params.id);
+        "UPDATE destinations SET name = ?, code = ?, description = ?, image = ?, highlight_points = ?, is_active = ?, \"order\" = ? WHERE id = ?"
+      ).run(name, code, description, image, JSON.stringify(highlight_points || []), is_active ? 1 : 0, order || 0, req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       console.error("Error updating destination:", e);
@@ -655,7 +957,10 @@ async function startServer() {
   app.get("/api/visa-types", (req, res) => {
     const { agency_id } = req.query;
     if (!agency_id) return res.status(400).json({ error: "agency_id is required" });
-    const visaTypes = db.prepare("SELECT * FROM visa_types WHERE agency_id = ? ORDER BY created_at DESC").all(agency_id);
+    const visaTypes = db.prepare("SELECT * FROM visa_types WHERE agency_id = ? ORDER BY created_at DESC").all(agency_id).map((v: any) => ({
+      ...v,
+      required_docs: JSON.parse(v.required_docs || '[]')
+    }));
     res.json(visaTypes);
   });
 
@@ -678,7 +983,10 @@ async function startServer() {
   });
 
   app.get("/api/forms/:visa_type_id", (req, res) => {
-    const forms = db.prepare("SELECT * FROM forms WHERE visa_type_id = ?").all(req.params.visa_type_id);
+    const forms = db.prepare("SELECT * FROM forms WHERE visa_type_id = ?").all(req.params.visa_type_id).map((f: any) => ({
+      ...f,
+      fields: JSON.parse(f.fields || '[]')
+    }));
     res.json(forms);
   });
 
@@ -700,7 +1008,10 @@ async function startServer() {
   });
 
   app.get("/api/form-responses/:process_id", (req, res) => {
-    const responses = db.prepare("SELECT * FROM form_responses WHERE process_id = ?").all(req.params.process_id);
+    const responses = db.prepare("SELECT * FROM form_responses WHERE process_id = ?").all(req.params.process_id).map((r: any) => ({
+      ...r,
+      data: JSON.parse(r.data || '{}')
+    }));
     res.json(responses);
   });
 
@@ -717,20 +1028,37 @@ async function startServer() {
     }
   });
 
-  app.post("/api/financials/confirm-proof", (req, res) => {
+  app.post("/api/financials/confirm-proof", upload.single('file'), (req, res) => {
     const { process_id } = req.body;
-    db.prepare("UPDATE financials SET status = 'proof_received' WHERE process_id = ?").run(process_id);
-    db.prepare("UPDATE processes SET status = 'payment_confirmed' WHERE id = ? AND status = 'started'").run(process_id);
-    res.json({ success: true });
+    const file = req.file;
+    const proof_url = file ? `/uploads/${file.filename}` : null;
+
+    try {
+      db.prepare("UPDATE financials SET status = 'proof_received', proof_url = ? WHERE process_id = ?").run(proof_url, process_id);
+      res.json({ success: true, proof_url });
+    } catch (e) {
+      console.error('Error confirming proof:', e);
+      res.status(500).json({ error: "Failed to confirm proof" });
+    }
   });
 
   app.post("/api/financials/validate", (req, res) => {
     const { process_id, status } = req.body; // status: 'confirmed'
-    db.prepare("UPDATE financials SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE process_id = ?").run(status, process_id);
-    if (status === 'confirmed') {
-      db.prepare("UPDATE processes SET status = 'analyzing' WHERE id = ?").run(process_id);
+    
+    try {
+      const transaction = db.transaction(() => {
+        db.prepare("UPDATE financials SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE process_id = ?").run(status, process_id);
+        if (status === 'confirmed') {
+          db.prepare("UPDATE processes SET status = 'analyzing', internal_status = 'reviewing' WHERE id = ?").run(process_id);
+        }
+      });
+
+      transaction();
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error validating financial:', e);
+      res.status(500).json({ error: "Failed to validate financial" });
     }
-    res.json({ success: true });
   });
 
   app.post("/api/documents/validate", (req, res) => {
@@ -738,13 +1066,100 @@ async function startServer() {
     db.prepare("UPDATE documents SET status = ?, rejection_reason = ? WHERE id = ?").run(status, rejection_reason || null, id);
     res.json({ success: true });
   });
+  // Plans CRUD
+  app.get("/api/plans", (req, res) => {
+    const { agency_id } = req.query;
+    let query = "SELECT * FROM plans";
+    let params = [];
+    if (agency_id) {
+      query += " WHERE agency_id = ?";
+      params.push(agency_id);
+    }
+    query += " ORDER BY price ASC";
+    const plans = db.prepare(query).all(...params).map((p: any) => ({
+      ...p,
+      features: JSON.parse(p.features || '[]')
+    }));
+    res.json(plans);
+  });
+
+  app.post("/api/plans", (req, res) => {
+    const { agency_id, name, description, price, features, is_recommended, icon } = req.body;
+    const result = db.prepare(
+      "INSERT INTO plans (agency_id, name, description, price, features, is_recommended, icon) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(agency_id, name, description, price, JSON.stringify(features || []), is_recommended ? 1 : 0, icon || 'Star');
+    res.json({ id: result.lastInsertRowid });
+  });
+
+  app.put("/api/plans/:id", (req, res) => {
+    const { name, description, price, features, is_recommended, icon } = req.body;
+    db.prepare(
+      "UPDATE plans SET name = ?, description = ?, price = ?, features = ?, is_recommended = ?, icon = ? WHERE id = ?"
+    ).run(name, description, price, JSON.stringify(features || []), is_recommended ? 1 : 0, icon || 'Star', req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/plans/:id", (req, res) => {
+    db.prepare("DELETE FROM plans WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Form Fields CRUD
+  app.get("/api/form-fields", (req, res) => {
+    const { agency_id, destination_id } = req.query;
+    let query = "SELECT * FROM form_fields WHERE agency_id = ?";
+    let params = [agency_id];
+    if (destination_id) {
+      query += " AND (destination_id = ? OR destination_id IS NULL)";
+      params.push(destination_id);
+    }
+    query += " ORDER BY \"order\" ASC";
+    const fields = db.prepare(query).all(...params).map((f: any) => ({
+      ...f,
+      options: JSON.parse(f.options || '[]')
+    }));
+    res.json(fields);
+  });
+
+  app.post("/api/form-fields", (req, res) => {
+    const { agency_id, destination_id, label, type, required, options, order } = req.body;
+    const result = db.prepare(
+      "INSERT INTO form_fields (agency_id, destination_id, label, type, required, options, \"order\") VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(agency_id, destination_id || null, label, type, required ? 1 : 0, JSON.stringify(options || []), order || 0);
+    res.json({ id: result.lastInsertRowid });
+  });
+
+  app.put("/api/form-fields/:id", (req, res) => {
+    const { destination_id, label, type, required, options, order } = req.body;
+    db.prepare(
+      "UPDATE form_fields SET destination_id = ?, label = ?, type = ?, required = ?, options = ?, \"order\" = ? WHERE id = ?"
+    ).run(destination_id || null, label, type, required ? 1 : 0, JSON.stringify(options || []), order || 0, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/form-fields/:id", (req, res) => {
+    db.prepare("DELETE FROM form_fields WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
   app.get("/api/processes", (req, res) => {
     const { agency_id, role, user_id } = req.query;
     let query = `
-      SELECT p.*, u.name as client_name, v.name as visa_name, f.status as payment_status, cu.name as consultant_name
+      SELECT 
+        p.*, 
+        u.name as client_name, 
+        v.name as visa_name, 
+        d.name as destination_name,
+        d.image as destination_image,
+        pl.name as plan_name,
+        f.status as payment_status, 
+        f.proof_url as payment_proof_url,
+        cu.name as consultant_name
       FROM processes p 
       JOIN users u ON p.client_id = u.id 
-      JOIN visa_types v ON p.visa_type_id = v.id
+      LEFT JOIN visa_types v ON p.visa_type_id = v.id
+      LEFT JOIN destinations d ON p.destination_id = d.id
+      LEFT JOIN plans pl ON p.plan_id = pl.id
       LEFT JOIN financials f ON p.id = f.process_id
       LEFT JOIN users cu ON p.consultant_id = cu.id
     `;
@@ -765,6 +1180,8 @@ async function startServer() {
       query += " WHERE p.agency_id = ?";
       params.push(agency_id);
     }
+
+    query += " ORDER BY p.created_at DESC";
 
     const processes = db.prepare(query).all(...params);
     res.json(processes);
@@ -855,17 +1272,32 @@ async function startServer() {
 
   app.get("/api/processes/:id", (req, res) => {
     const process = db.prepare(`
-      SELECT p.*, u.name as client_name, v.name as visa_name, v.required_docs
+      SELECT 
+        p.*, 
+        u.name as client_name, 
+        v.name as visa_name, 
+        v.required_docs,
+        d.name as destination_name,
+        d.image as destination_image,
+        pl.name as plan_name
       FROM processes p 
       JOIN users u ON p.client_id = u.id 
-      JOIN visa_types v ON p.visa_type_id = v.id
+      LEFT JOIN visa_types v ON p.visa_type_id = v.id
+      LEFT JOIN destinations d ON p.destination_id = d.id
+      LEFT JOIN plans pl ON p.plan_id = pl.id
       WHERE p.id = ?
     `).get(req.params.id);
     
     const documents = db.prepare("SELECT * FROM documents WHERE process_id = ?").all(req.params.id);
     const messages = db.prepare("SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.process_id = ? ORDER BY sent_at ASC").all(req.params.id);
     const financial = db.prepare("SELECT * FROM financials WHERE process_id = ?").get(req.params.id);
-    const responses = db.prepare("SELECT * FROM form_responses WHERE process_id = ?").all(req.params.id);
+    const responses = db.prepare(`
+      SELECT fr.*, f.title as form_title, f.fields as form_fields 
+      FROM form_responses fr 
+      JOIN forms f ON fr.form_id = f.id 
+      WHERE fr.process_id = ?
+    `).all(req.params.id);
+    const dependents = db.prepare("SELECT * FROM dependents WHERE process_id = ?").all(req.params.id);
     const tasks = db.prepare(`
       SELECT pt.*, t.title, t.description 
       FROM process_tasks pt 
@@ -873,7 +1305,7 @@ async function startServer() {
       WHERE pt.process_id = ?
     `).all(req.params.id);
     
-    res.json({ ...process, documents, messages, financial, responses, tasks });
+    res.json({ ...process, documents, messages, financial, responses, dependents, tasks });
   });
 
   app.post("/api/process-tasks/:id/toggle", (req, res) => {
@@ -906,6 +1338,18 @@ async function startServer() {
       }
 
       db.prepare("UPDATE users SET password = ? WHERE id = ?").run(new_password, userToReset);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao resetar senha" });
+    }
+  });
+
+  app.post("/api/users/:id/reset-password", (req, res) => {
+    const { new_password } = req.body;
+    if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
+
+    try {
+      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(new_password, req.params.id);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });

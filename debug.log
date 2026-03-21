@@ -1,0 +1,354 @@
+[2026-03-19T16:59:46.597Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 2,
+  "visa_type_id": 1,
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T16:59:46.598Z] Assigned consultant_id: 3
+[2026-03-19T16:59:46.598Z] Attempting to insert process with values: {
+  "client_id": 2,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "Turismo",
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T16:59:46.599Z] Process inserted successfully, ID: 8
+[2026-03-19T16:59:46.599Z] Creating financial record for processId: 8
+[2026-03-19T16:59:46.599Z] Saving dependents: 
+[2026-03-19T16:59:46.600Z] Creating process tasks for agency_id: 2
+[2026-03-19T17:00:51.156Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 999,
+  "visa_type_id": 1,
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:00:51.157Z] Assigned consultant_id: 
+[2026-03-19T17:00:51.158Z] Attempting to insert process with values: {
+  "client_id": 2,
+  "agency_id": 999,
+  "db_visa_type_id": 1,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": null,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "Turismo",
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T17:00:51.159Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:01:04.713Z] Starting process request body: {
+  "client_id": 999,
+  "agency_id": 2,
+  "visa_type_id": 1,
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:01:04.714Z] Assigned consultant_id: 3
+[2026-03-19T17:01:04.715Z] Attempting to insert process with values: {
+  "client_id": 999,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "Turismo",
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T17:01:04.715Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:01:13.528Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 2,
+  "visa_type_id": 999,
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:01:13.529Z] Assigned consultant_id: 3
+[2026-03-19T17:01:13.529Z] Attempting to insert process with values: {
+  "client_id": 2,
+  "agency_id": 2,
+  "db_visa_type_id": 999,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": null,
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T17:01:13.533Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:01:26.381Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 999,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:01:26.381Z] Assigned consultant_id: 
+[2026-03-19T17:01:26.382Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:04:56.433Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 999,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:04:56.433Z] Assigned consultant_id: 
+[2026-03-19T17:04:56.434Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:05:35.017Z] Starting process request body: {
+  "client_id": 2,
+  "agency_id": 999,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:05:35.018Z] Assigned consultant_id: 
+[2026-03-19T17:05:35.018Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:05:52.447Z] Starting process request body: {
+  "client_id": 999,
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:05:52.448Z] Assigned consultant_id: 3
+[2026-03-19T17:05:52.448Z] Attempting to insert process with values: {
+  "client_id": 999,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "NonExistent",
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T17:05:52.449Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:06:10.775Z] Starting process request body: {
+  "client_id": "",
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:06:10.776Z] Missing client_id or agency_id: {
+  "client_id": "",
+  "agency_id": 2
+}
+[2026-03-19T17:06:19.731Z] Starting process request body: {
+  "client_id": "999",
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": "Canada",
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:06:19.732Z] Assigned consultant_id: 3
+[2026-03-19T17:06:19.732Z] Attempting to insert process with values: {
+  "client_id": "999",
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": null,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "NonExistent",
+  "planName": "Consultoria Básica",
+  "destinationName": "Canada"
+}
+[2026-03-19T17:06:19.733Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:07:38.485Z] Starting process request body: {
+  "client_id": 5,
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": 1,
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:07:38.485Z] Assigned consultant_id: 3
+[2026-03-19T17:07:38.486Z] Attempting to insert process with values: {
+  "client_id": 5,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": 1,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "NonExistent",
+  "planName": "Consultoria Básica",
+  "destinationName": null
+}
+[2026-03-19T17:07:38.486Z] Error in /api/processes/start: "FOREIGN KEY constraint failed"
+[2026-03-19T17:08:21.393Z] Starting process request body: {
+  "client_id": 5,
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": 4,
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:08:21.394Z] Assigned consultant_id: 3
+[2026-03-19T17:08:21.395Z] Attempting to insert process with values: {
+  "client_id": 5,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": 4,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "NonExistent",
+  "planName": "Consultoria Básica",
+  "destinationName": "Estados Unidos"
+}
+[2026-03-19T17:08:21.395Z] Process inserted successfully, ID: 9
+[2026-03-19T17:08:21.395Z] Creating financial record for processId: 9
+[2026-03-19T17:08:21.396Z] Saving dependents: 
+[2026-03-19T17:08:21.396Z] Creating process tasks for agency_id: 2
+[2026-03-19T17:10:40.291Z] Starting process request body: {
+  "client_id": 5,
+  "agency_id": 2,
+  "visa_type_id": "NonExistent",
+  "destination_id": 4,
+  "plan_id": "basic",
+  "is_dependent": false,
+  "dependents": [],
+  "travel_date": "2026-06-01",
+  "form_responses": {
+    "Full Name": "John Doe",
+    "Passport": "A1234567"
+  }
+}
+[2026-03-19T17:10:40.292Z] Assigned consultant_id: 3
+[2026-03-19T17:10:40.293Z] Attempting to insert process with values: {
+  "client_id": 5,
+  "agency_id": 2,
+  "db_visa_type_id": 1,
+  "db_destination_id": 4,
+  "db_plan_id": null,
+  "consultant_id": 3,
+  "amount": 497,
+  "is_dependent": 0,
+  "parent_process_id": null,
+  "travel_date": "2026-06-01",
+  "visaTypeName": "NonExistent",
+  "planName": "Consultoria Básica",
+  "destinationName": "Estados Unidos"
+}
+[2026-03-19T17:10:40.293Z] Process inserted successfully, ID: 10
+[2026-03-19T17:10:40.294Z] Creating financial record for processId: 10
+[2026-03-19T17:10:40.294Z] Saving dependents: 
+[2026-03-19T17:10:40.294Z] Creating process tasks for agency_id: 2

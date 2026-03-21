@@ -1,6 +1,12 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { CreditCard, ShieldCheck, ArrowRight, CheckCircle2, Globe, Star, Zap } from 'lucide-react';
+import { CreditCard, ShieldCheck, ArrowRight, CheckCircle2, Globe, Star, Zap, ShieldCheck as ShieldCheckIcon } from 'lucide-react';
+
+const ICON_MAP: Record<string, any> = {
+  Star,
+  ShieldCheck: ShieldCheckIcon,
+  Zap
+};
 
 interface Props {
   destination: { name: string; flag: string };
@@ -9,6 +15,21 @@ interface Props {
 }
 
 export const ClientPaymentStep: React.FC<Props> = ({ destination, plan, onComplete }) => {
+  const [isProcessing, setIsProcessing] = React.useState(false);
+
+  const handleComplete = async () => {
+    setIsProcessing(true);
+    try {
+      await onComplete();
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const PlanIcon = typeof plan.icon === 'string' ? (ICON_MAP[plan.icon] || Zap) : (plan.icon || Zap);
+
+  if (!destination || !plan) return null;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden">
       {/* Background Elements */}
@@ -51,7 +72,7 @@ export const ClientPaymentStep: React.FC<Props> = ({ destination, plan, onComple
 
               <div className="flex items-center gap-4 p-6 rounded-3xl bg-zinc-800/30 border border-white/5">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center text-emerald-400">
-                  <plan.icon size={24} />
+                  <PlanIcon size={24} />
                 </div>
                 <div>
                   <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Plano Selecionado</p>
@@ -82,7 +103,7 @@ export const ClientPaymentStep: React.FC<Props> = ({ destination, plan, onComple
             <div className="space-y-8 mb-12">
               <div className="flex justify-between items-center text-zinc-400 font-medium">
                 <span>Subtotal</span>
-                <span>{plan.price}</span>
+                <span>{typeof plan.price === 'number' ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(plan.price) : plan.price}</span>
               </div>
               <div className="flex justify-between items-center text-zinc-400 font-medium">
                 <span>Taxas de Processamento</span>
@@ -91,16 +112,28 @@ export const ClientPaymentStep: React.FC<Props> = ({ destination, plan, onComple
               <div className="h-px bg-white/5" />
               <div className="flex justify-between items-center">
                 <span className="text-xl font-black tracking-tighter">Total</span>
-                <span className="text-3xl font-black tracking-tighter brand-text-gradient">{plan.price}</span>
+                <span className="text-3xl font-black tracking-tighter brand-text-gradient">
+                  {typeof plan.price === 'number' ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(plan.price) : plan.price}
+                </span>
               </div>
             </div>
 
             <button 
-              onClick={onComplete}
-              className="w-full brand-gradient text-black py-5 rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(0,255,136,0.4)] transition-all group mt-auto"
+              onClick={handleComplete}
+              disabled={isProcessing}
+              className="w-full brand-gradient text-black py-5 rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(0,255,136,0.4)] transition-all group mt-auto disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Prosseguir para pagamento
-              <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+              {isProcessing ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                  Processando...
+                </div>
+              ) : (
+                <>
+                  Prosseguir para pagamento
+                  <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                </>
+              )}
             </button>
 
             <p className="text-center text-zinc-500 text-[10px] font-bold uppercase tracking-widest mt-6">

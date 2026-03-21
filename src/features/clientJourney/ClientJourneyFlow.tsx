@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Home, LogOut, LayoutDashboard, User as UserIcon, Globe, Zap } from 'lucide-react';
+import axios from 'axios';
+import { toast } from 'sonner';
 import { ClientDestinationSelection } from './ClientDestinationSelection';
 import { DestinationMapIntro } from './DestinationMapIntro';
 import { DestinationProcessIntro } from './DestinationProcessIntro';
@@ -28,6 +30,9 @@ interface Props {
   agencyLogo?: string;
   destinations?: any[];
   preFormQuestions?: any[];
+  plans?: any[];
+  formFields?: any[];
+  visaTypes?: any[];
 }
 
 export const ClientJourneyFlow: React.FC<Props> = ({ 
@@ -38,12 +43,22 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   agencyName,
   agencyLogo,
   destinations,
-  preFormQuestions
+  preFormQuestions,
+  plans,
+  formFields,
+  visaTypes
 }) => {
   const [currentStep, setCurrentStep] = useState<JourneyStep>(processes.length > 0 ? 'dashboard' : 'destination');
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [formData, setFormData] = useState<any>(null);
+
+  // Update step if processes change (e.g. after creation)
+  React.useEffect(() => {
+    if (processes.length > 0 && currentStep !== 'dashboard') {
+      setCurrentStep('dashboard');
+    }
+  }, [processes.length]);
 
   const handleDestinationSelect = (destination: any) => {
     setSelectedDestination(destination);
@@ -68,9 +83,38 @@ export const ClientJourneyFlow: React.FC<Props> = ({
     setCurrentStep('payment');
   };
 
-  const handlePaymentComplete = () => {
-    onRefreshProcesses();
-    setCurrentStep('dashboard');
+  const handlePaymentComplete = async () => {
+    try {
+      // Create process in backend
+      await axios.post('/api/processes/start', {
+        client_id: user.id,
+        agency_id: user.agency_id,
+        destination_id: selectedDestination?.id,
+        plan_id: selectedPlan?.id,
+        visa_type_id: formData?.visaTypeId || null,
+        travel_date: formData?.travelDate,
+        dependents: formData?.dependents || [],
+        form_responses: {
+          ...formData?.dynamicResponses,
+          fullName: formData?.fullName,
+          phone: formData?.phone,
+          email: formData?.email,
+          city: formData?.city,
+          hasPassport: formData?.hasPassport,
+          hasVisaDenied: formData?.hasVisaDenied,
+          travelParty: formData?.travelParty,
+          travelGoal: formData?.travelGoal,
+          dependentLevel: formData?.dependentLevel
+        }
+      });
+      
+      toast.success('Processo iniciado com sucesso!');
+      onRefreshProcesses();
+      setCurrentStep('dashboard');
+    } catch (error) {
+      console.error('Error starting process:', error);
+      toast.error('Erro ao iniciar processo. Tente novamente.');
+    }
   };
 
   const resetJourney = () => {
@@ -202,6 +246,9 @@ export const ClientJourneyFlow: React.FC<Props> = ({
               <ClientPreForm 
                 onComplete={handlePreFormComplete} 
                 preFormQuestions={preFormQuestions}
+                formFields={formFields}
+                destinationId={selectedDestination?.id}
+                visaTypes={visaTypes}
               />
             </motion.div>
           )}
@@ -213,11 +260,14 @@ export const ClientJourneyFlow: React.FC<Props> = ({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              <ConsultingPlanSelection onSelect={handlePlanSelect} />
+              <ConsultingPlanSelection 
+                onSelect={handlePlanSelect} 
+                plans={plans}
+              />
             </motion.div>
           )}
 
-          {currentStep === 'payment' && (
+          {currentStep === 'payment' && selectedDestination && selectedPlan && (
             <motion.div
               key="payment"
               initial={{ opacity: 0 }}

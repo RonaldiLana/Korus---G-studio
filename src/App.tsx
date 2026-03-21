@@ -32,10 +32,11 @@ import {
   CreditCard,
   Pencil,
   Settings,
-  Target
+  Target,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 
 // Korus Logo Component
@@ -95,6 +96,7 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
 
 const STATUS_LABELS: Record<string, string> = {
   started: 'Iniciado',
+  waiting_payment: 'Aguardando Pagamento',
   payment_confirmed: 'Pago Confirmado',
   analyzing: 'Em Análise',
   final_phase: 'Fase Final',
@@ -110,11 +112,12 @@ const STATUS_LABELS: Record<string, string> = {
 const StatusBadge = ({ status }: { status: string }) => {
   const styles: Record<string, string> = {
     started: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    waiting_payment: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
     payment_confirmed: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
     analyzing: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
     final_phase: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
     completed: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    pending: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
+    pending: 'bg-[var(--bg-input)] text-[var(--text-muted)] border-[var(--border-color)]',
     proof_received: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
     confirmed: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   };
@@ -143,7 +146,7 @@ const ProgressBar = ({ status }: { status: Process['status'] }) => {
   return (
     <div className="w-full py-12">
       <div className="flex items-center justify-between relative">
-        <div className="absolute top-1/2 left-0 w-full h-0.5 bg-zinc-800 -translate-y-1/2 z-0" />
+        <div className="absolute top-1/2 left-0 w-full h-0.5 bg-[var(--border-color)] -translate-y-1/2 z-0" />
         <div 
           className="absolute top-1/2 left-0 h-0.5 brand-gradient -translate-y-1/2 z-0 transition-all duration-500" 
           style={{ width: `${(currentIndex / (steps.length - 1)) * 100}%` }}
@@ -154,12 +157,12 @@ const ProgressBar = ({ status }: { status: Process['status'] }) => {
             <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
               index <= currentIndex 
                 ? 'brand-gradient border-transparent text-black' 
-                : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+                : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)]'
             }`}>
               {index < currentIndex ? <Check size={20} strokeWidth={3} /> : <span className="text-xs font-black">{index + 1}</span>}
             </div>
             <span className={`absolute top-12 text-[10px] font-black uppercase tracking-widest whitespace-nowrap ${
-              index <= currentIndex ? 'text-emerald-400' : 'text-zinc-600'
+              index <= currentIndex ? 'text-emerald-400' : 'text-[var(--text-muted)]'
             }`}>
               {step.label}
             </span>
@@ -185,6 +188,7 @@ type ConfirmDialogState = {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [error, setError] = useState('');
   const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -215,15 +219,120 @@ export default function App() {
   const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
   const [destinationForm, setDestinationForm] = useState({
     name: '',
+    code: '',
     flag: '',
     description: '',
     bg_image: '',
-    is_active: true
+    highlight_points: [] as string[],
+    is_active: true,
+    order: 0
   });
   const [loading, setLoading] = useState(false);
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [publicRegisterForm, setPublicRegisterForm] = useState({ name: '', email: '', password: '', phone: '' });
-  const [error, setError] = useState('');
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
+  const [planForm, setPlanForm] = useState({
+    name: '',
+    description: '',
+    price: 0,
+    features: [] as string[],
+    is_recommended: false,
+    icon: 'Star'
+  });
+
+  const [formFields, setFormFields] = useState<FormField[]>([]);
+  const [showFormFieldModal, setShowFormFieldModal] = useState(false);
+  const [editingFormField, setEditingFormField] = useState<FormField | null>(null);
+  const [formFieldForm, setFormFieldForm] = useState({
+    label: '',
+    type: 'text' as FormField['type'],
+    required: false,
+    options: [] as string[],
+    order: 0,
+    destination_id: null as number | null
+  });
+
+  const fetchPlans = async () => {
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/plans?agency_id=${agencyId}`);
+    const data = await res.json();
+    setPlans(data);
+  };
+
+  const savePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+
+    const url = editingPlan ? `/api/plans/${editingPlan.id}` : '/api/plans';
+    const method = editingPlan ? 'PUT' : 'POST';
+    const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      setShowPlanModal(false);
+      fetchPlans();
+      notify('Plano salvo com sucesso!', 'success');
+    }
+  };
+
+  const deletePlan = async (id: number) => {
+    requestConfirmation('Tem certeza que deseja excluir este plano?', async () => {
+      const res = await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchPlans();
+        notify('Plano excluído!', 'success');
+      }
+    });
+  };
+
+  const fetchFormFields = async () => {
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/form-fields?agency_id=${agencyId}`);
+    const data = await res.json();
+    setFormFields(data);
+  };
+
+  const saveFormField = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+
+    const url = editingFormField ? `/api/form-fields/${editingFormField.id}` : '/api/form-fields';
+    const method = editingFormField ? 'PUT' : 'POST';
+    const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      setShowFormFieldModal(false);
+      fetchFormFields();
+      notify('Campo de formulário salvo com sucesso!', 'success');
+    }
+  };
+
+  const deleteFormField = async (id: number) => {
+    requestConfirmation('Tem certeza que deseja excluir este campo de formulário?', async () => {
+      const res = await fetch(`/api/form-fields/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchFormFields();
+        notify('Campo excluído!', 'success');
+      }
+    });
+  };
   
   // Agency CRUD State
   const [showAgencyModal, setShowAgencyModal] = useState(false);
@@ -277,7 +386,7 @@ export default function App() {
     pre_form_questions: []
   });
   const [agencyTab, setAgencyTab] = useState<'geral' | 'configuracoes' | 'clientes'>('geral');
-  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios'>('destinos');
+  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos'>('destinos');
   const [forms, setForms] = useState<Form[]>([]);
   const [showVisaTypeModal, setShowVisaTypeModal] = useState(false);
   const [editingVisaType, setEditingVisaType] = useState<VisaType | null>(null);
@@ -384,6 +493,29 @@ export default function App() {
     });
   };
 
+  const validateFinancial = async (processId: number, status: 'confirmed' | 'pending') => {
+    requestConfirmation(
+      status === 'confirmed' 
+        ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.' 
+        : 'Deseja recusar este comprovante? O cliente precisará enviar um novo.',
+      async () => {
+        const res = await fetch('/api/financials/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ process_id: processId, status })
+        });
+        if (res.ok) {
+          notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
+          // Refresh process details
+          const updatedProcessRes = await fetch(`/api/processes/${processId}`);
+          const updatedProcess = await updatedProcessRes.json();
+          setSelectedProcess(updatedProcess);
+          fetchProcesses();
+        }
+      }
+    );
+  };
+
   const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean }>({ finance: true, chat: true });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -414,6 +546,13 @@ export default function App() {
   const [showClientResetPasswordModal, setShowClientResetPasswordModal] = useState(false);
   const [clientToResetPassword, setClientToResetPassword] = useState<{ id: number; name: string; email: string } | null>(null);
   const [newClientPassword, setNewClientPassword] = useState('');
+  const [showTeamResetPasswordModal, setShowTeamResetPasswordModal] = useState(false);
+  const [teamToResetPassword, setTeamToResetPassword] = useState<{ id: number; name: string; email: string } | null>(null);
+  const [newTeamPassword, setNewTeamPassword] = useState('');
+
+  const [showFormEditModal, setShowFormEditModal] = useState(false);
+  const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
+  const [formEditData, setFormEditData] = useState<any>({});
 
   const canAccessFinance = user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro';
   const isFinanceModuleEnabled = user?.role === 'master' ? true : agencyModules.finance;
@@ -824,6 +963,69 @@ export default function App() {
     }
   };
 
+  const openTeamPasswordResetModal = (teamMember: { id: number; name: string; email: string }) => {
+    setTeamToResetPassword(teamMember);
+    setNewTeamPassword('');
+    setShowTeamResetPasswordModal(true);
+  };
+
+  const submitTeamPasswordReset = async () => {
+    if (!teamToResetPassword || newTeamPassword.trim().length < 6) {
+      notify('A nova senha deve ter no mínimo 6 caracteres.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/users/${teamToResetPassword.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          new_password: newTeamPassword.trim(),
+        }),
+      });
+
+      if (res.ok) {
+        notify('Senha da equipe resetada com sucesso!', 'success');
+        setShowTeamResetPasswordModal(false);
+        setTeamToResetPassword(null);
+        setNewTeamPassword('');
+      } else {
+        const data = await res.json();
+        notify(data.error || 'Erro ao resetar senha da equipe.', 'error');
+      }
+    } catch (error) {
+      notify('Erro de conexão ao resetar senha da equipe.', 'error');
+    }
+  };
+
+  const handleFormEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFormResponse || !selectedProcess) return;
+
+    try {
+      const res = await fetch('/api/form-responses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          process_id: selectedProcess.id,
+          form_id: editingFormResponse.form_id,
+          data: formEditData
+        })
+      });
+
+      if (res.ok) {
+        notify('Formulário atualizado com sucesso!', 'success');
+        setShowFormEditModal(false);
+        fetchProcessDetail(selectedProcess.id);
+      } else {
+        const data = await res.json();
+        notify(data.error || 'Erro ao atualizar formulário', 'error');
+      }
+    } catch (err) {
+      notify('Erro de conexão ao atualizar formulário', 'error');
+    }
+  };
+
   const openProcessEditModal = (process: Process) => {
     if (process.status === 'completed') {
       notify('Somente processos abertos podem ser editados.', 'error');
@@ -1073,11 +1275,15 @@ export default function App() {
         fetchAgencyUsers();
         fetchTasks();
         fetchDestinations();
+        fetchPlans();
+        fetchFormFields();
       }
 
       if (user.role === 'supervisor' || user.role === 'gerente_financeiro' || user.role === 'client') {
         fetchAgencySettings();
         fetchDestinations();
+        fetchPlans();
+        fetchFormFields();
       }
     }
   }, [user, view, canAccessFinance]);
@@ -1294,7 +1500,7 @@ export default function App() {
         >
           <div
             data-testid="confirm-dialog-card"
-            className="w-full max-w-md rounded-3xl bg-zinc-900 border border-white/10 p-6 shadow-2xl"
+            className="w-full max-w-md rounded-3xl bg-[var(--bg-card)] border border-[var(--border-color)] p-6 shadow-2xl"
           >
             <h3 className="text-lg font-black mb-3">Confirmar ação</h3>
             <p data-testid="confirm-dialog-message" className="text-sm text-[var(--text-muted)] leading-relaxed">
@@ -1305,7 +1511,7 @@ export default function App() {
                 data-testid="confirm-dialog-cancel-button"
                 type="button"
                 onClick={() => setConfirmDialog({ open: false, message: '', onConfirm: null })}
-                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
               >
                 Cancelar
               </button>
@@ -1323,13 +1529,13 @@ export default function App() {
       )}
 
       {showDestinationModal && (
-        <div className="fixed inset-0 z-[130] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-[32px] bg-zinc-900 border border-white/10 p-8 shadow-2xl">
+        <div className="fixed inset-0 z-[130] bg-[var(--bg-overlay)] backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-[32px] bg-[var(--bg-card)] border border-[var(--border-color)] p-8 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-black tracking-tighter uppercase">{editingDestination ? 'Editar Destino' : 'Novo Destino'}</h3>
               <button 
                 onClick={() => setShowDestinationModal(false)}
-                className="p-2 hover:bg-white/5 rounded-xl text-zinc-500 transition-all"
+                className="p-2 hover:bg-[var(--bg-input)] rounded-xl text-[var(--text-muted)] transition-all"
               >
                 <LogOut size={20} />
               </button>
@@ -1337,22 +1543,22 @@ export default function App() {
             <form onSubmit={saveDestination} className="space-y-6">
               <div className="grid grid-cols-4 gap-4">
                 <div className="col-span-1 space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Emoji/Flag</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Emoji/Flag</label>
                   <input 
                     type="text" 
                     required
-                    className="w-full px-4 py-4 bg-zinc-800 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-center text-2xl"
+                    className="w-full px-4 py-4 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-center text-2xl"
                     value={destinationForm.flag}
                     onChange={(e) => setDestinationForm({ ...destinationForm, flag: e.target.value })}
                     placeholder="🌍"
                   />
                 </div>
                 <div className="col-span-3 space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Nome do Destino</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Nome do Destino</label>
                   <input 
                     type="text" 
                     required
-                    className="w-full px-6 py-4 bg-zinc-800 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+                    className="w-full px-6 py-4 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
                     value={destinationForm.name}
                     onChange={(e) => setDestinationForm({ ...destinationForm, name: e.target.value })}
                     placeholder="Ex: Estados Unidos"
@@ -1360,10 +1566,10 @@ export default function App() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Descrição</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Descrição</label>
                 <textarea 
                   required
-                  className="w-full px-6 py-4 bg-zinc-800 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+                  className="w-full px-6 py-4 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
                   value={destinationForm.description}
                   onChange={(e) => setDestinationForm({ ...destinationForm, description: e.target.value })}
                   placeholder="Breve descrição sobre o destino..."
@@ -1371,20 +1577,20 @@ export default function App() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">URL da Imagem de Fundo</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">URL da Imagem de Fundo</label>
                 <input 
                   type="url" 
-                  className="w-full px-6 py-4 bg-zinc-800 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+                  className="w-full px-6 py-4 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
                   value={destinationForm.bg_image}
                   onChange={(e) => setDestinationForm({ ...destinationForm, bg_image: e.target.value })}
                   placeholder="https://exemplo.com/imagem.jpg"
                 />
               </div>
-              <div className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/5">
+              <div className="flex items-center gap-3 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
                 <input 
                   type="checkbox" 
                   id="dest-active"
-                  className="w-5 h-5 rounded-lg border-white/10 bg-zinc-800 text-emerald-500 focus:ring-emerald-500"
+                  className="w-5 h-5 rounded-lg border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
                   checked={destinationForm.is_active}
                   onChange={(e) => setDestinationForm({ ...destinationForm, is_active: e.target.checked })}
                 />
@@ -1394,7 +1600,7 @@ export default function App() {
                 <button 
                   type="button"
                   onClick={() => setShowDestinationModal(false)}
-                  className="flex-1 px-6 py-4 rounded-2xl bg-white/5 hover:bg-white/10 transition-all text-xs font-black uppercase tracking-widest"
+                  className="flex-1 px-6 py-4 rounded-2xl bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-all text-xs font-black uppercase tracking-widest"
                 >
                   Cancelar
                 </button>
@@ -1417,17 +1623,17 @@ export default function App() {
         >
           <div
             data-testid="reset-password-dialog-card"
-            className="w-full max-w-md rounded-3xl bg-zinc-900 border border-white/10 p-6 shadow-2xl"
+            className="w-full max-w-md rounded-3xl bg-[var(--bg-card)] border border-[var(--border-color)] p-6 shadow-2xl"
           >
             <h3 className="text-lg font-black mb-2">Resetar senha do administrador</h3>
-            <p className="text-sm text-zinc-400 mb-5">Digite a nova senha para o admin da agência selecionada.</p>
+            <p className="text-sm text-[var(--text-muted)] mb-5">Digite a nova senha para o admin da agência selecionada.</p>
             <input
               data-testid="reset-password-input"
               type="password"
               value={newAdminPassword}
               onChange={(e) => setNewAdminPassword(e.target.value)}
               placeholder="Nova senha"
-              className="w-full px-4 py-3 rounded-xl bg-zinc-800/70 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-4 py-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-color)] outline-none focus:ring-2 focus:ring-emerald-500"
             />
             <div className="mt-6 flex gap-3">
               <button
@@ -1438,7 +1644,7 @@ export default function App() {
                   setAgencyToResetPassword(null);
                   setNewAdminPassword('');
                 }}
-                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
               >
                 Cancelar
               </button>
@@ -1462,20 +1668,20 @@ export default function App() {
         >
           <div
             data-testid="client-reset-password-dialog-card"
-            className="w-full max-w-md rounded-3xl bg-zinc-900 border border-white/10 p-6 shadow-2xl"
+            className="w-full max-w-md rounded-3xl bg-[var(--bg-card)] border border-[var(--border-color)] p-6 shadow-2xl"
           >
             <h3 className="text-lg font-black mb-2">Resetar senha do cliente</h3>
-            <p className="text-sm text-zinc-400 mb-2">
-              Cliente: <span className="font-bold text-zinc-200">{clientToResetPassword?.name || '-'}</span>
+            <p className="text-sm text-[var(--text-muted)] mb-2">
+              Cliente: <span className="font-bold text-[var(--text-main)]">{clientToResetPassword?.name || '-'}</span>
             </p>
-            <p className="text-xs text-zinc-500 mb-5">{clientToResetPassword?.email || ''}</p>
+            <p className="text-xs text-[var(--text-muted)] mb-5">{clientToResetPassword?.email || ''}</p>
             <input
               data-testid="client-reset-password-input"
               type="password"
               value={newClientPassword}
               onChange={(e) => setNewClientPassword(e.target.value)}
               placeholder="Nova senha (mín. 6 caracteres)"
-              className="w-full px-4 py-3 rounded-xl bg-zinc-800/70 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-4 py-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-color)] outline-none focus:ring-2 focus:ring-emerald-500"
             />
             <div className="mt-6 flex gap-3">
               <button
@@ -1486,7 +1692,7 @@ export default function App() {
                   setClientToResetPassword(null);
                   setNewClientPassword('');
                 }}
-                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
               >
                 Cancelar
               </button>
@@ -1494,6 +1700,54 @@ export default function App() {
                 data-testid="client-reset-password-submit-button"
                 type="button"
                 onClick={submitClientPasswordReset}
+                className="flex-1 rounded-xl px-4 py-3 text-sm font-black brand-gradient text-black"
+              >
+                Salvar nova senha
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTeamResetPasswordModal && (
+        <div
+          data-testid="team-reset-password-dialog-overlay"
+          className="fixed inset-0 z-[130] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            data-testid="team-reset-password-dialog-card"
+            className="w-full max-w-md rounded-3xl bg-[var(--bg-card)] border border-[var(--border-color)] p-6 shadow-2xl"
+          >
+            <h3 className="text-lg font-black mb-2">Resetar senha da equipe</h3>
+            <p className="text-sm text-[var(--text-muted)] mb-2">
+              Usuário: <span className="font-bold text-[var(--text-main)]">{teamToResetPassword?.name || '-'}</span>
+            </p>
+            <p className="text-xs text-[var(--text-muted)] mb-5">{teamToResetPassword?.email || ''}</p>
+            <input
+              data-testid="team-reset-password-input"
+              type="password"
+              value={newTeamPassword}
+              onChange={(e) => setNewTeamPassword(e.target.value)}
+              placeholder="Nova senha (mín. 6 caracteres)"
+              className="w-full px-4 py-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-color)] outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <div className="mt-6 flex gap-3">
+              <button
+                data-testid="team-reset-password-cancel-button"
+                type="button"
+                onClick={() => {
+                  setShowTeamResetPasswordModal(false);
+                  setTeamToResetPassword(null);
+                  setNewTeamPassword('');
+                }}
+                className="flex-1 rounded-xl px-4 py-3 text-sm font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                data-testid="team-reset-password-submit-button"
+                type="button"
+                onClick={submitTeamPasswordReset}
                 className="flex-1 rounded-xl px-4 py-3 text-sm font-black brand-gradient text-black"
               >
                 Salvar nova senha
@@ -1535,7 +1789,7 @@ export default function App() {
           
           <div className="text-center mb-10">
             <h1 data-testid="public-agency-title" className="text-3xl font-black tracking-tighter mb-2">Bem-vindo à {publicAgency.name}</h1>
-            <p className="text-zinc-500 font-bold text-sm">
+            <p className="text-[var(--text-muted)] font-bold text-sm">
               {publicMode === 'register' ? 'Inicie seu processo de visto internacional agora.' : 'Acesse sua conta para continuar.'}
             </p>
           </div>
@@ -1545,7 +1799,7 @@ export default function App() {
               data-testid="public-mode-register-button"
               onClick={() => setPublicMode('register')}
               className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                publicMode === 'register' ? 'bg-[var(--bg-card)] text-emerald-400 shadow-lg' : 'text-zinc-500'
+                publicMode === 'register' ? 'bg-[var(--bg-card)] text-emerald-400 shadow-lg' : 'text-[var(--text-muted)]'
               }`}
             >
               Cadastro
@@ -1554,7 +1808,7 @@ export default function App() {
               data-testid="public-mode-login-button"
               onClick={() => setPublicMode('login')}
               className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                publicMode === 'login' ? 'bg-[var(--bg-card)] text-emerald-400 shadow-lg' : 'text-zinc-500'
+                publicMode === 'login' ? 'bg-[var(--bg-card)] text-emerald-400 shadow-lg' : 'text-[var(--text-muted)]'
               }`}
             >
               Login
@@ -1564,7 +1818,7 @@ export default function App() {
           {publicMode === 'register' ? (
             <form onSubmit={handlePublicRegister} className="space-y-6">
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Nome Completo</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Nome Completo</label>
                 <input 
                   data-testid="public-register-name-input"
                   type="text" 
@@ -1588,7 +1842,7 @@ export default function App() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Cadastrar Senha</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Cadastrar Senha</label>
                 <input
                   data-testid="public-register-password-input"
                   type="password"
@@ -1601,7 +1855,7 @@ export default function App() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Telefone (Opcional)</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Telefone (Opcional)</label>
                 <input
                   data-testid="public-register-phone-input"
                   type="tel"
@@ -1636,7 +1890,7 @@ export default function App() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Senha</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Senha</label>
                 <input 
                   data-testid="public-login-password-input"
                   type="password" 
@@ -1659,7 +1913,7 @@ export default function App() {
           )}
 
           <div className="mt-8 pt-8 border-t border-[var(--border-color)] text-center">
-            <button data-testid="public-back-home-button" onClick={() => window.location.href = '/'} className="text-xs text-zinc-500 font-bold hover:text-[var(--text-main)] transition-colors">
+            <button data-testid="public-back-home-button" onClick={() => window.location.href = '/'} className="text-xs text-[var(--text-muted)] font-bold hover:text-[var(--text-main)] transition-colors">
               Voltar para Home
             </button>
           </div>
@@ -1723,8 +1977,8 @@ export default function App() {
             </button>
           </form>
           
-          <div className="mt-8 pt-8 border-t border-white/5">
-            <p className="text-[10px] text-zinc-500 text-center uppercase tracking-widest font-bold">
+          <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+            <p className="text-[10px] text-[var(--text-muted)] text-center uppercase tracking-widest font-bold">
               Korus Visa Consulting • 2024
             </p>
           </div>
@@ -1746,6 +2000,9 @@ export default function App() {
         agencyLogo={agencySettings.logo_url}
         destinations={destinations}
         preFormQuestions={agencySettings.pre_form_questions}
+        plans={plans}
+        formFields={formFields}
+        visaTypes={visaTypes}
       />
     );
   }
@@ -1864,7 +2121,7 @@ export default function App() {
           )}
         </nav>
 
-        <div className="mt-auto pt-6 border-t border-white/5">
+        <div className="mt-auto pt-6 border-t border-[var(--border-color)]">
           <div className="flex items-center gap-3 px-2 mb-6">
             <div className="w-10 h-10 brand-gradient rounded-full flex items-center justify-center text-black font-black">
               {user.name.charAt(0)}
@@ -1876,7 +2133,7 @@ export default function App() {
           </div>
           <button 
             onClick={() => setUser(null)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-all"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10 transition-all"
           >
             <LogOut size={20} />
             <span className="font-medium">Sair</span>
@@ -1900,7 +2157,7 @@ export default function App() {
               {view === 'settings' && 'Configurações'}
               {view === 'agency_panel' && 'Painel da Agência'}
             </h2>
-            <div className="flex items-center gap-2 text-zinc-500 mt-1">
+            <div className="flex items-center gap-2 text-[var(--text-muted)] mt-1">
               <MapPin size={14} />
               <span className="text-sm font-medium">Korus Central • {new Date().toLocaleDateString()}</span>
             </div>
@@ -1908,7 +2165,7 @@ export default function App() {
 
           <div className="flex items-center gap-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
               <input 
                 data-testid="global-search-input"
                 type="text" 
@@ -1973,7 +2230,7 @@ export default function App() {
                         <stat.icon size={24} />
                       </div>
                     </div>
-                    <p className="text-zinc-500 font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
+                    <p className="text-[var(--text-muted)] font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
                     <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
                   </div>
                 ))}
@@ -1984,7 +2241,7 @@ export default function App() {
                   <div className="p-3 bg-cyan-500/10 text-cyan-400 rounded-2xl">
                     <Clock size={24} />
                   </div>
-                  <span className="text-zinc-400 font-bold text-xs uppercase tracking-widest">Aguardando Docs</span>
+                  <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Aguardando Docs</span>
                 </div>
                 <p className="text-5xl font-black">
                   {processes.filter(p => p.internal_status === 'documents_requested').length}
@@ -1996,7 +2253,7 @@ export default function App() {
                   <div className="p-3 bg-purple-500/10 text-purple-400 rounded-2xl">
                     <CheckCircle2 size={24} />
                   </div>
-                  <span className="text-zinc-400 font-bold text-xs uppercase tracking-widest">Concluídos</span>
+                  <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Concluídos</span>
                 </div>
                 <p className="text-5xl font-black">
                   {processes.filter(p => p.status === 'completed').length}
@@ -2128,18 +2385,18 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden">
-                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <div className="flex gap-4">
                     <button 
                       onClick={() => setFinanceTab('receivable')}
-                      className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${financeTab === 'receivable' ? 'border-emerald-500 text-white' : 'border-transparent text-zinc-500'}`}
+                      className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${financeTab === 'receivable' ? 'border-emerald-500 text-[var(--text-main)]' : 'border-transparent text-[var(--text-muted)]'}`}
                     >
                       Contas a Receber
                     </button>
                     <button 
                       onClick={() => setFinanceTab('payable')}
-                      className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${financeTab === 'payable' ? 'border-red-500 text-white' : 'border-transparent text-zinc-500'}`}
+                      className={`text-xs font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${financeTab === 'payable' ? 'border-red-500 text-[var(--text-main)]' : 'border-transparent text-[var(--text-muted)]'}`}
                     >
                       Contas a Pagar
                     </button>
@@ -2176,7 +2433,7 @@ export default function App() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <tr className="bg-[var(--bg-input)] text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
                         <th className="px-6 py-4">Descrição</th>
                         <th className="px-6 py-4">Categoria</th>
                         <th className="px-6 py-4">Vencimento</th>
@@ -2185,19 +2442,19 @@ export default function App() {
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-[var(--border-color)]">
                       {(financeTab === 'receivable' ? revenues : expenses).map((item) => (
-                        <tr key={item.id} className="hover:bg-white/5 transition-colors group">
+                        <tr key={item.id} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <p className="font-bold text-sm">{item.description}</p>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-white/5 rounded-lg text-zinc-400">
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)]">
                               {item.category || 'Geral'}
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-2 text-zinc-400 text-xs">
+                            <div className="flex items-center gap-2 text-[var(--text-muted)] text-xs">
                               <Calendar size={14} />
                               {new Date(item.due_date).toLocaleDateString('pt-BR')}
                             </div>
@@ -2237,7 +2494,7 @@ export default function App() {
                                   });
                                   setShowFinanceModal(true);
                                 }}
-                                className={`p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-all ${
+                                className={`p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all ${
                                   !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
@@ -2246,7 +2503,7 @@ export default function App() {
                               <button 
                                 disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
                                 onClick={() => deleteFinance(item.id, financeTab)}
-                                className={`p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all ${
+                                className={`p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all ${
                                   !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
@@ -2348,7 +2605,7 @@ export default function App() {
                       {agency.admin_email || 'Administrador não configurado'}
                     </p>
                     {agency.admin_role && (
-                      <p className="text-[10px] uppercase tracking-widest font-black text-zinc-500" data-testid={`agency-admin-role-${agency.id}`}>
+                      <p className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]" data-testid={`agency-admin-role-${agency.id}`}>
                         Perfil atual: {agency.admin_role}
                       </p>
                     )}
@@ -2357,14 +2614,14 @@ export default function App() {
                         type="button"
                         data-testid={`agency-copy-admin-access-button-${agency.id}`}
                         onClick={() => copyAdminAccess(agency)}
-                        className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors text-xs font-black uppercase tracking-widest flex items-center gap-2"
+                        className="px-3 py-2 rounded-xl bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-colors text-xs font-black uppercase tracking-widest flex items-center gap-2"
                       >
                         <Copy size={14} />
                         Copiar acesso admin
                       </button>
                       <label
                         data-testid={`agency-upload-logo-button-${agency.id}`}
-                        className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors text-xs font-black uppercase tracking-widest flex items-center gap-2 cursor-pointer"
+                        className="px-3 py-2 rounded-xl bg-[var(--bg-input)]/50 hover:bg-[var(--bg-input)] transition-colors text-xs font-black uppercase tracking-widest flex items-center gap-2 cursor-pointer"
                       >
                         <Upload size={14} />
                         Upload logo
@@ -2392,20 +2649,20 @@ export default function App() {
                       href="/" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-white flex items-center gap-2 transition-colors"
+                      className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] hover:text-[var(--text-main)] flex items-center gap-2 transition-colors"
                     >
                       <ShieldCheck size={14} />
                       Link de Login Agência
                     </a>
                   </div>
 
-                  <div className="mt-8 pt-6 border-t border-white/5 flex justify-between items-center">
+                  <div className="mt-8 pt-6 border-t border-[var(--border-color)] flex justify-between items-center">
                     <div>
-                      <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Processos</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">Processos</p>
                       <p className="font-black text-xl">24</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Status</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">Status</p>
                       <span className="text-emerald-400 text-xs font-black uppercase">Ativa</span>
                     </div>
                   </div>
@@ -2419,7 +2676,7 @@ export default function App() {
               key="clients"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden"
+              className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden"
             >
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
@@ -2433,28 +2690,28 @@ export default function App() {
                       <th className="px-6 py-4 text-right">Ação</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-[var(--border-color)]">
                     {processes.map(process => (
-                      <tr key={process.id} className="hover:bg-white/5 transition-all">
+                      <tr key={process.id} className="hover:bg-[var(--bg-input)] transition-all">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
+                            <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
                               {process.client_name?.charAt(0) || '?'}
                             </div>
                             <span className="font-bold text-sm">{process.client_name || 'Desconhecido'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs text-zinc-400 font-medium">{process.visa_name || process.type}</td>
-                        <td className="px-6 py-4 text-xs text-zinc-500 font-bold uppercase tracking-widest">{process.consultant_name || 'Não atribuído'}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process.visa_name || process.type}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process.consultant_name || 'Não atribuído'}</td>
                         <td className="px-6 py-4">
                           <StatusBadge status={process.status} />
                         </td>
-                        <td className="px-6 py-4 text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
+                        <td className="px-6 py-4 text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest">
                           {STATUS_LABELS[process.internal_status] || process.internal_status}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-2">
-                            {(user.role === 'supervisor' || user.role === 'master') && process.status !== 'completed' && (
+                            {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && process.status !== 'completed' && (
                               <button
                                 data-testid={`process-edit-button-${process.id}`}
                                 onClick={() => openProcessEditModal(process)}
@@ -2502,12 +2759,12 @@ export default function App() {
               <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                 <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Leads da Agência</h3>
-                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Total: {leads.length}</p>
+                  <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {leads.length}</p>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="text-[10px] font-black uppercase tracking-widest text-zinc-500 border-b border-[var(--border-color)]">
+                      <tr className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] border-b border-[var(--border-color)]">
                         <th className="px-6 py-4">Cliente</th>
                         <th className="px-6 py-4">E-mail</th>
                         <th className="px-6 py-4">Telefone</th>
@@ -2519,7 +2776,7 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
                       {leads.map((lead, idx) => (
-                        <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-white/5 transition-colors group">
+                        <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
@@ -2528,9 +2785,9 @@ export default function App() {
                               <span className="font-bold">{lead.name}</span>
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-sm text-zinc-400">{lead.email}</td>
-                          <td className="px-6 py-4 text-sm text-zinc-500" data-testid={`lead-phone-${lead.id}`}>{lead.phone || '-'}</td>
-                          <td className="px-6 py-4 text-sm text-zinc-500">
+                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]">{lead.email}</td>
+                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]" data-testid={`lead-phone-${lead.id}`}>{lead.phone || '-'}</td>
+                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]">
                             {new Date(lead.created_at).toLocaleDateString()}
                           </td>
                           <td className="px-6 py-4">
@@ -2541,7 +2798,7 @@ export default function App() {
                             )}
                           </td>
                           <td className="px-6 py-4">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
                               {lead.process_internal_status || '-'}
                             </span>
                           </td>
@@ -2598,14 +2855,14 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden">
-                <div className="p-6 border-b border-white/5">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                <div className="p-6 border-b border-[var(--border-color)]">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Logs do Sistema</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <tr className="bg-[var(--bg-input)] text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
                         <th className="px-6 py-4">Data</th>
                         <th className="px-6 py-4">Agência</th>
                         <th className="px-6 py-4">Usuário</th>
@@ -2613,24 +2870,24 @@ export default function App() {
                         <th className="px-6 py-4">Detalhes</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-[var(--border-color)]">
                       {auditLogs.map(log => (
-                        <tr key={log.id} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4 text-xs text-zinc-400">
+                        <tr key={log.id} className="hover:bg-[var(--bg-input)] transition-colors">
+                          <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {new Date(log.created_at).toLocaleString('pt-BR')}
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-xs font-bold text-emerald-400">{log.agency_name || 'Sistema'}</span>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="text-xs font-bold">{log.user_name || 'Desconhecido'}</span>
+                            <span className="text-xs font-bold text-[var(--text-main)]">{log.user_name || 'Desconhecido'}</span>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-white/5 rounded-lg text-zinc-300">
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)]">
                               {log.action}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-xs text-zinc-500">
+                          <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {log.details}
                           </td>
                         </tr>
@@ -2638,8 +2895,8 @@ export default function App() {
                       {auditLogs.length === 0 && (
                         <tr>
                           <td colSpan={5} className="px-6 py-20 text-center">
-                            <ShieldCheck className="mx-auto text-zinc-800 mb-4" size={48} />
-                            <p className="text-zinc-500 font-bold">Nenhum log registrado.</p>
+                            <ShieldCheck className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
+                            <p className="text-[var(--text-muted)] font-bold">Nenhum log registrado.</p>
                           </td>
                         </tr>
                       )}
@@ -2657,26 +2914,26 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden">
-                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Gestão Global de Usuários</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <tr className="bg-[var(--bg-input)] text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
                         <th className="px-6 py-4">Nome</th>
                         <th className="px-6 py-4">Agência</th>
                         <th className="px-6 py-4">Função</th>
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-[var(--border-color)]">
                       {globalUsers.map(u => (
-                        <tr key={u.id} className="hover:bg-white/5 transition-colors group">
+                        <tr key={u.id} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <p className="font-bold text-sm">{u.name}</p>
-                            <p className="text-[10px] text-zinc-500">{u.email}</p>
+                            <p className="text-[10px] text-[var(--text-muted)]">{u.email}</p>
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-xs font-bold text-emerald-400">{u.agency_name || 'N/A'}</span>
@@ -2687,7 +2944,7 @@ export default function App() {
                                 ? 'bg-emerald-500/10 text-emerald-400'
                                 : u.role === 'gerente_financeiro'
                                 ? 'bg-cyan-500/10 text-cyan-400'
-                                : 'bg-zinc-500/10 text-zinc-500'
+                                : 'bg-[var(--bg-input)] text-[var(--text-muted)]'
                             }`}>
                               {u.role}
                             </span>
@@ -2700,13 +2957,20 @@ export default function App() {
                                   setUserForm({ name: u.name, email: u.email, password: '', role: u.role });
                                   setShowUserModal(true);
                                 }}
-                                className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-all"
+                                className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
                               >
                                 <Search size={14} />
                               </button>
                               <button 
+                                onClick={() => openTeamPasswordResetModal(u)}
+                                className="p-2 hover:bg-orange-500/20 rounded-lg text-[var(--text-muted)] hover:text-orange-400 transition-all"
+                                title="Resetar Senha"
+                              >
+                                <Key size={14} />
+                              </button>
+                              <button 
                                 onClick={() => deleteUser(u.id)}
-                                className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                                className="p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -2719,32 +2983,32 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden" data-testid="master-admin-access-table-card">
-                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden" data-testid="master-admin-access-table-card">
+                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Login dos Administradores por Agência</h3>
-                  <span className="text-xs text-zinc-500 font-bold uppercase tracking-widest">Total: {agencies.length}</span>
+                  <span className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {agencies.length}</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <tr className="bg-[var(--bg-input)] text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
                         <th className="px-6 py-4">Agência</th>
                         <th className="px-6 py-4">E-mail Admin</th>
                         <th className="px-6 py-4">Link Cliente</th>
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-[var(--border-color)]">
                       {agencies.map((agency) => (
-                        <tr key={`master-access-${agency.id}`} className="hover:bg-white/5 transition-colors">
+                        <tr key={`master-access-${agency.id}`} className="hover:bg-[var(--bg-input)] transition-colors">
                           <td className="px-6 py-4">
                             <p className="font-bold text-sm">{agency.name}</p>
-                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">/{agency.slug}</p>
+                            <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest">/{agency.slug}</p>
                           </td>
                           <td className="px-6 py-4 text-sm font-semibold" data-testid={`master-table-admin-email-${agency.id}`}>
                             <p>{agency.admin_email || 'Não configurado'}</p>
                             {agency.admin_role && (
-                              <p className="text-[10px] uppercase tracking-widest text-zinc-500 mt-1">perfil: {agency.admin_role}</p>
+                              <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] mt-1">perfil: {agency.admin_role}</p>
                             )}
                           </td>
                           <td className="px-6 py-4 text-xs text-emerald-400 font-bold">{`${window.location.origin}/?agency=${agency.slug}`}</td>
@@ -2753,7 +3017,7 @@ export default function App() {
                               <button
                                 data-testid={`master-copy-admin-access-${agency.id}`}
                                 onClick={() => copyAdminAccess(agency)}
-                                className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors text-xs font-black uppercase tracking-widest"
+                                className="px-3 py-2 rounded-xl bg-[var(--bg-card)] hover:bg-[var(--bg-input)] transition-colors text-xs font-black uppercase tracking-widest"
                               >
                                 Copiar Acesso
                               </button>
@@ -2782,8 +3046,8 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 overflow-hidden">
-                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Equipe da Agência</h3>
                   <button 
                     onClick={() => {
@@ -2800,18 +3064,18 @@ export default function App() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <tr className="bg-[var(--bg-input)] text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
                         <th className="px-6 py-4">Nome</th>
                         <th className="px-6 py-4">Função</th>
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-[var(--border-color)]">
                       {agencyUsers.map(u => (
-                        <tr key={u.id} className="hover:bg-white/5 transition-colors group">
+                        <tr key={u.id} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <p className="font-bold text-sm">{u.name}</p>
-                            <p className="text-[10px] text-zinc-500">{u.email}</p>
+                            <p className="text-[10px] text-[var(--text-muted)]">{u.email}</p>
                           </td>
                           <td className="px-6 py-4">
                             <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
@@ -2819,7 +3083,7 @@ export default function App() {
                                 ? 'bg-emerald-500/10 text-emerald-400'
                                 : u.role === 'gerente_financeiro'
                                 ? 'bg-cyan-500/10 text-cyan-400'
-                                : 'bg-zinc-500/10 text-zinc-500'
+                                : 'bg-[var(--bg-input)] text-[var(--text-muted)]'
                             }`}>
                               {u.role}
                             </span>
@@ -2832,13 +3096,20 @@ export default function App() {
                                   setUserForm({ name: u.name, email: u.email, password: '', role: u.role });
                                   setShowUserModal(true);
                                 }}
-                                className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-all"
+                                className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
                               >
                                 <Search size={14} />
                               </button>
                               <button 
+                                onClick={() => openTeamPasswordResetModal(u)}
+                                className="p-2 hover:bg-orange-500/20 rounded-lg text-[var(--text-muted)] hover:text-orange-400 transition-all"
+                                title="Resetar Senha"
+                              >
+                                <Key size={14} />
+                              </button>
+                              <button 
                                 onClick={() => deleteUser(u.id)}
-                                className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                                className="p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -2899,7 +3170,7 @@ export default function App() {
                     </div>
                     <div className="p-6 space-y-5">
                       <div className="flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden">
+                        <div className="w-16 h-16 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex items-center justify-center overflow-hidden">
                           {agencySettings.logo_url ? (
                             <img
                               src={agencySettings.logo_url}
@@ -2908,22 +3179,22 @@ export default function App() {
                               referrerPolicy="no-referrer"
                             />
                           ) : (
-                            <Building2 size={28} className="text-zinc-500" />
+                            <Building2 size={28} className="text-[var(--text-muted)]" />
                           )}
                         </div>
                         <div>
-                          <p className="font-black text-xl">{agencySettings.name || '-'}</p>
-                          <p className="text-[10px] uppercase tracking-widest text-zinc-500">/{agencySettings.slug || '-'}</p>
+                          <p className="font-black text-xl text-[var(--text-main)]">{agencySettings.name || '-'}</p>
+                          <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">/{agencySettings.slug || '-'}</p>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                          <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-black mb-1">Administrador</p>
-                          <p className="text-sm font-bold">{agencySettings.admin_email || user.email}</p>
+                        <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
+                          <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Administrador</p>
+                          <p className="text-sm font-bold text-[var(--text-main)]">{agencySettings.admin_email || user.email}</p>
                         </div>
-                        <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                          <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-black mb-1">Módulo Financeiro</p>
+                        <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
+                          <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Módulo Financeiro</p>
                           <p className={`text-sm font-black uppercase tracking-widest ${isFinanceModuleEnabled ? 'text-emerald-400' : 'text-amber-400'}`}>
                             {isFinanceModuleEnabled ? 'Ativado' : 'Desativado'}
                           </p>
@@ -3019,7 +3290,8 @@ export default function App() {
                       { id: 'objetivos', label: 'Objetivos', icon: Target },
                       { id: 'tasks', label: 'Checklist', icon: ClipboardList },
                       { id: 'vistos', label: 'Tipos de Visto', icon: ShieldCheck },
-                      { id: 'formularios', label: 'Formulários', icon: FileText },
+                      { id: 'formularios', label: 'Form Builder', icon: FileText },
+                      { id: 'planos', label: 'Planos', icon: DollarSign },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -3043,7 +3315,7 @@ export default function App() {
                         <button 
                           onClick={() => {
                             setEditingDestination(null);
-                            setDestinationForm({ name: '', flag: '', description: '', bg_image: '', is_active: true });
+                            setDestinationForm({ name: '', code: '', flag: '', description: '', bg_image: '', highlight_points: [], is_active: true, order: 0 });
                             setShowDestinationModal(true);
                           }}
                           className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg"
@@ -3053,18 +3325,23 @@ export default function App() {
                         </button>
                       </div>
                       <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto">
-                        {destinations.map((dest) => (
-                          <div key={dest.id} className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-4 group relative hover:border-emerald-500/30 transition-all">
+                        {destinations.sort((a, b) => (a.order || 0) - (b.order || 0)).map((dest) => (
+                          <div key={dest.id} className="p-4 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] space-y-4 group relative hover:border-emerald-500/30 transition-all">
                             <div className="flex justify-between items-start">
                               <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 bg-zinc-800 border border-white/5 rounded-xl flex items-center justify-center text-2xl shadow-inner">
+                                <div className="w-12 h-12 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl flex items-center justify-center text-2xl shadow-inner">
                                   {dest.flag}
                                 </div>
                                 <div>
-                                  <h4 className="font-bold text-lg">{dest.name}</h4>
-                                  <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${dest.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                                    {dest.is_active ? 'Ativo' : 'Inativo'}
-                                  </span>
+                                  <h4 className="font-bold text-lg text-[var(--text-main)]">{dest.name}</h4>
+                                  <div className="flex gap-2">
+                                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${dest.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                      {dest.is_active ? 'Ativo' : 'Inativo'}
+                                    </span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-[var(--bg-input)] text-[var(--text-muted)]">
+                                      {dest.code}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex gap-1">
@@ -3073,28 +3350,31 @@ export default function App() {
                                     setEditingDestination(dest);
                                     setDestinationForm({ 
                                       name: dest.name, 
+                                      code: dest.code || '',
                                       flag: dest.flag, 
                                       description: dest.description, 
                                       bg_image: dest.bg_image, 
-                                      is_active: dest.is_active 
+                                      highlight_points: Array.isArray(dest.highlight_points) ? dest.highlight_points : [],
+                                      is_active: dest.is_active,
+                                      order: dest.order || 0
                                     });
                                     setShowDestinationModal(true);
                                   }}
-                                  className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-all"
+                                  className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
                                 >
                                   <Pencil size={14} />
                                 </button>
                                 <button 
                                   onClick={() => deleteDestination(dest.id)}
-                                  className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                                  className="p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
                                 >
                                   <Trash2 size={14} />
                                 </button>
                               </div>
                             </div>
-                            <p className="text-xs text-zinc-500 line-clamp-2">{dest.description}</p>
+                            <p className="text-xs text-[var(--text-muted)] line-clamp-2">{dest.description}</p>
                             {dest.bg_image && (
-                              <div className="h-20 rounded-xl overflow-hidden border border-white/5">
+                              <div className="h-20 rounded-xl overflow-hidden border border-[var(--border-color)]">
                                 <img src={dest.bg_image} alt={dest.name} className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
                               </div>
                             )}
@@ -3253,6 +3533,173 @@ export default function App() {
                     </div>
                   )}
 
+                  {configSubTab === 'planos' && (
+                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                      <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
+                        <h3 className="font-black text-lg uppercase tracking-tighter">Gestão de Planos</h3>
+                        <button 
+                          onClick={() => {
+                            setEditingPlan(null);
+                            setPlanForm({ name: '', description: '', price: 0, features: [], is_recommended: false, icon: 'Star' });
+                            setShowPlanModal(true);
+                          }}
+                          className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg"
+                        >
+                          <Plus size={16} />
+                          Novo Plano
+                        </button>
+                      </div>
+                      <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto">
+                        {plans.map((plan) => (
+                          <div key={plan.id} className="p-4 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] space-y-4 group relative hover:border-emerald-500/30 transition-all">
+                            <div className="flex justify-between items-start">
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl flex items-center justify-center text-emerald-400 shadow-inner">
+                                  <DollarSign size={24} />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-lg text-[var(--text-main)]">{plan.name}</h4>
+                                  <div className="flex gap-2">
+                                    {plan.is_recommended && (
+                                      <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
+                                        Recomendado
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-[var(--bg-input)] text-[var(--text-muted)]">
+                                      R$ {plan.price.toLocaleString('pt-BR')}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex gap-1">
+                                <button 
+                                  onClick={() => {
+                                    setEditingPlan(plan);
+                                    setPlanForm({ 
+                                      name: plan.name, 
+                                      description: plan.description, 
+                                      price: plan.price, 
+                                      features: Array.isArray(plan.features) ? plan.features : [], 
+                                      is_recommended: plan.is_recommended, 
+                                      icon: plan.icon 
+                                    });
+                                    setShowPlanModal(true);
+                                  }}
+                                  className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => deletePlan(plan.id)}
+                                  className="p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs text-[var(--text-muted)] line-clamp-2">{plan.description}</p>
+                            <div className="flex flex-wrap gap-1">
+                              {(Array.isArray(plan.features) ? plan.features : []).slice(0, 3).map((f, i) => (
+                                <span key={i} className="text-[9px] bg-[var(--bg-input)] text-[var(--text-muted)] px-2 py-0.5 rounded-full border border-[var(--border-color)]">
+                                  {f}
+                                </span>
+                              ))}
+                              {(Array.isArray(plan.features) ? plan.features : []).length > 3 && (
+                                <span className="text-[9px] text-[var(--text-muted)] px-2 py-0.5">
+                                  +{(Array.isArray(plan.features) ? plan.features : []).length - 3}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {plans.length === 0 && (
+                          <div className="col-span-full text-center py-20 bg-[var(--bg-card)]/30 rounded-3xl border border-dashed border-[var(--border-color)]">
+                            <DollarSign size={40} className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" />
+                            <p className="text-[var(--text-muted)] text-sm font-bold">Nenhum plano cadastrado.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {configSubTab === 'formularios' && (
+                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                      <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
+                        <h3 className="font-black text-lg uppercase tracking-tighter">Form Builder (Pré-Formulário)</h3>
+                        <button 
+                          onClick={() => {
+                            setEditingFormField(null);
+                            setFormFieldForm({ label: '', type: 'text', required: false, options: [], order: 0, destination_id: null });
+                            setShowFormFieldModal(true);
+                          }}
+                          className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg"
+                        >
+                          <Plus size={16} />
+                          Novo Campo
+                        </button>
+                      </div>
+                      <div className="p-6 space-y-4 max-h-[600px] overflow-y-auto">
+                        {formFields.sort((a, b) => (a.order || 0) - (b.order || 0)).map((field) => (
+                          <div key={field.id} className="p-4 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] flex justify-between items-center group hover:border-emerald-500/30 transition-all">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl flex items-center justify-center text-[var(--text-muted)]">
+                                {field.order}
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-[var(--text-main)]">{field.label}</h4>
+                                <div className="flex gap-2 items-center">
+                                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-[var(--bg-input)] text-[var(--text-muted)]">
+                                    {field.type}
+                                  </span>
+                                  {field.required && (
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-red-500/10 text-red-400">
+                                      Obrigatório
+                                    </span>
+                                  )}
+                                  {field.destination_id && (
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-blue-500/10 text-blue-400">
+                                      Destino: {destinations.find(d => d.id === field.destination_id)?.name || field.destination_id}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => {
+                                  setEditingFormField(field);
+                                  setFormFieldForm({ 
+                                    label: field.label, 
+                                    type: field.type, 
+                                    required: field.required, 
+                                    options: Array.isArray(field.options) ? field.options : [], 
+                                    order: field.order || 0,
+                                    destination_id: field.destination_id || null
+                                  });
+                                  setShowFormFieldModal(true);
+                                }}
+                                className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button 
+                                onClick={() => deleteFormField(field.id)}
+                                className="p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {formFields.length === 0 && (
+                          <div className="text-center py-20 bg-[var(--bg-card)]/30 rounded-3xl border border-dashed border-[var(--border-color)]">
+                            <ClipboardList size={40} className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" />
+                            <p className="text-[var(--text-muted)] text-sm font-bold">Nenhum campo configurado.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {configSubTab === 'vistos' && (
                     <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                       <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
@@ -3297,7 +3744,7 @@ export default function App() {
                                           name: vt.name, 
                                           description: vt.description, 
                                           base_price: vt.base_price, 
-                                          required_docs: JSON.parse(vt.required_docs || '[]') 
+                                          required_docs: vt.required_docs || [] 
                                         });
                                         setShowVisaTypeModal(true);
                                       }}
@@ -3372,7 +3819,7 @@ export default function App() {
                               <tr key={f.id} className="hover:bg-[var(--bg-card)]/30 transition-colors group">
                                 <td className="px-6 py-4 font-bold text-sm">{f.title}</td>
                                 <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
-                                  {JSON.parse(f.fields || '[]').length} campos configurados
+                                  {(f.fields || []).length} campos configurados
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                   <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -3382,7 +3829,7 @@ export default function App() {
                                         setFormForm({ 
                                           visa_type_id: f.visa_type_id, 
                                           title: f.title, 
-                                          fields: JSON.parse(f.fields || '[]') 
+                                          fields: f.fields || [] 
                                         });
                                         setShowFormModal(true);
                                       }}
@@ -3478,7 +3925,7 @@ export default function App() {
           )}
           <AnimatePresence>
             {showUserModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -3536,7 +3983,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowUserModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -3553,43 +4000,43 @@ export default function App() {
             )}
 
             {showTaskModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <h3 className="text-2xl font-black mb-6">{editingTask ? 'Editar Task' : 'Nova Task'}</h3>
                   <form onSubmit={handleTaskSubmit} className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Título da Task</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Título da Task</label>
                       <input 
                         type="text" 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         placeholder="Ex: Enviar Passaporte"
                         value={taskForm.title}
                         onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Descrição (Opcional)</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição (Opcional)</label>
                       <textarea 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
                         value={taskForm.description}
                         onChange={e => setTaskForm({ ...taskForm, description: e.target.value })}
                       />
                     </div>
-                    <div className="flex items-center gap-3 p-4 bg-zinc-800/50 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-3 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
                       <input 
                         type="checkbox" 
                         id="task_active"
-                        className="w-5 h-5 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-emerald-500"
+                        className="w-5 h-5 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
                         checked={taskForm.is_active}
                         onChange={e => setTaskForm({ ...taskForm, is_active: e.target.checked })}
                       />
-                      <label htmlFor="task_active" className="text-sm font-bold text-zinc-300 cursor-pointer">
+                      <label htmlFor="task_active" className="text-sm font-bold text-[var(--text-muted)] cursor-pointer">
                         Task Ativa?
                       </label>
                     </div>
@@ -3598,7 +4045,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowTaskModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -3615,50 +4062,51 @@ export default function App() {
             )}
 
             {showVisaTypeModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
                 >
                   <h3 className="text-2xl font-black mb-6">{editingVisaType ? 'Editar Tipo de Visto' : 'Novo Tipo de Visto'}</h3>
                   <form onSubmit={saveVisaType} className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Nome</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome</label>
                       <input 
                         type="text" 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={visaTypeForm.name}
                         onChange={e => setVisaTypeForm({ ...visaTypeForm, name: e.target.value })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Descrição</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição</label>
                       <textarea 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
                         value={visaTypeForm.description}
                         onChange={e => setVisaTypeForm({ ...visaTypeForm, description: e.target.value })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Preço Base (R$)</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Preço Base (R$)</label>
                       <input 
                         type="number" 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={visaTypeForm.base_price}
                         onChange={e => setVisaTypeForm({ ...visaTypeForm, base_price: Number(e.target.value) })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Documentos Necessários</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Documentos Necessários</label>
                       <div className="space-y-2">
                         {visaTypeForm.required_docs.map((doc, idx) => (
                           <div key={idx} className="flex gap-2">
                             <input 
                               type="text" 
-                              className="flex-1 px-4 py-2 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                              className="flex-1 px-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                               value={doc}
                               onChange={e => {
                                 const newDocs = [...visaTypeForm.required_docs];
@@ -3681,7 +4129,7 @@ export default function App() {
                         <button 
                           type="button"
                           onClick={() => setVisaTypeForm({ ...visaTypeForm, required_docs: [...visaTypeForm.required_docs, ''] })}
-                          className="w-full py-2 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-400 transition-all flex items-center justify-center gap-2"
+                          className="w-full py-2 bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] transition-all flex items-center justify-center gap-2 border border-[var(--border-color)]"
                         >
                           <Plus size={12} />
                           Adicionar Documento
@@ -3693,7 +4141,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowVisaTypeModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -3710,20 +4158,21 @@ export default function App() {
             )}
 
             {showFormModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="bg-zinc-900 w-full max-w-2xl rounded-3xl border border-white/10 p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
                 >
                   <h3 className="text-2xl font-black mb-6">{editingForm ? 'Editar Formulário' : 'Novo Formulário'}</h3>
                   <form onSubmit={saveForm} className="space-y-6">
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Título do Formulário</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Título do Formulário</label>
                       <input 
                         type="text" 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={formForm.title}
                         onChange={e => setFormForm({ ...formForm, title: e.target.value })}
                       />
@@ -3731,7 +4180,7 @@ export default function App() {
 
                     <div className="space-y-4">
                       <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Campos do Formulário</label>
+                        <label className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Campos do Formulário</label>
                         <button 
                           type="button"
                           onClick={() => setFormForm({ ...formForm, fields: [...formForm.fields, { label: '', type: 'text', required: true }] })}
@@ -3744,12 +4193,12 @@ export default function App() {
                       
                       <div className="space-y-3">
                         {formForm.fields.map((field, idx) => (
-                          <div key={idx} className="p-4 bg-white/5 rounded-2xl border border-white/5 grid grid-cols-1 md:grid-cols-3 gap-4 relative group">
+                          <div key={idx} className="p-4 bg-[var(--bg-input)] rounded-2xl border border-[var(--border-color)] grid grid-cols-1 md:grid-cols-3 gap-4 relative group">
                             <div className="space-y-1">
-                              <label className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Rótulo</label>
+                              <label className="text-[8px] font-black uppercase tracking-widest text-[var(--text-muted)]">Rótulo</label>
                               <input 
                                 type="text" 
-                                className="w-full px-3 py-2 bg-zinc-800 border border-white/5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+                                className="w-full px-3 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-lg text-xs outline-none focus:ring-1 focus:ring-emerald-500"
                                 value={field.label}
                                 onChange={e => {
                                   const newFields = [...formForm.fields];
@@ -3759,9 +4208,9 @@ export default function App() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Tipo</label>
+                              <label className="text-[8px] font-black uppercase tracking-widest text-[var(--text-muted)]">Tipo</label>
                               <select 
-                                className="w-full px-3 py-2 bg-zinc-800 border border-white/5 rounded-lg text-xs outline-none focus:ring-1 focus:ring-emerald-500"
+                                className="w-full px-3 py-2 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-lg text-xs outline-none focus:ring-1 focus:ring-emerald-500"
                                 value={field.type}
                                 onChange={e => {
                                   const newFields = [...formForm.fields];
@@ -3781,7 +4230,7 @@ export default function App() {
                                 <input 
                                   type="checkbox" 
                                   id={`req-${idx}`}
-                                  className="w-4 h-4 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-emerald-500"
+                                  className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-card)] text-emerald-500 focus:ring-emerald-500"
                                   checked={field.required}
                                   onChange={e => {
                                     const newFields = [...formForm.fields];
@@ -3789,7 +4238,7 @@ export default function App() {
                                     setFormForm({ ...formForm, fields: newFields });
                                   }}
                                 />
-                                <label htmlFor={`req-${idx}`} className="text-[10px] font-bold text-zinc-500 cursor-pointer">Obrigatório</label>
+                                <label htmlFor={`req-${idx}`} className="text-[10px] font-bold text-[var(--text-muted)] cursor-pointer">Obrigatório</label>
                               </div>
                               <button 
                                 type="button"
@@ -3811,7 +4260,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowFormModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -3828,22 +4277,22 @@ export default function App() {
             )}
 
             {showProcessModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <h3 className="text-2xl font-black mb-6">{editingProcess ? 'Editar Processo' : 'Novo Processo'}</h3>
                   <form onSubmit={saveProcess} className="space-y-4">
                     {!editingProcess && (
                       <>
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Cliente</label>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Cliente</label>
                           <select 
                             required
-                            className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                             value={processForm.client_id}
                             onChange={e => setProcessForm({ ...processForm, client_id: e.target.value })}
                             data-testid="process-client-select"
@@ -3855,10 +4304,10 @@ export default function App() {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Tipo de Visto</label>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo de Visto</label>
                           <select 
                             required
-                            className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                             value={processForm.visa_type_id}
                             onChange={e => setProcessForm({ ...processForm, visa_type_id: e.target.value })}
                             data-testid="process-visa-type-select"
@@ -3883,9 +4332,9 @@ export default function App() {
                     {editingProcess && (
                       <>
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Status do Processo</label>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Status do Processo</label>
                           <select
-                            className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                             value={processForm.status}
                             onChange={e => setProcessForm({ ...processForm, status: e.target.value as any })}
                             data-testid="process-status-select"
@@ -3898,9 +4347,9 @@ export default function App() {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Etapa Interna</label>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Etapa Interna</label>
                           <select
-                            className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                             value={processForm.internal_status}
                             onChange={e => setProcessForm({ ...processForm, internal_status: e.target.value })}
                             data-testid="process-internal-status-select"
@@ -3917,9 +4366,9 @@ export default function App() {
                     )}
 
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Consultor</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Consultor</label>
                       <select 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={processForm.consultant_id}
                         onChange={e => setProcessForm({ ...processForm, consultant_id: e.target.value })}
                         data-testid="process-consultant-select"
@@ -3931,9 +4380,9 @@ export default function App() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Analista</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Analista</label>
                       <select 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={processForm.analyst_id}
                         onChange={e => setProcessForm({ ...processForm, analyst_id: e.target.value })}
                         data-testid="process-analyst-select"
@@ -3952,7 +4401,7 @@ export default function App() {
                           setShowProcessModal(false);
                           setEditingProcess(null);
                         }}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -3969,23 +4418,23 @@ export default function App() {
             )}
 
             {showFinanceModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <h3 className="text-2xl font-black mb-6">
                     {editingFinance ? 'Editar Lançamento' : `Novo Lançamento (${financeTab === 'payable' ? 'Conta a Pagar' : 'Conta a Receber'})`}
                   </h3>
                   <form onSubmit={handleFinanceSubmit} className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Descrição</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição</label>
                       <input 
                         type="text" 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         placeholder="Ex: Aluguel Escritório"
                         value={financeForm.description}
                         onChange={e => setFinanceForm({ ...financeForm, description: e.target.value })}
@@ -3993,41 +4442,41 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Valor</label>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Valor</label>
                         <input 
                           type="number" 
                           step="0.01"
                           required
-                          className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                           value={financeForm.amount}
                           onChange={e => setFinanceForm({ ...financeForm, amount: parseFloat(e.target.value) })}
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Vencimento</label>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Vencimento</label>
                         <input 
                           type="date" 
                           required
-                          className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                           value={financeForm.due_date}
                           onChange={e => setFinanceForm({ ...financeForm, due_date: e.target.value })}
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Categoria</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Categoria</label>
                       <input 
                         type="text" 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         placeholder="Ex: Operacional, Marketing..."
                         value={financeForm.category}
                         onChange={e => setFinanceForm({ ...financeForm, category: e.target.value })}
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Status</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Status</label>
                       <select 
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                         value={financeForm.status}
                         onChange={e => setFinanceForm({ ...financeForm, status: e.target.value })}
                       >
@@ -4042,9 +4491,9 @@ export default function App() {
 
                     {user?.role === 'master' && (
                       <div>
-                        <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Agência</label>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Agência</label>
                         <select 
-                          className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                           value={financeForm.agency_id}
                           onChange={e => setFinanceForm({ ...financeForm, agency_id: e.target.value })}
                         >
@@ -4060,7 +4509,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowFinanceModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -4077,12 +4526,12 @@ export default function App() {
             )}
 
             {showAgencyModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <h3 className="text-2xl font-black mb-6">{editingAgency ? 'Editar Agência' : 'Cadastrar Nova Agência'}</h3>
                   <form 
@@ -4092,15 +4541,15 @@ export default function App() {
                   >
                     <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-1">
                       <div className="space-y-4">
-                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                          <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-4">Informações da Agência</h4>
+                        <div className="p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
+                          <h4 className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] mb-4">Informações da Agência</h4>
                           <div className="space-y-4">
                             <div>
-                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Nome da Agência</label>
+                              <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome da Agência</label>
                               <input 
                                 type="text" 
                                 required
-                                className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                                className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                                 placeholder="Ex: Korus Miami"
                                 value={newAgency.name}
                                 onChange={e => {
@@ -4111,9 +4560,9 @@ export default function App() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Slug de Acesso</label>
-                              <div className="flex items-center gap-2 px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl">
-                                <span className="text-zinc-500 text-sm">korus.com/</span>
+                              <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Slug de Acesso</label>
+                              <div className="flex items-center gap-2 px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl">
+                                <span className="text-[var(--text-muted)] text-sm">korus.com/</span>
                                 <input 
                                   type="text" 
                                   required
@@ -4124,15 +4573,15 @@ export default function App() {
                                 />
                               </div>
                             </div>
-                            <div className="flex items-center gap-3 p-3 bg-zinc-900/50 rounded-xl border border-white/5">
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
                               <input 
                                 type="checkbox" 
                                 id="has_finance"
-                                className="w-4 h-4 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-emerald-500"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
                                 checked={newAgency.has_finance}
                                 onChange={e => setNewAgency({ ...newAgency, has_finance: e.target.checked })}
                               />
-                              <label htmlFor="has_finance" className="text-xs font-bold text-zinc-300 cursor-pointer">
+                              <label htmlFor="has_finance" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 Financeiro Integrado
                               </label>
                             </div>
@@ -4140,37 +4589,37 @@ export default function App() {
                         </div>
   
                         {!editingAgency && (
-                          <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-4">Administrador da Agência</h4>
+                          <div className="p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] mb-4">Administrador da Agência</h4>
                             <div className="space-y-4">
                               <div>
-                                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Nome Completo</label>
+                                <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome Completo</label>
                                 <input 
                                   type="text" 
                                   required
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                                  className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                                   placeholder="Nome do Admin"
                                   value={newAgency.admin_name}
                                   onChange={e => setNewAgency({ ...newAgency, admin_name: e.target.value })}
                                 />
                               </div>
                               <div>
-                                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">E-mail de Login</label>
+                                <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">E-mail de Login</label>
                                 <input 
                                   type="email" 
                                   required
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                                  className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                                   placeholder="admin@agencia.com"
                                   value={newAgency.admin_email}
                                   onChange={e => setNewAgency({ ...newAgency, admin_email: e.target.value })}
                                 />
                               </div>
                               <div>
-                                <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2">Senha Inicial</label>
+                                <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Senha Inicial</label>
                                 <input 
                                   type="password" 
                                   required
-                                  className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                                  className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
                                   placeholder="••••••••"
                                   value={newAgency.admin_password}
                                   onChange={e => setNewAgency({ ...newAgency, admin_password: e.target.value })}
@@ -4182,11 +4631,11 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex gap-3 mt-8 pt-4 border-t border-white/5">
+                    <div className="flex gap-3 mt-8 pt-4 border-t border-[var(--border-color)]">
                       <button 
                         type="button"
                         onClick={() => setShowAgencyModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-zinc-400 hover:bg-white/5 transition-all"
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
                       >
                         Cancelar
                       </button>
@@ -4219,16 +4668,16 @@ export default function App() {
             >
               {/* Left Column: Info & Documents */}
               <div className="lg:col-span-2 space-y-8">
-                <div className="bg-zinc-900/50 p-8 rounded-3xl border border-white/5 shadow-xl">
+                <div className="bg-[var(--bg-card)]/50 p-8 rounded-3xl border border-[var(--border-color)] shadow-xl">
                   <div className="flex justify-between items-start mb-8">
                     <div>
                       <h3 className="text-3xl font-black tracking-tight">{selectedProcess.client_name}</h3>
-                      <p className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest mt-1">
+                      <p className="text-[var(--text-muted)] font-bold uppercase text-[10px] tracking-widest mt-1">
                         {selectedProcess.visa_name} • ID: #{selectedProcess.id}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      {(user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
+                      {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
                         <button
                           onClick={() => openProcessEditModal(selectedProcess)}
                           className="p-3 bg-blue-500/10 hover:bg-blue-500/20 rounded-2xl transition-all text-blue-400 border border-blue-500/20"
@@ -4241,16 +4690,77 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-8 py-8 border-y border-white/5">
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-8 py-8 border-y border-[var(--border-color)]">
                     <div>
-                      <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-2">Etapa Atual</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-2">Etapa Atual</p>
                       <p className="font-bold text-xl text-emerald-400">{STATUS_LABELS[selectedProcess.internal_status] || selectedProcess.internal_status}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-2">Iniciado em</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-2">Iniciado em</p>
                       <p className="font-bold text-xl">{new Date(selectedProcess.created_at).toLocaleDateString()}</p>
                     </div>
+                    {selectedProcess.travel_date && (
+                      <div>
+                        <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-2">Data de Viagem</p>
+                        <p className="font-bold text-xl text-cyan-400">{new Date(selectedProcess.travel_date).toLocaleDateString()}</p>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Form Responses Section */}
+                  {selectedProcess.responses && selectedProcess.responses.length > 0 && (
+                    <div className="mt-8 pt-8 border-t border-[var(--border-color)] space-y-8">
+                      {selectedProcess.responses.map((resp: any) => {
+                        let data: Record<string, any> = {};
+                        let fields = [];
+                        try {
+                          data = JSON.parse(resp.data);
+                          fields = JSON.parse(resp.form_fields || '[]');
+                        } catch (e) {
+                          return null;
+                        }
+
+                        return (
+                          <div key={resp.id} className="space-y-6">
+                            <div className="flex justify-between items-center">
+                              <h4 className="font-black uppercase tracking-widest text-xs">{resp.form_title || 'Formulário'}</h4>
+                              {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
+                                <button
+                                  onClick={() => {
+                                    setEditingFormResponse(resp);
+                                    setFormEditData(data);
+                                    setShowFormEditModal(true);
+                                  }}
+                                  className="text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-2 transition-colors"
+                                >
+                                  <Pencil size={12} />
+                                  EDITAR RESPOSTAS
+                                </button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
+                              {fields.map((field: any) => (
+                                <div key={field.id} className="space-y-1">
+                                  <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{field.label}</p>
+                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(data[field.id] || '-')}</p>
+                                </div>
+                              ))}
+                              {/* Fallback for fields not in definition but in data */}
+                              {Object.entries(data).map(([key, value]) => {
+                                if (fields.find((f: any) => f.id === key)) return null;
+                                return (
+                                  <div key={key} className="space-y-1">
+                                    <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{key}</p>
+                                    <p className="text-sm font-bold text-[var(--text-main)]">{String(value)}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   <div className="mt-8">
                     <div className="flex justify-between items-center mb-6">
@@ -4263,14 +4773,14 @@ export default function App() {
                     <div className="space-y-3">
                       {selectedProcess.documents.length > 0 ? (
                         selectedProcess.documents.map((doc: any) => (
-                          <div key={doc.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 hover:border-white/10 transition-all">
+                          <div key={doc.id} className="flex items-center justify-between p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)] hover:border-[var(--text-muted)]/30 transition-all">
                             <div className="flex items-center gap-4">
-                              <div className="p-2 bg-zinc-800 rounded-lg">
-                                <FileText className="text-zinc-400" size={20} />
+                              <div className="p-2 bg-[var(--bg-input)] rounded-lg">
+                                <FileText className="text-[var(--text-muted)]" size={20} />
                               </div>
                               <div>
                                 <p className="text-sm font-bold">{doc.name}</p>
-                                <p className="text-[10px] text-zinc-500 font-medium">{new Date(doc.uploaded_at).toLocaleDateString()}</p>
+                                <p className="text-[10px] text-[var(--text-muted)] font-medium">{new Date(doc.uploaded_at).toLocaleDateString()}</p>
                               </div>
                             </div>
                             <div className="flex items-center gap-4">
@@ -4279,21 +4789,88 @@ export default function App() {
                               }`}>
                                 {doc.status}
                               </span>
-                              <button className="text-xs font-black hover:text-emerald-400 transition-colors">ABRIR</button>
+                              <button 
+                                onClick={() => window.open(doc.url, '_blank')}
+                                className="text-xs font-black hover:text-emerald-400 transition-colors"
+                              >
+                                ABRIR
+                              </button>
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div className="text-center py-12 bg-white/5 rounded-3xl border border-dashed border-white/10">
-                          <AlertCircle className="mx-auto text-zinc-700 mb-3" size={40} />
-                          <p className="text-zinc-500 text-sm font-bold">Aguardando envio de documentos.</p>
+                        <div className="text-center py-12 bg-[var(--bg-input)]/50 rounded-3xl border border-dashed border-[var(--border-color)]">
+                          <AlertCircle className="mx-auto text-[var(--text-muted)]/30 mb-3" size={40} />
+                          <p className="text-[var(--text-muted)] text-sm font-bold">Aguardando envio de documentos.</p>
                         </div>
                       )}
                     </div>
                   </div>
 
+                  {/* Financial Section */}
+                  {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.financial && (
+                    <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                      <h4 className="font-black uppercase tracking-widest text-xs mb-6">Financeiro & Pagamento</h4>
+                      <div className="p-6 bg-[var(--bg-input)]/50 rounded-3xl border border-[var(--border-color)]">
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Valor do Plano</p>
+                            <p className="text-2xl font-black text-emerald-400">
+                              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(selectedProcess.financial.amount)}
+                            </p>
+                          </div>
+                          <StatusBadge status={selectedProcess.financial.status} />
+                        </div>
+
+                        {selectedProcess.financial.status === 'proof_received' && (
+                          <div className="space-y-4">
+                            <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-2xl">
+                              <p className="text-sm font-bold text-blue-400 mb-3 flex items-center gap-2">
+                                <FileText size={16} />
+                                Comprovante de Pagamento Anexado
+                              </p>
+                              <a 
+                                href={selectedProcess.financial.proof_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 text-xs font-black text-white bg-zinc-800 px-4 py-2 rounded-xl hover:bg-zinc-700 transition-all"
+                              >
+                                Visualizar Comprovante
+                                <ArrowUpRight size={14} />
+                              </a>
+                            </div>
+
+                            <div className="flex gap-3">
+                              <button 
+                                onClick={() => validateFinancial(selectedProcess.id, 'confirmed')}
+                                className="flex-1 bg-emerald-500 text-black py-3 rounded-xl font-black uppercase tracking-widest text-[10px] hover:opacity-90 transition-all"
+                              >
+                                Confirmar Pagamento
+                              </button>
+                              <button 
+                                onClick={() => validateFinancial(selectedProcess.id, 'pending')}
+                                className="flex-1 bg-red-500/10 text-red-400 py-3 rounded-xl font-black uppercase tracking-widest text-[10px] border border-red-500/20 hover:bg-red-500/20 transition-all"
+                              >
+                                Recusar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {selectedProcess.financial.status === 'confirmed' && (
+                          <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl">
+                            <p className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+                              <ShieldCheck size={16} />
+                              Pagamento validado em {new Date(selectedProcess.financial.confirmed_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Tasks Checklist */}
-                  <div className="mt-8 pt-8 border-t border-white/5">
+                  <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
                     <h4 className="font-black uppercase tracking-widest text-xs mb-6">Checklist do Processo</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {selectedProcess.tasks && selectedProcess.tasks.length > 0 ? (
@@ -4304,28 +4881,28 @@ export default function App() {
                             className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-4 ${
                               task.status === 'completed' 
                                 ? 'bg-emerald-500/5 border-emerald-500/20 opacity-60' 
-                                : 'bg-white/5 border-white/5 hover:border-white/10'
+                                : 'bg-[var(--bg-input)] border-[var(--border-color)] hover:border-[var(--text-muted)]/30'
                             }`}
                           >
                             <div className={`w-6 h-6 rounded-lg flex items-center justify-center border-2 transition-all ${
                               task.status === 'completed' 
                                 ? 'bg-emerald-500 border-emerald-500 text-black' 
-                                : 'border-white/10'
+                                : 'border-[var(--border-color)]'
                             }`}>
                               {task.status === 'completed' && <Check size={14} strokeWidth={4} />}
                             </div>
                             <div>
-                              <p className={`text-sm font-bold ${task.status === 'completed' ? 'line-through text-zinc-500' : ''}`}>
+                              <p className={`text-sm font-bold ${task.status === 'completed' ? 'line-through text-[var(--text-muted)]' : 'text-[var(--text-main)]'}`}>
                                 {task.title}
                               </p>
                               {task.description && (
-                                <p className="text-[10px] text-zinc-500 mt-0.5">{task.description}</p>
+                                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{task.description}</p>
                               )}
                             </div>
                           </div>
                         ))
                       ) : (
-                        <p className="text-zinc-500 text-xs font-bold col-span-2">Nenhuma task vinculada a este processo.</p>
+                        <p className="text-[var(--text-muted)] text-xs font-bold col-span-2">Nenhuma task vinculada a este processo.</p>
                       )}
                     </div>
                   </div>
@@ -4333,13 +4910,13 @@ export default function App() {
               </div>
 
               {/* Right Column: Chat */}
-              <div className="bg-zinc-900/50 rounded-3xl border border-white/5 shadow-xl flex flex-col h-[650px]">
-                <div className="p-6 border-b border-white/5 flex items-center justify-between">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] shadow-xl flex flex-col h-[650px]">
+                <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
                     <h4 className="font-black uppercase tracking-widest text-xs">Canal de Suporte</h4>
                   </div>
-                  <Globe size={16} className="text-zinc-700" />
+                  <Globe size={16} className="text-[var(--text-muted)]/30" />
                 </div>
                 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -4348,12 +4925,12 @@ export default function App() {
                       <div className={`max-w-[85%] p-4 rounded-2xl text-sm font-medium leading-relaxed ${
                         msg.sender_id === user.id 
                           ? 'brand-gradient text-black rounded-tr-none font-bold' 
-                          : 'bg-zinc-800 text-zinc-200 rounded-tl-none'
+                          : 'bg-[var(--bg-input)] text-[var(--text-main)] rounded-tl-none'
                       }`}>
                         {msg.content}
                       </div>
                       <div className="flex items-center gap-2 mt-2 px-1">
-                        <span className="text-[9px] text-zinc-500 font-black uppercase tracking-tighter">
+                        <span className="text-[9px] text-[var(--text-muted)] font-black uppercase tracking-tighter">
                           {msg.sender_name} • {new Date(msg.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
@@ -4361,7 +4938,7 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="p-6 border-t border-white/5 bg-black/20">
+                <div className="p-6 border-t border-[var(--border-color)] bg-black/5">
                   <form 
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -4372,7 +4949,7 @@ export default function App() {
                     <input 
                       type="text" 
                       placeholder="Escreva sua mensagem..." 
-                      className="flex-1 px-5 py-3 bg-zinc-800/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
+                      className="flex-1 px-5 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
                       value={chatMessage}
                       onChange={(e) => setChatMessage(e.target.value)}
                     />
@@ -4390,21 +4967,83 @@ export default function App() {
 
           {/* Start Process Modal */}
           <AnimatePresence>
+            {showFormEditModal && editingFormResponse && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
+                >
+                  <h3 className="text-2xl font-black mb-6 uppercase tracking-tight">Corrigir Informações: {editingFormResponse.form_title}</h3>
+                  <form onSubmit={handleFormEditSubmit} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {JSON.parse(editingFormResponse.form_fields || '[]').map((field: any) => (
+                        <div key={field.id}>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">{field.label}</label>
+                          {field.type === 'textarea' ? (
+                            <textarea
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px]"
+                              value={formEditData[field.id] || ''}
+                              onChange={e => setFormEditData({ ...formEditData, [field.id]: e.target.value })}
+                            />
+                          ) : field.type === 'select' ? (
+                            <select
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                              value={formEditData[field.id] || ''}
+                              onChange={e => setFormEditData({ ...formEditData, [field.id]: e.target.value })}
+                            >
+                              <option value="">Selecione...</option>
+                              {field.options?.map((opt: string) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={field.type || 'text'}
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                              value={formEditData[field.id] || ''}
+                              onChange={e => setFormEditData({ ...formEditData, [field.id]: e.target.value })}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-3 pt-4">
+                      <button 
+                        type="button"
+                        onClick={() => setShowFormEditModal(false)}
+                        className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="submit"
+                        className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-500/20"
+                      >
+                        Salvar Alterações
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+
             {showStartModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-zinc-900 w-full max-w-md rounded-3xl border border-white/10 p-8 shadow-2xl"
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <h3 className="text-2xl font-black mb-6">Iniciar Novo Processo</h3>
                   <form onSubmit={handleStartProcess} className="space-y-6">
                     <div>
-                      <label className="block text-xs font-black text-zinc-500 uppercase tracking-widest mb-2">Tipo de Visto</label>
+                      <label className="block text-xs font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo de Visto</label>
                       <select 
                         required
-                        className="w-full px-4 py-3 bg-zinc-800 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 appearance-none"
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 appearance-none"
                         value={startProcessData.visa_type_id}
                         onChange={e => setStartProcessData({ ...startProcessData, visa_type_id: parseInt(e.target.value) })}
                       >
@@ -4415,15 +5054,15 @@ export default function App() {
                       </select>
                     </div>
 
-                    <div className="flex items-center gap-3 p-4 bg-zinc-800/50 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-3 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
                       <input 
                         type="checkbox" 
                         id="is_dependent"
-                        className="w-5 h-5 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-emerald-500"
+                        className="w-5 h-5 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
                         checked={startProcessData.is_dependent}
                         onChange={e => setStartProcessData({ ...startProcessData, is_dependent: e.target.checked })}
                       />
-                      <label htmlFor="is_dependent" className="text-sm font-bold text-zinc-300 cursor-pointer">
+                      <label htmlFor="is_dependent" className="text-sm font-bold text-[var(--text-muted)] cursor-pointer">
                         Este é um processo para dependente?
                       </label>
                     </div>
@@ -4432,7 +5071,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setShowStartModal(false)}
-                        className="flex-1 px-6 py-3 rounded-xl font-bold text-zinc-500 hover:bg-white/5 transition-all"
+                        className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
                       >
                         Cancelar
                       </button>

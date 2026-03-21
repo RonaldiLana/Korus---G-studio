@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowRight, ArrowLeft, CheckCircle2, User, Phone, Mail, MapPin, Globe, Plane, Users, Target, ClipboardList, Briefcase, Heart, GraduationCap } from 'lucide-react';
+import { ArrowRight, ArrowLeft, CheckCircle2, User, Phone, Mail, MapPin, Globe, Plane, Users, Target, ClipboardList, Briefcase, Heart, GraduationCap, Plus, Trash2 } from 'lucide-react';
 
 const ICON_MAP: Record<string, any> = {
   Globe,
@@ -15,11 +15,14 @@ const ICON_MAP: Record<string, any> = {
 interface Props {
   onComplete: (data: any) => void;
   preFormQuestions?: any[];
+  formFields?: any[];
+  destinationId?: number;
+  visaTypes?: any[];
 }
 
-export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions }) => {
+export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, formFields, destinationId, visaTypes }) => {
   const [step, setStep] = useState(1);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<any>({
     fullName: '',
     phone: '',
     email: '',
@@ -27,21 +30,30 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions })
     hasPassport: '',
     hasVisaDenied: '',
     travelDate: '',
-    travelParty: '',
+    travelParty: 'Sozinho',
     travelGoal: '',
+    visaTypeId: null,
+    dependentLevel: 'Individual',
+    dependents: [],
+    dynamicResponses: {}
   });
 
-  const totalSteps = 3;
+  const dynamicFields = formFields?.filter(f => !f.destination_id || f.destination_id === destinationId) || [];
+  
+  // Steps: 1: Basic, 2: Travel, 3: Dependents, 4: Goal, 5: Dynamic
+  const totalSteps = 4 + (dynamicFields.length > 0 ? 1 : 0);
   const progress = (step / totalSteps) * 100;
 
-  const displayGoals = preFormQuestions && preFormQuestions.length > 0 
-    ? preFormQuestions 
-    : [
-        { id: 'turismo', label: 'Turismo', icon: 'Globe' },
-        { id: 'estudo', label: 'Estudo', icon: 'Plane' },
-        { id: 'negocios', label: 'Negócios', icon: 'Target' },
-        { id: 'imigracao', label: 'Imigração', icon: 'Users' },
-      ];
+  const displayGoals = visaTypes && visaTypes.length > 0 && visaTypes.some(v => v.destination_id === destinationId)
+    ? visaTypes.filter(v => v.destination_id === destinationId)
+    : preFormQuestions && preFormQuestions.length > 0 
+      ? preFormQuestions 
+      : [
+          { id: 'turismo', label: 'Turismo', icon: 'Globe' },
+          { id: 'estudo', label: 'Estudo', icon: 'Plane' },
+          { id: 'negocios', label: 'Negócios', icon: 'Target' },
+          { id: 'imigracao', label: 'Imigração', icon: 'Users' },
+        ];
 
   const handleNext = () => {
     if (step < totalSteps) setStep(step + 1);
@@ -50,6 +62,35 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions })
 
   const handleBack = () => {
     if (step > 1) setStep(step - 1);
+  };
+
+  const handleDynamicChange = (fieldId: number, value: any) => {
+    setFormData({
+      ...formData,
+      dynamicResponses: {
+        ...formData.dynamicResponses,
+        [fieldId]: value
+      }
+    });
+  };
+
+  const addDependent = () => {
+    setFormData({
+      ...formData,
+      dependents: [...formData.dependents, { name: '', relationship: '', age: '', passport: '' }]
+    });
+  };
+
+  const removeDependent = (index: number) => {
+    const newDeps = [...formData.dependents];
+    newDeps.splice(index, 1);
+    setFormData({ ...formData, dependents: newDeps });
+  };
+
+  const updateDependent = (index: number, field: string, value: string) => {
+    const newDeps = [...formData.dependents];
+    newDeps[index] = { ...newDeps[index], [field]: value };
+    setFormData({ ...formData, dependents: newDeps });
   };
 
   const renderStep = () => {
@@ -154,16 +195,12 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions })
               </div>
               <div className="space-y-3">
                 <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">Pretende viajar quando?</label>
-                <select 
-                  className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white appearance-none"
+                <input 
+                  type="date"
+                  className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
                   value={formData.travelDate}
                   onChange={e => setFormData({ ...formData, travelDate: e.target.value })}
-                >
-                  <option value="">Selecione um período</option>
-                  <option value="imediato">Imediato (Próximos 3 meses)</option>
-                  <option value="semestre">Este semestre</option>
-                  <option value="ano">Próximo ano</option>
-                </select>
+                />
               </div>
               <div className="space-y-3">
                 <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">Vai sozinho ou acompanhado?</label>
@@ -193,23 +230,194 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions })
             exit={{ opacity: 0, x: -20 }}
             className="space-y-6"
           >
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">Nível de Dependentes</label>
+                <div className="flex gap-2">
+                  {['Individual', 'Casal', 'Família'].map(opt => (
+                    <button
+                      key={opt}
+                      onClick={() => setFormData({ ...formData, dependentLevel: opt })}
+                      className={`flex-1 py-4 rounded-2xl font-bold transition-all border ${
+                        formData.dependentLevel === opt ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:bg-zinc-800'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {(formData.dependentLevel === 'Família' || formData.dependentLevel === 'Casal') && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">Dependentes</label>
+                    <button 
+                      onClick={addDependent}
+                      className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300 transition-colors"
+                    >
+                      <Plus size={14} />
+                      Adicionar
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {formData.dependents.map((dep: any, idx: number) => (
+                      <div key={idx} className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-4 relative group">
+                        <button 
+                          onClick={() => removeDependent(idx)}
+                          className="absolute top-4 right-4 text-zinc-500 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <input 
+                            type="text" 
+                            placeholder="Nome do Dependente"
+                            className="w-full px-4 py-3 bg-zinc-900/50 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
+                            value={dep.name}
+                            onChange={e => updateDependent(idx, 'name', e.target.value)}
+                          />
+                          <select 
+                            className="w-full px-4 py-3 bg-zinc-900/50 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm appearance-none"
+                            value={dep.relationship}
+                            onChange={e => updateDependent(idx, 'relationship', e.target.value)}
+                          >
+                            <option value="">Parentesco</option>
+                            <option value="Cônjuge">Cônjuge</option>
+                            <option value="Filho(a)">Filho(a)</option>
+                            <option value="Pai/Mãe">Pai/Mãe</option>
+                            <option value="Outro">Outro</option>
+                          </select>
+                          <input 
+                            type="number" 
+                            placeholder="Idade"
+                            className="w-full px-4 py-3 bg-zinc-900/50 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
+                            value={dep.age}
+                            onChange={e => updateDependent(idx, 'age', e.target.value)}
+                          />
+                          <input 
+                            type="text" 
+                            placeholder="Passaporte"
+                            className="w-full px-4 py-3 bg-zinc-900/50 border border-white/5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
+                            value={dep.passport}
+                            onChange={e => updateDependent(idx, 'passport', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    {formData.dependents.length === 0 && (
+                      <div className="text-center py-8 border-2 border-dashed border-white/5 rounded-2xl">
+                        <p className="text-zinc-500 text-xs font-medium">Nenhum dependente adicionado.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        );
+      case 4:
+        return (
+          <motion.div 
+            key="step4"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="space-y-6"
+          >
             <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1 text-center mb-4">Objetivo da Viagem</label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {displayGoals.map(opt => {
                 const Icon = ICON_MAP[opt.icon] || Globe;
+                const isSelected = formData.visaTypeId === opt.id || formData.travelGoal === (opt.label || opt.name || opt.id);
                 return (
                   <button
                     key={opt.id}
-                    onClick={() => setFormData({ ...formData, travelGoal: opt.id })}
+                    onClick={() => setFormData({ 
+                      ...formData, 
+                      travelGoal: opt.name || opt.label || opt.id,
+                      visaTypeId: opt.id 
+                    })}
                     className={`flex flex-col items-center justify-center p-6 rounded-3xl font-bold transition-all border gap-4 ${
-                      formData.travelGoal === opt.id ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:bg-zinc-800'
+                      isSelected ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:bg-zinc-800'
                     }`}
                   >
                     <Icon size={32} />
-                    <span className="text-sm">{opt.label}</span>
+                    <span className="text-sm">{opt.name || opt.label}</span>
                   </button>
                 );
               })}
+            </div>
+          </motion.div>
+        );
+      case 5:
+        return (
+          <motion.div 
+            key="step5"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="space-y-6 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar"
+          >
+            <div className="space-y-6">
+              {dynamicFields.map(field => (
+                <div key={field.id} className="space-y-3">
+                  <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">
+                    {field.label} {field.required ? '*' : ''}
+                  </label>
+                  
+                  {field.type === 'text' && (
+                    <input 
+                      type="text"
+                      className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                      value={formData.dynamicResponses[field.id] || ''}
+                      onChange={e => handleDynamicChange(field.id, e.target.value)}
+                      required={field.required}
+                    />
+                  )}
+
+                  {field.type === 'date' && (
+                    <input 
+                      type="date"
+                      className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                      value={formData.dynamicResponses[field.id] || ''}
+                      onChange={e => handleDynamicChange(field.id, e.target.value)}
+                      required={field.required}
+                    />
+                  )}
+
+                  {field.type === 'select' && (
+                    <select 
+                      className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white appearance-none"
+                      value={formData.dynamicResponses[field.id] || ''}
+                      onChange={e => handleDynamicChange(field.id, e.target.value)}
+                      required={field.required}
+                    >
+                      <option value="">Selecione uma opção</option>
+                      {Array.isArray(field.options) && field.options.map((opt: any, i: number) => (
+                        <option key={i} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {field.type === 'radio' && (
+                    <div className="flex flex-wrap gap-2">
+                      {Array.isArray(field.options) && field.options.map((opt: any, i: number) => (
+                        <button
+                          key={i}
+                          onClick={() => handleDynamicChange(field.id, opt)}
+                          className={`px-6 py-3 rounded-xl font-bold transition-all border ${
+                            formData.dynamicResponses[field.id] === opt ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:bg-zinc-800'
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </motion.div>
         );

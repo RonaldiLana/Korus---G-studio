@@ -1,7 +1,15 @@
-import React from 'react';
-import { motion } from 'motion/react';
-import { CheckCircle2, Clock, AlertCircle, FileText, MessageSquare, LayoutDashboard, Globe, Star, ShieldCheck, ArrowUpRight, Calendar, DollarSign } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { CheckCircle2, Clock, AlertCircle, FileText, MessageSquare, LayoutDashboard, Globe, Star, ShieldCheck, ArrowUpRight, Calendar, DollarSign, Upload, Loader2, Zap, ShieldCheck as ShieldCheckIcon, X, Send, User as UserIcon } from 'lucide-react';
 import { Process } from '../../types';
+import axios from 'axios';
+import { toast } from 'sonner';
+
+const ICON_MAP: Record<string, any> = {
+  Star,
+  ShieldCheck: ShieldCheckIcon,
+  Zap
+};
 
 interface Props {
   destination?: { name: string; flag: string };
@@ -10,16 +18,17 @@ interface Props {
 }
 
 const PROCESS_STEPS = [
-  { id: 'started', label: 'Processo Iniciado', status: 'completed', date: '18 Mar 2026' },
-  { id: 'payment_confirmed', label: 'Pagamento Confirmado', status: 'completed', date: '18 Mar 2026' },
-  { id: 'analyzing', label: 'Análise de Perfil', status: 'current', date: 'Em andamento' },
-  { id: 'final_phase', label: 'Preparação de Documentos', status: 'pending', date: '-' },
-  { id: 'submitted', label: 'Submissão do Visto', status: 'pending', date: '-' },
-  { id: 'completed', label: 'Visto Aprovado', status: 'pending', date: '-' },
+  { id: 'started', label: 'Processo Iniciado' },
+  { id: 'waiting_payment', label: 'Aguardando Pagamento' },
+  { id: 'payment_confirmed', label: 'Pagamento Confirmado' },
+  { id: 'analyzing', label: 'Análise de Perfil' },
+  { id: 'final_phase', label: 'Preparação de Documentos' },
+  { id: 'submitted', label: 'Submissão do Visto' },
+  { id: 'completed', label: 'Visto Aprovado' },
 ];
 
 const getStepStatus = (process: Process, stepId: string) => {
-  const statusOrder = ['started', 'payment_confirmed', 'analyzing', 'final_phase', 'completed'];
+  const statusOrder = ['started', 'waiting_payment', 'payment_confirmed', 'analyzing', 'final_phase', 'submitted', 'completed'];
   const currentStatusIndex = statusOrder.indexOf(process.status);
   const stepIndex = statusOrder.indexOf(stepId);
 
@@ -30,14 +39,86 @@ const getStepStatus = (process: Process, stepId: string) => {
 
 export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, processes }) => {
   const latestProcess = processes.length > 0 ? processes[0] : null;
+  const [uploading, setUploading] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessage, setChatMessage] = useState('');
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchMessages = async () => {
+    if (!latestProcess) return;
+    try {
+      const res = await axios.get(`/api/processes/${latestProcess.id}`);
+      setMessages(res.data.messages || []);
+    } catch (err) {
+      console.error('Erro ao buscar mensagens:', err);
+    }
+  };
+
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatMessage.trim() || !latestProcess) return;
+
+    try {
+      await axios.post('/api/messages', {
+        process_id: latestProcess.id,
+        sender_id: latestProcess.client_id,
+        content: chatMessage,
+        is_proof: false
+      });
+      setChatMessage('');
+      fetchMessages();
+    } catch (err) {
+      toast.error('Erro ao enviar mensagem');
+    }
+  };
+
+  React.useEffect(() => {
+    if (showChat) {
+      fetchMessages();
+      const interval = setInterval(fetchMessages, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [showChat, latestProcess?.id]);
+
+  React.useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
+  const handleUploadProof = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !latestProcess) return;
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('process_id', latestProcess.id.toString());
+
+    try {
+      await axios.post('/api/financials/confirm-proof', formData);
+      toast.success('Comprovante enviado com sucesso! Aguarde a confirmação do consultor.');
+      // In a real app, we'd refresh the process data here
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      console.error('Error uploading proof:', error);
+      toast.error('Erro ao enviar comprovante. Tente novamente.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // Fallback destination and plan if not provided but process exists
   const displayDestination = destination || (latestProcess ? { 
-    name: latestProcess.visa_name || 'Visto em Processamento', 
-    flag: '🌎' 
+    name: latestProcess.destination_name || latestProcess.visa_name || 'Visto em Processamento', 
+    flag: latestProcess.destination_image || '🌎' 
   } : { name: '-', flag: '🌎' });
 
-  const displayPlan = plan || { name: 'Consultoria Premium', icon: Star };
+  const displayPlan = plan || (latestProcess?.plan_name ? { name: latestProcess.plan_name, icon: Star } : { name: 'Consultoria Premium', icon: Star });
+  const PlanIcon = typeof displayPlan.icon === 'string' ? (ICON_MAP[displayPlan.icon] || Star) : (displayPlan.icon || Star);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white p-6 sm:p-12 relative overflow-hidden">
@@ -74,14 +155,18 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
             <div className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl">
               <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2">Destino</p>
               <div className="flex items-center gap-2 text-xl font-black">
-                <span>{displayDestination.flag}</span>
+                {displayDestination.flag.length > 2 ? (
+                  <img src={displayDestination.flag} alt="" className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <span>{displayDestination.flag}</span>
+                )}
                 <span>{displayDestination.name}</span>
               </div>
             </div>
             <div className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl">
               <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2">Plano</p>
               <div className="flex items-center gap-2 text-xl font-black text-emerald-400">
-                <displayPlan.icon size={20} />
+                <PlanIcon size={20} />
                 <span>{displayPlan.name}</span>
               </div>
             </div>
@@ -176,18 +261,53 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                 <p className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-60">Próximo Passo</p>
                 <h3 className="text-2xl font-black tracking-tighter mb-4">
                   {latestProcess.status === 'started' ? 'Aguardar Confirmação' : 
+                   latestProcess.status === 'waiting_payment' ? (latestProcess.payment_status === 'proof_received' ? 'Aguardar Validação' : 'Confirmar Pagamento') :
                    latestProcess.status === 'payment_confirmed' ? 'Enviar Documentos' :
                    latestProcess.status === 'analyzing' ? 'Revisão de Perfil' : 'Finalizar Processo'}
                 </h3>
                 <p className="text-black/70 text-sm font-bold leading-relaxed mb-8">
-                  {latestProcess.status === 'payment_confirmed' 
+                  {latestProcess.status === 'waiting_payment' 
+                    ? (latestProcess.payment_status === 'proof_received' 
+                        ? 'Seu comprovante foi enviado e está em análise por um consultor. Você será notificado assim que for validado.'
+                        : 'Para dar continuidade ao seu processo, por favor anexe o comprovante de pagamento do seu plano.')
+                    : latestProcess.status === 'payment_confirmed' 
                     ? 'Prepare seu passaporte e comprovantes de residência. Nossa equipe enviará o checklist completo em breve.'
                     : 'Acompanhe as atualizações aqui na plataforma ou fale com seu consultor.'}
                 </p>
-                <button className="w-full bg-black text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:opacity-90 transition-all">
-                  Ver Detalhes
-                  <ArrowUpRight size={16} />
-                </button>
+                
+                {latestProcess.status === 'waiting_payment' && latestProcess.payment_status !== 'proof_received' ? (
+                  <>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      onChange={handleUploadProof}
+                      accept="image/*,.pdf"
+                    />
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="w-full bg-black text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:opacity-90 transition-all disabled:opacity-50"
+                    >
+                      {uploading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Enviando...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={16} />
+                          Anexar Comprovante
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <button className="w-full bg-black text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:opacity-90 transition-all">
+                    Ver Detalhes
+                    <ArrowUpRight size={16} />
+                  </button>
+                )}
               </div>
 
               {/* Support Card */}
@@ -199,7 +319,10 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                 <p className="text-zinc-500 text-sm font-medium leading-relaxed mb-8">
                   Dúvidas sobre o processo? Fale com seu consultor dedicado agora mesmo.
                 </p>
-                <button className="w-full bg-zinc-800 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-700 transition-all">
+                <button 
+                  onClick={() => setShowChat(true)}
+                  className="w-full bg-zinc-800 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-700 transition-all"
+                >
                   Abrir Chat
                 </button>
               </div>
@@ -214,14 +337,91 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                 <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6">
                   <DollarSign className="text-zinc-500 mb-4" size={20} />
                   <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">Pagamento</p>
-                  <p className={`text-sm font-black ${latestProcess.status !== 'started' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {latestProcess.status !== 'started' ? 'Confirmado' : 'Pendente'}
+                  <p className={`text-sm font-black ${latestProcess.status === 'payment_confirmed' || latestProcess.status === 'analyzing' || latestProcess.status === 'completed' ? 'text-emerald-400' : latestProcess.payment_status === 'proof_received' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                    {latestProcess.status === 'payment_confirmed' || latestProcess.status === 'analyzing' || latestProcess.status === 'completed' ? 'Confirmado' : latestProcess.payment_status === 'proof_received' ? 'Em Análise' : 'Pendente'}
                   </p>
                 </div>
               </div>
             </div>
           </div>
         )}
+        {/* Chat Modal */}
+        <AnimatePresence>
+          {showChat && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-zinc-900 w-full max-w-lg h-[600px] rounded-[40px] border border-white/10 flex flex-col overflow-hidden shadow-2xl"
+              >
+                <div className="p-6 border-b border-white/5 flex items-center justify-between bg-zinc-800/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-500/10 rounded-full flex items-center justify-center">
+                      <MessageSquare className="text-emerald-400" size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-sm uppercase tracking-tight">Suporte Korus</h4>
+                      <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Consultor Dedicado</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowChat(false)}
+                    className="p-2 hover:bg-white/5 rounded-xl transition-all text-zinc-500 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {messages.length > 0 ? (
+                    messages.map((msg: any) => (
+                      <div key={msg.id} className={`flex flex-col ${msg.sender_id === latestProcess?.client_id ? 'items-end' : 'items-start'}`}>
+                        <div className={`max-w-[85%] p-4 rounded-3xl text-sm font-medium leading-relaxed ${
+                          msg.sender_id === latestProcess?.client_id 
+                            ? 'bg-emerald-500 text-black rounded-tr-none font-bold' 
+                            : 'bg-zinc-800 text-white rounded-tl-none'
+                        }`}>
+                          {msg.content}
+                        </div>
+                        <span className="text-[9px] text-zinc-500 font-black uppercase tracking-tighter mt-1 px-1">
+                          {new Date(msg.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                      <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-4">
+                        <MessageSquare className="text-zinc-600" size={32} />
+                      </div>
+                      <p className="text-zinc-500 text-sm font-bold">Inicie uma conversa com seu consultor.</p>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <div className="p-6 bg-zinc-800/50 border-t border-white/5">
+                  <form onSubmit={sendMessage} className="flex gap-3">
+                    <input 
+                      type="text" 
+                      placeholder="Sua mensagem..." 
+                      className="flex-1 px-5 py-4 bg-zinc-900 border border-white/10 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm text-white"
+                      value={chatMessage}
+                      onChange={(e) => setChatMessage(e.target.value)}
+                    />
+                    <button 
+                      type="submit"
+                      disabled={!chatMessage.trim()}
+                      className="bg-emerald-500 text-black p-4 rounded-2xl hover:opacity-90 transition-all shadow-lg disabled:opacity-50"
+                    >
+                      <Send size={20} />
+                    </button>
+                  </form>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

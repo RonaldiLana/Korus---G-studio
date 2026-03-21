@@ -27,10 +27,48 @@ export interface Destination {
   id: number;
   agency_id: number;
   name: string;
-  flag: string;
+  code: string;
   description: string;
+  image: string;
+  flag: string;
   bg_image: string;
+  highlight_points: string[];
   is_active: boolean;
+  order: number;
+  created_at: string;
+}
+
+export interface FormField {
+  id: number;
+  agency_id: number;
+  destination_id?: number | null;
+  label: string;
+  type: 'text' | 'select' | 'radio' | 'date';
+  required: boolean;
+  options: string[];
+  order: number;
+  created_at: string;
+}
+
+export interface Plan {
+  id: number;
+  agency_id: number;
+  name: string;
+  description: string;
+  price: number;
+  features: string[];
+  is_recommended: boolean;
+  icon: string;
+  created_at: string;
+}
+
+export interface Dependent {
+  id: number;
+  process_id: number;
+  name: string;
+  relationship: string;
+  age: number;
+  passport?: string;
   created_at: string;
 }
 
@@ -40,7 +78,7 @@ export interface VisaType {
   name: string;
   description: string;
   base_price: number;
-  required_docs: string; // JSON array
+  required_docs: string[];
   created_at: string;
 }
 
@@ -48,7 +86,7 @@ export interface Form {
   id: number;
   visa_type_id: number;
   title: string;
-  fields: string; // JSON array
+  fields: string[];
 }
 
 export interface Process {
@@ -57,13 +95,18 @@ export interface Process {
   client_name?: string;
   agency_id: number;
   visa_type_id: number;
+  destination_id?: number | null;
+  plan_id?: number | null;
   visa_name?: string;
+  destination_name?: string;
+  destination_image?: string;
+  plan_name?: string;
   type?: string;
   consultant_name?: string;
   analyst_name?: string;
   consultant_id: number | null;
   analyst_id: number | null;
-  status: 'started' | 'payment_confirmed' | 'analyzing' | 'final_phase' | 'completed';
+  status: 'started' | 'waiting_payment' | 'payment_confirmed' | 'analyzing' | 'final_phase' | 'completed';
   internal_status: 'pending' | 'documents_requested' | 'reviewing' | 'submitted' | 'completed';
   payment_status?: string;
   is_dependent: boolean;
@@ -78,6 +121,7 @@ export interface Financial {
   amount: number;
   status: 'pending' | 'proof_received' | 'confirmed';
   payment_method: string | null;
+  proof_url: string | null;
   confirmed_at: string | null;
   commission_amount: number | null;
   commission_status: 'pending' | 'approved' | 'paid' | null;

@@ -31,7 +31,6 @@ export interface Destination {
   description: string;
   image: string;
   flag: string;
-  bg_image: string;
   highlight_points: string[];
   is_active: boolean;
   order: number;

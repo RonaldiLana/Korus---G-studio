@@ -12,7 +12,6 @@ const DEFAULT_DESTINATIONS: Destination[] = [
     flag: '🇺🇸',
     description: 'Oportunidades ilimitadas no maior mercado do mundo. Vistos de turismo, negócios e imigração.',
     image: 'https://images.unsplash.com/photo-1485738422979-f5c462d49f74?auto=format&fit=crop&w=800&q=80',
-    bg_image: 'https://images.unsplash.com/photo-1485738422979-f5c462d49f74?auto=format&fit=crop&w=800&q=80',
     highlight_points: ['Turismo', 'Negócios', 'Imigração'],
     is_active: true,
     order: 1,
@@ -26,7 +25,6 @@ const DEFAULT_DESTINATIONS: Destination[] = [
     flag: '🇨🇦',
     description: 'Qualidade de vida e acolhimento. Explore caminhos para estudo, trabalho e residência permanente.',
     image: 'https://images.unsplash.com/photo-1503614472-8c93d56e92ce?auto=format&fit=crop&w=800&q=80',
-    bg_image: 'https://images.unsplash.com/photo-1503614472-8c93d56e92ce?auto=format&fit=crop&w=800&q=80',
     highlight_points: ['Estudo', 'Trabalho', 'Residência'],
     is_active: true,
     order: 2,
@@ -40,7 +38,6 @@ const DEFAULT_DESTINATIONS: Destination[] = [
     flag: '🇦🇺',
     description: 'Estilo de vida único e economia forte. Vistos de estudante, trabalho qualificado e turismo.',
     image: 'https://images.unsplash.com/photo-1523482580672-f109ba8cb9be?auto=format&fit=crop&w=800&q=80',
-    bg_image: 'https://images.unsplash.com/photo-1523482580672-f109ba8cb9be?auto=format&fit=crop&w=800&q=80',
     highlight_points: ['Estudante', 'Trabalho Qualificado', 'Turismo'],
     is_active: true,
     order: 3,
@@ -89,7 +86,7 @@ export const ClientDestinationSelection: React.FC<Props> = ({ onSelect, destinat
             {/* Background Image with Overlay */}
             <div className="absolute inset-0 z-0">
               <img 
-                src={dest.bg_image} 
+                src={dest.image} 
                 alt={dest.name}
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-40"
                 referrerPolicy="no-referrer"

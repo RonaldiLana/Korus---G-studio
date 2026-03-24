@@ -141,7 +141,9 @@ const ProgressBar = ({ status }: { status: Process['status'] }) => {
     { id: 'completed', label: 'Concluído' }
   ];
 
-  const currentIndex = steps.findIndex(s => s.id === status);
+  let currentStatus = status;
+  if (currentStatus === 'waiting_payment') currentStatus = 'payment_confirmed';
+  const currentIndex = steps.findIndex(s => s.id === currentStatus);
 
   return (
     <div className="w-full py-12">
@@ -222,7 +224,7 @@ export default function App() {
     code: '',
     flag: '',
     description: '',
-    bg_image: '',
+    image: '',
     highlight_points: [] as string[],
     is_active: true,
     order: 0
@@ -1581,8 +1583,8 @@ export default function App() {
                 <input 
                   type="url" 
                   className="w-full px-6 py-4 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
-                  value={destinationForm.bg_image}
-                  onChange={(e) => setDestinationForm({ ...destinationForm, bg_image: e.target.value })}
+                  value={destinationForm.image}
+                  onChange={(e) => setDestinationForm({ ...destinationForm, image: e.target.value })}
                   placeholder="https://exemplo.com/imagem.jpg"
                 />
               </div>
@@ -3315,7 +3317,7 @@ export default function App() {
                         <button 
                           onClick={() => {
                             setEditingDestination(null);
-                            setDestinationForm({ name: '', code: '', flag: '', description: '', bg_image: '', highlight_points: [], is_active: true, order: 0 });
+                            setDestinationForm({ name: '', code: '', flag: '', description: '', image: '', highlight_points: [], is_active: true, order: 0 });
                             setShowDestinationModal(true);
                           }}
                           className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg"
@@ -3353,7 +3355,7 @@ export default function App() {
                                       code: dest.code || '',
                                       flag: dest.flag, 
                                       description: dest.description, 
-                                      bg_image: dest.bg_image, 
+                                      image: dest.image, 
                                       highlight_points: Array.isArray(dest.highlight_points) ? dest.highlight_points : [],
                                       is_active: dest.is_active,
                                       order: dest.order || 0
@@ -3373,9 +3375,9 @@ export default function App() {
                               </div>
                             </div>
                             <p className="text-xs text-[var(--text-muted)] line-clamp-2">{dest.description}</p>
-                            {dest.bg_image && (
+                            {dest.image && (
                               <div className="h-20 rounded-xl overflow-hidden border border-[var(--border-color)]">
-                                <img src={dest.bg_image} alt={dest.name} className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
+                                <img src={dest.image} alt={dest.name} className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
                               </div>
                             )}
                           </div>
@@ -4910,7 +4912,7 @@ export default function App() {
               </div>
 
               {/* Right Column: Chat */}
-              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] shadow-xl flex flex-col h-[650px]">
+              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] shadow-xl flex flex-col h-[500px] lg:h-[650px]">
                 <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />

@@ -1066,6 +1066,20 @@ async function startServer() {
     db.prepare("UPDATE documents SET status = ?, rejection_reason = ? WHERE id = ?").run(status, rejection_reason || null, id);
     res.json({ success: true });
   });
+
+  app.post("/api/documents", upload.single('file'), (req, res) => {
+    const { process_id, name } = req.body;
+    const file = req.file;
+    const url = file ? `/uploads/${file.filename}` : null;
+
+    try {
+      const result = db.prepare("INSERT INTO documents (process_id, name, url, status) VALUES (?, ?, ?, 'uploaded')").run(process_id, name, url);
+      res.json({ id: result.lastInsertRowid, url });
+    } catch (e) {
+      console.error('Error uploading document:', e);
+      res.status(500).json({ error: "Failed to upload document" });
+    }
+  });
   // Plans CRUD
   app.get("/api/plans", (req, res) => {
     const { agency_id } = req.query;

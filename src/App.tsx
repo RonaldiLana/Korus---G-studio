@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Users, 
+  Contact,
   FileText, 
   MessageSquare, 
   LayoutDashboard, 
@@ -33,11 +34,13 @@ import {
   Pencil,
   Settings,
   Target,
-  Key
+  Key,
+  Trello
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
+import { PipefyPanel } from './features/PipefyPanel';
 
 // Korus Logo Component
 const KorusLogo = ({ size = 40, className = "" }: { size?: number, className?: string }) => (
@@ -191,7 +194,7 @@ type ConfirmDialogState = {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
@@ -343,6 +346,7 @@ export default function App() {
     name: '', 
     slug: '', 
     has_finance: true, 
+    has_pipefy: true,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -786,6 +790,7 @@ export default function App() {
           name: '', 
           slug: '', 
           has_finance: true, 
+          has_pipefy: true,
           admin_name: '', 
           admin_email: '', 
           admin_password: '' 
@@ -1387,6 +1392,25 @@ export default function App() {
       fetchProcesses();
     } else {
       notify('Falha ao salvar o processo.', 'error');
+    }
+  };
+
+  const handleUpdateProcessStatus = async (processId: number, newStatus: Process['status']) => {
+    try {
+      const res = await fetch(`/api/processes/${processId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (res.ok) {
+        fetchProcesses();
+        notify('Status do processo atualizado!', 'success');
+      } else {
+        notify('Falha ao atualizar o status.', 'error');
+      }
+    } catch (error) {
+      notify('Erro de conexão.', 'error');
     }
   };
 
@@ -2050,6 +2074,15 @@ export default function App() {
             onClick={() => setView('dashboard')} 
           />
           
+          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') && (user.role === 'master' || JSON.parse(user.agency_modules || '{}').pipefy) && (
+            <SidebarItem 
+              icon={Trello} 
+              label="Pipefy teste" 
+              active={view === 'pipefy'} 
+              onClick={() => setView('pipefy')} 
+            />
+          )}
+
           {(user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') && (
             <SidebarItem 
               icon={Users} 
@@ -2059,14 +2092,6 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor') && (
-            <SidebarItem 
-              icon={UserPlus} 
-              label="Leads" 
-              active={view === 'leads'} 
-              onClick={() => setView('leads')} 
-            />
-          )}
 
           {user.role === 'master' && (
             <SidebarItem 
@@ -2086,7 +2111,16 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'gerente_financeiro') && (
+          {(user.role === 'master' || user.role === 'supervisor') && (
+            <SidebarItem 
+              icon={Contact} 
+              label="Clientes" 
+              active={view === 'leads'} 
+              onClick={() => setView('leads')} 
+            />
+          )}
+
+          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'gerente_financeiro') && (user.role === 'master' || JSON.parse(user.agency_modules || '{}').finance) && (
             <SidebarItem 
               icon={DollarSign} 
               label="Financeiro" 
@@ -2157,7 +2191,9 @@ export default function App() {
               {view === 'finance' && 'Financeiro'}
               {view === 'audit' && 'Logs de Auditoria'}
               {view === 'settings' && 'Configurações'}
+              {view === 'leads' && 'Gestão de Clientes'}
               {view === 'agency_panel' && 'Painel da Agência'}
+              {view === 'pipefy' && 'Pipefy teste'}
             </h2>
             <div className="flex items-center gap-2 text-[var(--text-muted)] mt-1">
               <MapPin size={14} />
@@ -2175,7 +2211,7 @@ export default function App() {
                 className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-64 text-sm"
               />
             </div>
-            {(view === 'clients' || view === 'dashboard') && (user.role === 'supervisor' || user.role === 'master') && (
+            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user.role === 'supervisor' || user.role === 'master') && (
               <button 
                 data-testid="new-process-button"
                 onClick={() => {
@@ -2558,10 +2594,12 @@ export default function App() {
                         data-testid={`agency-edit-button-${agency.id}`}
                         onClick={() => {
                           setEditingAgency(agency);
+                          const modules = JSON.parse(agency.modules || '{}');
                           setNewAgency({
                             name: agency.name,
                             slug: agency.slug,
-                            has_finance: JSON.parse(agency.modules || '{}').finance,
+                            has_finance: modules.finance,
+                            has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
@@ -2611,6 +2649,14 @@ export default function App() {
                         Perfil atual: {agency.admin_role}
                       </p>
                     )}
+                    <div className="flex gap-2 pt-2 border-t border-[var(--border-color)]/50">
+                      {JSON.parse(agency.modules || '{}').finance && (
+                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Financeiro</span>
+                      )}
+                      {JSON.parse(agency.modules || '{}').pipefy && (
+                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">Pipefy</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -2748,6 +2794,22 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+            </motion.div>
+          )}
+
+          {view === 'pipefy' && (
+            <motion.div 
+              key="pipefy"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="h-full"
+            >
+              <PipefyPanel 
+                processes={processes}
+                clients={agencyUsers}
+                onUpdateStatus={handleUpdateProcessStatus}
+                onSelectProcess={(process) => fetchProcessDetail(process.id)}
+              />
             </motion.div>
           )}
 
@@ -3152,15 +3214,6 @@ export default function App() {
                 >
                   <Settings size={14} />
                   Configurações
-                </button>
-                <button
-                  onClick={() => setAgencyTab('clientes')}
-                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${
-                    agencyTab === 'clientes' ? 'brand-gradient text-black shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
-                  }`}
-                >
-                  <Users size={14} />
-                  Clientes
                 </button>
               </div>
 
@@ -3863,66 +3916,6 @@ export default function App() {
                   )}
                 </div>
               )}
-
-              {agencyTab === 'clientes' && (
-                <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
-                  <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
-                    <div>
-                      <h3 className="font-black text-lg uppercase tracking-tighter">Gestão de Clientes</h3>
-                      <p className="text-xs text-[var(--text-muted)] font-bold mt-1">Lista completa de leads e clientes da agência.</p>
-                    </div>
-                    <span className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {leads.length}</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="bg-[var(--bg-card)]/50 text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
-                          <th className="px-6 py-4">Cliente</th>
-                          <th className="px-6 py-4">E-mail</th>
-                          <th className="px-6 py-4">Status Processo</th>
-                          <th className="px-6 py-4 text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--border-color)]">
-                        {leads.map((client) => (
-                          <tr key={client.id} className="hover:bg-[var(--bg-card)]/30 transition-colors group">
-                            <td className="px-6 py-4">
-                              <p className="font-bold text-sm">{client.name}</p>
-                              <p className="text-[10px] text-[var(--text-muted)]">{new Date(client.created_at).toLocaleDateString()}</p>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-[var(--text-muted)]">{client.email}</td>
-                            <td className="px-6 py-4">
-                              {client.process_status ? (
-                                <StatusBadge status={client.process_status} />
-                              ) : (
-                                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] bg-[var(--bg-card)]/50 px-2 py-1 rounded-md">Sem Processo</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex justify-end gap-2">
-                                {client.process_id && (
-                                  <button
-                                    onClick={() => fetchProcessDetail(client.process_id)}
-                                    className="px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
-                                  >
-                                    Ver Processo
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => openClientPasswordResetModal({ id: client.id, name: client.name, email: client.email })}
-                                  className="px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-orange-500/10 text-orange-300 hover:bg-orange-500/20 transition-colors"
-                                >
-                                  Resetar Senha
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
             </motion.div>
           )}
           <AnimatePresence>
@@ -4585,6 +4578,18 @@ export default function App() {
                               />
                               <label htmlFor="has_finance" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 Financeiro Integrado
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_pipefy"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={newAgency.has_pipefy}
+                                onChange={e => setNewAgency({ ...newAgency, has_pipefy: e.target.checked })}
+                              />
+                              <label htmlFor="has_pipefy" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                Pipefy teste Habilitado
                               </label>
                             </div>
                           </div>

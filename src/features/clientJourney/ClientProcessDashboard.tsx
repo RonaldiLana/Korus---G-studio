@@ -19,19 +19,17 @@ interface Props {
 
 const PROCESS_STEPS = [
   { id: 'started', label: 'Iniciado' },
-  { id: 'payment_confirmed', label: 'Pagamento' },
+  { id: 'waiting_payment', label: 'Pagamento' },
+  { id: 'payment_confirmed', label: 'Confirmado' },
   { id: 'analyzing', label: 'Análise' },
   { id: 'final_phase', label: 'Fase Final' },
   { id: 'completed', label: 'Concluído' },
 ];
 
 const getStepStatus = (process: Process, stepId: string) => {
-  const statusOrder = ['started', 'payment_confirmed', 'analyzing', 'final_phase', 'completed'];
+  const statusOrder = ['started', 'waiting_payment', 'payment_confirmed', 'analyzing', 'final_phase', 'completed'];
   
-  // Map intermediate statuses to main steps
-  let currentStatus = process.status;
-  if (currentStatus === 'waiting_payment') currentStatus = 'payment_confirmed';
-  
+  const currentStatus = process.status;
   const currentStatusIndex = statusOrder.indexOf(currentStatus);
   const stepIndex = statusOrder.indexOf(stepId);
 
@@ -566,12 +564,16 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
         {/* Chat Modal */}
         <AnimatePresence>
           {showChat && (
-            <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
+            <div 
+              onClick={() => setShowChat(false)}
+              className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
+            >
               <motion.div 
                 initial={{ opacity: 0, y: 100 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 100 }}
-                className="bg-zinc-900 w-full sm:max-w-lg h-[85vh] sm:h-[600px] rounded-t-[32px] sm:rounded-[40px] border-t sm:border border-white/10 flex flex-col overflow-hidden shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                className="bg-zinc-900 w-full sm:max-w-md h-[80vh] sm:h-[500px] rounded-t-[32px] sm:rounded-[40px] border-t sm:border border-white/10 flex flex-col overflow-hidden shadow-2xl"
               >
                 <div className="p-4 sm:p-6 border-b border-white/5 flex items-center justify-between bg-zinc-800/50">
                   <div className="flex items-center gap-3">
@@ -585,8 +587,9 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                   </div>
                   <button 
                     onClick={() => setShowChat(false)}
-                    className="p-2 hover:bg-white/5 rounded-xl transition-all text-zinc-500 hover:text-white"
+                    className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 rounded-xl transition-all text-zinc-500 hover:text-white group"
                   >
+                    <span className="text-[10px] font-black uppercase tracking-widest">Fechar</span>
                     <X size={20} />
                   </button>
                 </div>

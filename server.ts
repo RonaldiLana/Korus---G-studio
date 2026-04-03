@@ -37,7 +37,7 @@ db.exec(`
     name TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
     status TEXT DEFAULT 'active', -- 'active', 'suspended'
-    modules TEXT DEFAULT '{"finance": true, "chat": true}', -- JSON string
+    modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true}', -- JSON string
     logo_url TEXT,
     pre_form_questions TEXT, -- JSON array
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -570,7 +570,12 @@ async function startServer() {
 
   app.post("/api/login", (req, res) => {
     const { email, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND password = ?").get(email, password) as any;
+    const user = db.prepare(`
+      SELECT u.*, a.modules as agency_modules 
+      FROM users u 
+      LEFT JOIN agencies a ON u.agency_id = a.id 
+      WHERE LOWER(u.email) = LOWER(?) AND u.password = ?
+    `).get(email, password) as any;
     if (user) {
       const { password, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
@@ -778,7 +783,7 @@ async function startServer() {
     
     const transaction = db.transaction(() => {
       try {
-        const modules = JSON.stringify({ finance: has_finance, chat: true });
+        const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true });
         const agencyResult = db.prepare("INSERT INTO agencies (name, slug, modules) VALUES (?, ?, ?)").run(name, slug, modules);
         const agencyId = agencyResult.lastInsertRowid;
 
@@ -818,8 +823,8 @@ async function startServer() {
 
   app.put("/api/agencies/:id", (req, res) => {
     console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
-    const { name, slug, has_finance } = req.body;
-    const modules = JSON.stringify({ finance: has_finance, chat: true });
+    const { name, slug, has_finance, has_pipefy } = req.body;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy });
     try {
       db.prepare("UPDATE agencies SET name = ?, slug = ?, modules = ? WHERE id = ?").run(name, slug, modules, req.params.id);
       res.json({ success: true });
@@ -1259,11 +1264,11 @@ async function startServer() {
       SET visa_type_id = ?, consultant_id = ?, analyst_id = ?, status = ?, internal_status = ?
       WHERE id = ?
     `).run(
-      visa_type_id || existingProcess.visa_type_id,
-      consultant_id || null,
-      analyst_id || null,
-      status || existingProcess.status,
-      internal_status || existingProcess.internal_status,
+      visa_type_id !== undefined ? visa_type_id : existingProcess.visa_type_id,
+      consultant_id !== undefined ? consultant_id : existingProcess.consultant_id,
+      analyst_id !== undefined ? analyst_id : existingProcess.analyst_id,
+      status !== undefined ? status : existingProcess.status,
+      internal_status !== undefined ? internal_status : existingProcess.internal_status,
       req.params.id,
     );
 

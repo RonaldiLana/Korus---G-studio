@@ -6,6 +6,7 @@ export interface User {
   name: string;
   role: UserRole;
   agency_id: number | null;
+  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean }
   created_at: string;
 }
 
@@ -14,7 +15,7 @@ export interface Agency {
   name: string;
   slug: string;
   status: 'active' | 'suspended';
-  modules: string; // JSON string: { finance: boolean, chat: boolean }
+  modules: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean }
   logo_url?: string;
   admin_user_id?: number | null;
   admin_name?: string | null;

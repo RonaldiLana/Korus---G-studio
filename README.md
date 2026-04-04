@@ -47,10 +47,9 @@ Este projeto foi migrado de SQLite para PostgreSQL para suporte a produção no 
 ### Arquivos Modificados
 
 - `server.ts`: Removida dependência SQLite, adicionada inicialização PostgreSQL
-- `src/lib/db.ts`: Nova camada de conexão PostgreSQL
-- `src/lib/init-db.ts`: Inicialização e seed do banco
-- `src/lib/compat-db.ts`: Camada de compatibilidade com API SQLite
-- `database/init.sql`: Schema PostgreSQL
+- `src/lib/db.ts`: Camada de conexão PostgreSQL com pool
+- `src/lib/init-db.ts`: Inicialização e seed do banco com parser robusto
+- `database/init.sql`: Schema PostgreSQL completo
 - `package.json`: Scripts atualizados, dependência 'pg' adicionada
 - `.env.example`: Exemplo de variáveis de ambiente
 

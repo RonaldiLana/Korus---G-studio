@@ -89,12 +89,21 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
 }
 
 async function startServer() {
-  // Test database connection
-  await testConnection();
+  try {
+    // Test database connection
+    console.log('[BOOT] Iniciando servidor...');
+    await testConnection();
+    console.log('[BOOT] ✓ Banco de dados conectado com sucesso');
+  } catch (dbError) {
+    console.error('[BOOT] ✗ Falha na conexão com banco de dados');
+    console.error('[BOOT] Configure a variável DATABASE_URL antes de rodar o servidor');
+    process.exit(1);
+  }
 
   const app = express();
   const PORT = Number(process.env.PORT);
   if (!PORT) {
+    console.error('[BOOT] PORT não definida');
     throw new Error("PORT environment variable is required");
   }
 
@@ -1511,7 +1520,8 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);
+    console.log(`[BOOT] ✓ Ambiente: ${process.env.NODE_ENV || 'development'}`);
   });
 }
 

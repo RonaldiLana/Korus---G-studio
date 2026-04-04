@@ -15,23 +15,47 @@ export async function initializeDatabase() {
     const schemaPath = path.join(__dirname, '../../database/init.sql');
     const schemaSQL = fs.readFileSync(schemaPath, 'utf8');
 
-    // Dividir em statements individuais (PostgreSQL não suporta múltiplos statements em uma query)
-    const statements = schemaSQL
+    // Parser robusto de SQL: remove comentários linha por linha antes de dividir
+    const lines = schemaSQL.split('\n')
+      .map(line => {
+        const commentIndex = line.indexOf('--');
+        return commentIndex === -1 ? line : line.substring(0, commentIndex);
+      })
+      .join('\n');
+
+    // Dividir em statements individuais
+    const statements = lines
       .split(';')
       .map(stmt => stmt.trim())
-      .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+      .filter(stmt => stmt.length > 0);
 
+    console.log(`Executando ${statements.length} statements SQL...`);
     for (const statement of statements) {
-      if (statement.trim()) {
+      try {
         await query(statement);
+      } catch (err: any) {
+        console.warn(`Aviso ao executar SQL (possivelmente tabela já existe): ${err.message}`);
       }
     }
 
-    console.log('Schema criado com sucesso');
+    console.log('Schema processado com sucesso');
+
+    // Validar que tabelas críticas existem
+    try {
+      const tableCheck = await query(
+        `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'agencies') as exists`
+      );
+      if (!tableCheck.rows[0].exists) {
+        throw new Error('Tabela agencies não foi criada corretamente');
+      }
+    } catch (err: any) {
+      console.error('Erro ao validar schema:', err.message);
+      throw err;
+    }
 
     // Verificar se já há dados iniciais
     const agencyCount = await query('SELECT COUNT(*) as count FROM agencies');
-    const count = parseInt(agencyCount.rows[0].count);
+    const count = parseInt(agencyCount.rows[0].count as string);
 
     if (count === 0) {
       console.log('Inserindo dados iniciais...');

@@ -69,7 +69,7 @@
     "dev": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
-    "db:init": "tsx -e \"import { initializeDatabase } from './src/lib/init-db.js'; initializeDatabase().then(() => console.log('Database initialized')).catch(console.error);\"",
+    "db:init": "tsx -e \"import { initializeDatabase } from './src/lib/init-db.ts'; initializeDatabase().then(() => console.log('Database initialized')).catch(console.error);\"",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

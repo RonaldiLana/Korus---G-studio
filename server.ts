@@ -155,20 +155,16 @@ async function startServer() {
     }
   });
 
-  // TODO: Migrate remaining routes from SQLite to PostgreSQL
-  // The following routes still use the old SQLite db.prepare() API
-  // They need to be converted to use query() with $1, $2, etc. parameters
-
-  app.post("/api/processes/start", (req, res) => {
+  app.post("/api/processes/start", async (req, res) => {
     try {
       const { client_id, agency_id, visa_type_id, destination_id, plan_id, is_dependent, parent_process_id, dependents, travel_date, form_responses } = req.body;
-      
+
       if (!client_id || !agency_id) {
         return res.status(400).json({ error: "client_id and agency_id are required" });
       }
 
-      const consultant_id = getNextConsultant(agency_id);
-      
+      const consultant_id = await getNextConsultant(agency_id);
+
       // Get price from plan if provided, otherwise from visa type
       let amount = 0;
       let planName = null;
@@ -177,10 +173,13 @@ async function startServer() {
 
       if (plan_id) {
         // Handle numeric ID or string ID (for default plans)
-        const plan = db.prepare("SELECT name, price FROM plans WHERE id = ?").get(plan_id) as { name: string, price: number } | undefined;
-        if (plan) {
-          amount = plan.price;
-          planName = plan.name;
+        if (typeof plan_id === 'number') {
+          const planResult = await query("SELECT name, price FROM plans WHERE id = $1", [plan_id]);
+          const plan = planResult.rows[0];
+          if (plan) {
+            amount = plan.price;
+            planName = plan.name;
+          }
         } else {
           // Fallback for default plans if not in DB
           if (plan_id === 'basic') { amount = 497; planName = 'Consultoria Básica'; }
@@ -192,7 +191,8 @@ async function startServer() {
       // Handle visa_type_id (can be numeric ID or string name/goal)
       let db_visa_type_id = typeof visa_type_id === 'number' ? visa_type_id : null;
       if (!db_visa_type_id && typeof visa_type_id === 'string') {
-        const existing = db.prepare("SELECT id, name, base_price FROM visa_types WHERE agency_id = ? AND LOWER(name) = LOWER(?)").get(agency_id, visa_type_id) as { id: number, name: string, base_price: number } | undefined;
+        const existingResult = await query("SELECT id, name, base_price FROM visa_types WHERE agency_id = $1 AND LOWER(name) = LOWER($2)", [agency_id, visa_type_id]);
+        const existing = existingResult.rows[0];
         if (existing) {
           db_visa_type_id = existing.id;
           visaTypeName = existing.name;
@@ -202,7 +202,8 @@ async function startServer() {
           visaTypeName = visa_type_id.charAt(0).toUpperCase() + visa_type_id.slice(1);
         }
       } else if (db_visa_type_id) {
-        const visa = db.prepare("SELECT name, base_price FROM visa_types WHERE id = ?").get(db_visa_type_id) as { name: string, base_price: number } | undefined;
+        const visaResult = await query("SELECT name, base_price FROM visa_types WHERE id = $1", [db_visa_type_id]);
+        const visa = visaResult.rows[0];
         if (visa) {
           visaTypeName = visa.name;
           if (amount === 0) amount = visa.base_price;
@@ -212,7 +213,8 @@ async function startServer() {
       // Handle destination_id
       let db_destination_id = typeof destination_id === 'number' ? destination_id : null;
       if (db_destination_id) {
-        const dest = db.prepare("SELECT name FROM destinations WHERE id = ?").get(db_destination_id) as { name: string } | undefined;
+        const destResult = await query("SELECT name FROM destinations WHERE id = $1", [db_destination_id]);
+        const dest = destResult.rows[0];
         if (dest) destinationName = dest.name;
       } else if (typeof destination_id === 'string') {
         destinationName = destination_id;
@@ -223,63 +225,68 @@ async function startServer() {
       // Fallback for visa_type_id if it's still null (due to NOT NULL constraint in some DB versions)
       if (db_visa_type_id === null) {
         // Try to find ANY visa type for this agency to use as a placeholder
-        const anyVisa = db.prepare("SELECT id FROM visa_types WHERE agency_id = ? LIMIT 1").get(agency_id) as { id: number } | undefined;
+        const anyVisaResult = await query("SELECT id FROM visa_types WHERE agency_id = $1 LIMIT 1", [agency_id]);
+        const anyVisa = anyVisaResult.rows[0];
         if (anyVisa) {
           db_visa_type_id = anyVisa.id;
         } else {
           // If no visa types exist at all for this agency, create a default one
-          const result = db.prepare("INSERT INTO visa_types (agency_id, name, base_price) VALUES (?, ?, ?)").run(agency_id, visaTypeName || 'Visto Geral', 0);
-          db_visa_type_id = Number(result.lastInsertRowid);
+          const insertResult = await query(
+            "INSERT INTO visa_types (agency_id, name, base_price) VALUES ($1, $2, $3) RETURNING id",
+            [agency_id, visaTypeName || 'Visto Geral', 0]
+          );
+          db_visa_type_id = insertResult.rows[0].id;
         }
       }
 
-      const result = db.prepare(`
+      const insertResult = await query(`
         INSERT INTO processes (
-          client_id, agency_id, visa_type_id, destination_id, plan_id, 
-          consultant_id, status, amount, internal_status, is_dependent, 
+          client_id, agency_id, visa_type_id, destination_id, plan_id,
+          consultant_id, status, amount, internal_status, is_dependent,
           parent_process_id, travel_date, visa_type_name, plan_name, destination_name
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'waiting_payment', ?, 'pending', ?, ?, ?, ?, ?, ?)
-      `).run(
-        client_id, agency_id, db_visa_type_id, db_destination_id, db_plan_id, 
-        consultant_id, amount, is_dependent ? 1 : 0, parent_process_id || null, 
+        VALUES ($1, $2, $3, $4, $5, $6, 'waiting_payment', $7, 'pending', $8, $9, $10, $11, $12, $13)
+        RETURNING id
+      `, [
+        client_id, agency_id, db_visa_type_id, db_destination_id, db_plan_id,
+        consultant_id, amount, is_dependent, parent_process_id || null,
         travel_date || null, visaTypeName, planName, destinationName
-      );
+      ]);
 
-      const processId = result.lastInsertRowid;
-      
+      const processId = insertResult.rows[0].id;
+
       // Save form responses if any
       if (form_responses) {
         let formId = null;
         if (db_visa_type_id) {
-          const form = db.prepare("SELECT id FROM forms WHERE visa_type_id = ?").get(db_visa_type_id) as { id: number } | undefined;
+          const formResult = await query("SELECT id FROM forms WHERE visa_type_id = $1", [db_visa_type_id]);
+          const form = formResult.rows[0];
           if (form) formId = form.id;
         }
-        
+
         if (formId) {
-          db.prepare("INSERT INTO form_responses (process_id, form_id, data, status) VALUES (?, ?, ?, ?)").run(processId, formId, JSON.stringify(form_responses), 'submitted');
+          await query("INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, $3, $4)", [processId, formId, JSON.stringify(form_responses), 'submitted']);
         }
       }
 
       // Create mandatory financial record
-      db.prepare("INSERT INTO financials (process_id, type, category, amount, status) VALUES (?, ?, ?, ?, ?)").run(processId, 'income', 'Consultoria', amount, "pending");
+      await query("INSERT INTO financials (process_id, type, category, amount, status) VALUES ($1, $2, $3, $4, $5)", [processId, 'income', 'Consultoria', amount, "pending"]);
 
       // Save dependents if any
       if (dependents && Array.isArray(dependents)) {
-        const insertDependent = db.prepare("INSERT INTO dependents (process_id, name, relationship, age, passport) VALUES (?, ?, ?, ?, ?)");
         for (const dep of dependents) {
-          insertDependent.run(processId, dep.name, dep.relationship, dep.age, dep.passport || null);
+          await query("INSERT INTO dependents (process_id, name, relationship, age, passport) VALUES ($1, $2, $3, $4, $5)", [processId, dep.name, dep.relationship, dep.age, dep.passport || null]);
         }
       }
 
       // Create process tasks from agency tasks
-      const agencyTasks = db.prepare("SELECT id FROM tasks WHERE agency_id = ? AND is_active = 1").all(agency_id) as { id: number }[];
-      for (const task of agencyTasks) {
-        db.prepare("INSERT INTO process_tasks (process_id, task_id) VALUES (?, ?)").run(processId, task.id);
+      const agencyTasksResult = await query("SELECT id FROM tasks WHERE agency_id = $1 AND is_active = true", [agency_id]);
+      for (const task of agencyTasksResult.rows) {
+        await query("INSERT INTO process_tasks (process_id, task_id) VALUES ($1, $2)", [processId, task.id]);
       }
 
       // Log action
-      db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id, client_id, "process_started", `Process ID: ${processId}`);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, client_id, "process_started", `Process ID: ${processId}`]);
 
       res.json({ id: processId, success: true });
     } catch (error: any) {
@@ -289,100 +296,107 @@ async function startServer() {
     }
   });
 
-  app.get("/api/audit-logs", (req, res) => {
-    const logs = db.prepare(`
-      SELECT l.*, u.name as user_name, a.name as agency_name 
-      FROM audit_logs l 
-      LEFT JOIN users u ON l.user_id = u.id 
-      LEFT JOIN agencies a ON l.agency_id = a.id 
-      ORDER BY l.created_at DESC
-      LIMIT 100
-    `).all();
-    res.json(logs);
-  });
-
-  app.get("/api/agencies", (req, res) => {
-    const agencies = db.prepare(`
-      SELECT
-        a.*,
-        su.id as admin_user_id,
-        su.name as admin_name,
-        su.email as admin_email,
-        su.role as admin_role
-      FROM agencies a
-      LEFT JOIN users su ON su.id = (
-        SELECT u.id
-        FROM users u
-        WHERE u.agency_id = a.id
-        ORDER BY CASE WHEN u.role = 'supervisor' THEN 0 ELSE 1 END, u.id ASC
-        LIMIT 1
-      )
-      ORDER BY a.created_at DESC
-    `).all();
-    res.json(agencies);
-  });
-
-  app.get("/api/agencies/:id", (req, res) => {
-    const agency = db.prepare(`
-      SELECT
-        a.*,
-        su.id as admin_user_id,
-        su.name as admin_name,
-        su.email as admin_email,
-        su.role as admin_role
-      FROM agencies a
-      LEFT JOIN users su ON su.id = (
-        SELECT u.id
-        FROM users u
-        WHERE u.agency_id = a.id
-        ORDER BY CASE WHEN u.role = 'supervisor' THEN 0 ELSE 1 END, u.id ASC
-        LIMIT 1
-      )
-      WHERE a.id = ?
-    `).get(req.params.id);
-    if (!agency) {
-      return res.status(404).json({ error: "Agência não encontrada" });
+  app.get("/api/audit-logs", async (req, res) => {
+    try {
+      const logsResult = await query(`
+        SELECT l.*, u.name as user_name, a.name as agency_name
+        FROM audit_logs l
+        LEFT JOIN users u ON l.user_id = u.id
+        LEFT JOIN agencies a ON l.agency_id = a.id
+        ORDER BY l.created_at DESC
+        LIMIT 100
+      `, []);
+      res.json(logsResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    res.json(agency);
   });
 
-  app.post("/api/agencies", (req, res) => {
+  app.get("/api/agencies", async (req, res) => {
+    try {
+      const agenciesResult = await query(`
+        SELECT
+          a.*,
+          su.id as admin_user_id,
+          su.name as admin_name,
+          su.email as admin_email,
+          su.role as admin_role
+        FROM agencies a
+        LEFT JOIN users su ON su.id = (
+          SELECT u.id
+          FROM users u
+          WHERE u.agency_id = a.id
+          ORDER BY CASE WHEN u.role = 'supervisor' THEN 0 ELSE 1 END, u.id ASC
+          LIMIT 1
+        )
+        ORDER BY a.created_at DESC
+      `, []);
+      res.json(agenciesResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/agencies/:id", async (req, res) => {
+    try {
+      const agencyResult = await query(`
+        SELECT
+          a.*,
+          su.id as admin_user_id,
+          su.name as admin_name,
+          su.email as admin_email,
+          su.role as admin_role
+        FROM agencies a
+        LEFT JOIN users su ON su.id = (
+          SELECT u.id
+          FROM users u
+          WHERE u.agency_id = a.id
+          ORDER BY CASE WHEN u.role = 'supervisor' THEN 0 ELSE 1 END, u.id ASC
+          LIMIT 1
+        )
+        WHERE a.id = $1
+      `, [req.params.id]);
+      if (agencyResult.rows.length === 0) {
+        return res.status(404).json({ error: "Agência não encontrada" });
+      }
+      res.json(agencyResult.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/agencies", async (req, res) => {
     console.log('Recebendo requisição para criar agência:', req.body);
     const { name, slug, has_finance, admin_name, admin_email, admin_password } = req.body;
-    
-    const transaction = db.transaction(() => {
-      try {
-        const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true });
-        const agencyResult = db.prepare("INSERT INTO agencies (name, slug, modules) VALUES (?, ?, ?)").run(name, slug, modules);
-        const agencyId = agencyResult.lastInsertRowid;
-
-        let auditUserId = getAuditUserId(null);
-
-        if (admin_email && admin_password) {
-          const adminInsertResult = db.prepare("INSERT INTO users (email, password, name, role, agency_id) VALUES (?, ?, ?, 'supervisor', ?)").run(
-            admin_email,
-            admin_password,
-            admin_name || `Admin ${name}`,
-            agencyId
-          );
-          auditUserId = Number(adminInsertResult.lastInsertRowid);
-        }
-
-        db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agencyId, auditUserId, "agency_created", `Agência criada: ${name}`);
-
-        return { id: agencyId };
-      } catch (e: any) {
-        throw e;
-      }
-    });
 
     try {
-      const result = transaction();
-      res.json(result);
+      await query('BEGIN', []);
+
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true });
+      const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
+      const agencyId = agencyResult.rows[0].id;
+
+      let auditUserId = await getAuditUserId(null);
+
+      if (admin_email && admin_password) {
+        const adminInsertResult = await query("INSERT INTO users (email, password, name, role, agency_id) VALUES ($1, $2, $3, 'supervisor', $4) RETURNING id", [
+          admin_email,
+          admin_password,
+          admin_name || `Admin ${name}`,
+          agencyId
+        ]);
+        auditUserId = adminInsertResult.rows[0].id;
+      }
+
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agencyId, auditUserId, "agency_created", `Agência criada: ${name}`]);
+
+      await query('COMMIT', []);
+      res.json({ id: agencyId });
     } catch (e: any) {
-      if (e.message.includes("UNIQUE constraint failed: users.email")) {
+      await query('ROLLBACK', []);
+      if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("users_email_key")) {
         res.status(400).json({ error: "Email do administrador já cadastrado" });
-      } else if (e.message.includes("UNIQUE constraint failed: agencies.slug")) {
+      } else if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("agencies_slug_key")) {
         res.status(400).json({ error: "Slug da agência já existe" });
       } else {
         res.status(500).json({ error: "Erro ao criar agência" });
@@ -390,15 +404,15 @@ async function startServer() {
     }
   });
 
-  app.put("/api/agencies/:id", (req, res) => {
+  app.put("/api/agencies/:id", async (req, res) => {
     console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
     const { name, slug, has_finance, has_pipefy } = req.body;
     const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy });
     try {
-      db.prepare("UPDATE agencies SET name = ?, slug = ?, modules = ? WHERE id = ?").run(name, slug, modules, req.params.id);
+      await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });
     } catch (e: any) {
-      if (e.message.includes("UNIQUE constraint failed: agencies.slug")) {
+      if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("agencies_slug_key")) {
         res.status(400).json({ error: "Slug da agência já existe" });
       } else {
         res.status(500).json({ error: "Erro ao atualizar agência" });
@@ -406,68 +420,74 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/agencies/:id", (req, res) => {
+  app.delete("/api/agencies/:id", async (req, res) => {
     const agencyId = Number(req.params.id);
 
     if (!agencyId) {
       return res.status(400).json({ error: "ID de agência inválido" });
     }
 
-    const agency = db.prepare("SELECT id, name FROM agencies WHERE id = ?").get(agencyId) as { id: number; name: string } | undefined;
-    if (!agency) {
-      return res.status(404).json({ error: "Agência não encontrada" });
-    }
-
-    const deleteAgencyTransaction = db.transaction((targetAgencyId: number) => {
-      db.prepare("DELETE FROM process_tasks WHERE process_id IN (SELECT id FROM processes WHERE agency_id = ?)").run(targetAgencyId);
-      db.prepare("DELETE FROM documents WHERE process_id IN (SELECT id FROM processes WHERE agency_id = ?)").run(targetAgencyId);
-      db.prepare("DELETE FROM messages WHERE process_id IN (SELECT id FROM processes WHERE agency_id = ?)").run(targetAgencyId);
-      db.prepare("DELETE FROM form_responses WHERE process_id IN (SELECT id FROM processes WHERE agency_id = ?)").run(targetAgencyId);
-      db.prepare("DELETE FROM financials WHERE process_id IN (SELECT id FROM processes WHERE agency_id = ?)").run(targetAgencyId);
-
-      db.prepare("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = ?)").run(targetAgencyId);
-
-      db.prepare("DELETE FROM processes WHERE agency_id = ?").run(targetAgencyId);
-      db.prepare("DELETE FROM visa_types WHERE agency_id = ?").run(targetAgencyId);
-      db.prepare("DELETE FROM tasks WHERE agency_id = ?").run(targetAgencyId);
-      db.prepare("DELETE FROM expenses WHERE agency_id = ?").run(targetAgencyId);
-      db.prepare("DELETE FROM revenues WHERE agency_id = ?").run(targetAgencyId);
-
-      db.prepare("DELETE FROM audit_logs WHERE agency_id = ? OR user_id IN (SELECT id FROM users WHERE agency_id = ?)").run(targetAgencyId, targetAgencyId);
-
-      db.prepare("DELETE FROM users WHERE agency_id = ?").run(targetAgencyId);
-      db.prepare("DELETE FROM agencies WHERE id = ?").run(targetAgencyId);
-    });
-
     try {
-      deleteAgencyTransaction(agencyId);
+      const agencyResult = await query("SELECT id, name FROM agencies WHERE id = $1", [agencyId]);
+      if (agencyResult.rows.length === 0) {
+        return res.status(404).json({ error: "Agência não encontrada" });
+      }
+      const agency = agencyResult.rows[0];
+
+      await query('BEGIN', []);
+
+      await query("DELETE FROM process_tasks WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
+      await query("DELETE FROM documents WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
+      await query("DELETE FROM messages WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
+      await query("DELETE FROM form_responses WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
+      await query("DELETE FROM financials WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
+
+      await query("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1)", [agencyId]);
+
+      await query("DELETE FROM processes WHERE agency_id = $1", [agencyId]);
+      await query("DELETE FROM visa_types WHERE agency_id = $1", [agencyId]);
+      await query("DELETE FROM tasks WHERE agency_id = $1", [agencyId]);
+      await query("DELETE FROM expenses WHERE agency_id = $1", [agencyId]);
+      await query("DELETE FROM revenues WHERE agency_id = $1", [agencyId]);
+
+      await query("DELETE FROM audit_logs WHERE agency_id = $1 OR user_id IN (SELECT id FROM users WHERE agency_id = $1)", [agencyId, agencyId]);
+
+      await query("DELETE FROM users WHERE agency_id = $1", [agencyId]);
+      await query("DELETE FROM agencies WHERE id = $1", [agencyId]);
+
+      await query('COMMIT', []);
       return res.json({ success: true, deleted_agency_id: agencyId, deleted_agency_name: agency.name });
     } catch (error) {
+      await query('ROLLBACK', []);
       return res.status(500).json({ error: "Erro ao excluir agência e dados vinculados" });
     }
   });
 
-  app.get("/api/agencies/by-slug/:slug", (req, res) => {
-    const agency = db.prepare("SELECT * FROM agencies WHERE slug = ?").get(req.params.slug);
-    if (agency) {
-      res.json(agency);
-    } else {
-      res.status(404).json({ error: "Agency not found" });
+  app.get("/api/agencies/by-slug/:slug", async (req, res) => {
+    try {
+      const agencyResult = await query("SELECT * FROM agencies WHERE slug = $1", [req.params.slug]);
+      if (agencyResult.rows.length > 0) {
+        res.json(agencyResult.rows[0]);
+      } else {
+        res.status(404).json({ error: "Agency not found" });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/agencies/:id/settings", (req, res) => {
+  app.put("/api/agencies/:id/settings", async (req, res) => {
     const { name, logo_url, pre_form_questions } = req.body;
     console.log(`Updating settings for agency ${req.params.id}:`, { name, logo_url, preFormQuestionsCount: pre_form_questions?.length });
     try {
-      db.prepare("UPDATE agencies SET name = ?, logo_url = ?, pre_form_questions = ? WHERE id = ?").run(
-        name, 
-        logo_url, 
+      await query("UPDATE agencies SET name = $1, logo_url = $2, pre_form_questions = $3 WHERE id = $4", [
+        name,
+        logo_url,
         pre_form_questions ? JSON.stringify(pre_form_questions) : null,
         req.params.id
-      );
-      const auditUserId = getAuditUserId(req.params.id);
-      db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(req.params.id, auditUserId, "agency_settings_updated", `Configurações da agência atualizadas: ${name}`);
+      ]);
+      const auditUserId = await getAuditUserId(req.params.id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "agency_settings_updated", `Configurações da agência atualizadas: ${name}`]);
       res.json({ success: true });
     } catch (e) {
       console.error('Error updating agency settings:', e);
@@ -534,14 +554,19 @@ async function startServer() {
     }
   });
 
-  app.get("/api/visa-types", (req, res) => {
+  app.get("/api/visa-types", async (req, res) => {
     const { agency_id } = req.query;
     if (!agency_id) return res.status(400).json({ error: "agency_id is required" });
-    const visaTypes = db.prepare("SELECT * FROM visa_types WHERE agency_id = ? ORDER BY created_at DESC").all(agency_id).map((v: any) => ({
-      ...v,
-      required_docs: JSON.parse(v.required_docs || '[]')
-    }));
-    res.json(visaTypes);
+    try {
+      const visaTypesResult = await query("SELECT * FROM visa_types WHERE agency_id = $1 ORDER BY created_at DESC", [agency_id]);
+      const visaTypes = visaTypesResult.rows.map((v: any) => ({
+        ...v,
+        required_docs: JSON.parse(v.required_docs || '[]')
+      }));
+      res.json(visaTypes);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post("/api/visa-types", async (req, res) => {
@@ -593,51 +618,72 @@ async function startServer() {
     }
   });
 
-  app.post("/api/forms", (req, res) => {
+  app.post("/api/forms", async (req, res) => {
     const { visa_type_id, title, fields } = req.body;
-    const result = db.prepare("INSERT INTO forms (visa_type_id, title, fields) VALUES (?, ?, ?)").run(visa_type_id, title, JSON.stringify(fields || []));
-    res.json({ id: result.lastInsertRowid });
-  });
-
-  app.put("/api/forms/:id", (req, res) => {
-    const { title, fields } = req.body;
-    db.prepare("UPDATE forms SET title = ?, fields = ? WHERE id = ?").run(title, JSON.stringify(fields || []), req.params.id);
-    res.json({ success: true });
-  });
-
-  app.delete("/api/forms/:id", (req, res) => {
-    db.prepare("DELETE FROM forms WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
-  });
-
-  app.get("/api/form-responses/:process_id", (req, res) => {
-    const responses = db.prepare("SELECT * FROM form_responses WHERE process_id = ?").all(req.params.process_id).map((r: any) => ({
-      ...r,
-      data: JSON.parse(r.data || '{}')
-    }));
-    res.json(responses);
-  });
-
-  app.post("/api/form-responses", (req, res) => {
-    const { process_id, form_id, data } = req.body;
-    const existing = db.prepare("SELECT id FROM form_responses WHERE process_id = ? AND form_id = ?").get(process_id, form_id) as { id: number };
-    
-    if (existing) {
-      db.prepare("UPDATE form_responses SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(data), existing.id);
-      res.json({ id: existing.id });
-    } else {
-      const result = db.prepare("INSERT INTO form_responses (process_id, form_id, data) VALUES (?, ?, ?)").run(process_id, form_id, JSON.stringify(data));
-      res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query("INSERT INTO forms (visa_type_id, title, fields) VALUES ($1, $2, $3) RETURNING id", [visa_type_id, title, JSON.stringify(fields || [])]);
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/financials/confirm-proof", upload.single('file'), (req, res) => {
+  app.put("/api/forms/:id", async (req, res) => {
+    const { title, fields } = req.body;
+    try {
+      await query("UPDATE forms SET title = $1, fields = $2 WHERE id = $3", [title, JSON.stringify(fields || []), req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/forms/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM forms WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/form-responses/:process_id", async (req, res) => {
+    try {
+      const responsesResult = await query("SELECT * FROM form_responses WHERE process_id = $1", [req.params.process_id]);
+      const responses = responsesResult.rows.map((r: any) => ({
+        ...r,
+        data: JSON.parse(r.data || '{}')
+      }));
+      res.json(responses);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/form-responses", async (req, res) => {
+    const { process_id, form_id, data } = req.body;
+    try {
+      const existingResult = await query("SELECT id FROM form_responses WHERE process_id = $1 AND form_id = $2", [process_id, form_id]);
+
+      if (existingResult.rows.length > 0) {
+        await query("UPDATE form_responses SET data = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", [JSON.stringify(data), existingResult.rows[0].id]);
+        res.json({ id: existingResult.rows[0].id });
+      } else {
+        const result = await query("INSERT INTO form_responses (process_id, form_id, data) VALUES ($1, $2, $3) RETURNING id", [process_id, form_id, JSON.stringify(data)]);
+        res.json({ id: result.rows[0].id });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/financials/confirm-proof", upload.single('file'), async (req, res) => {
     const { process_id } = req.body;
     const file = req.file;
     const proof_url = file ? `/uploads/${file.filename}` : null;
 
     try {
-      db.prepare("UPDATE financials SET status = 'proof_received', proof_url = ? WHERE process_id = ?").run(proof_url, process_id);
+      await query("UPDATE financials SET status = 'proof_received', proof_url = $1 WHERE process_id = $2", [proof_url, process_id]);
       res.json({ success: true, proof_url });
     } catch (e) {
       console.error('Error confirming proof:', e);
@@ -645,487 +691,611 @@ async function startServer() {
     }
   });
 
-  app.post("/api/financials/validate", (req, res) => {
+  app.post("/api/financials/validate", async (req, res) => {
     const { process_id, status } = req.body; // status: 'confirmed'
-    
-    try {
-      const transaction = db.transaction(() => {
-        db.prepare("UPDATE financials SET status = ?, confirmed_at = CURRENT_TIMESTAMP WHERE process_id = ?").run(status, process_id);
-        if (status === 'confirmed') {
-          db.prepare("UPDATE processes SET status = 'analyzing', internal_status = 'reviewing' WHERE id = ?").run(process_id);
-        }
-      });
 
-      transaction();
+    try {
+      await query('BEGIN', []);
+      await query("UPDATE financials SET status = $1, confirmed_at = CURRENT_TIMESTAMP WHERE process_id = $2", [status, process_id]);
+      if (status === 'confirmed') {
+        await query("UPDATE processes SET status = 'analyzing', internal_status = 'reviewing' WHERE id = $1", [process_id]);
+      }
+      await query('COMMIT', []);
       res.json({ success: true });
     } catch (e) {
+      await query('ROLLBACK', []);
       console.error('Error validating financial:', e);
       res.status(500).json({ error: "Failed to validate financial" });
     }
   });
 
-  app.post("/api/documents/validate", (req, res) => {
+  app.post("/api/documents/validate", async (req, res) => {
     const { id, status, rejection_reason } = req.body;
-    db.prepare("UPDATE documents SET status = ?, rejection_reason = ? WHERE id = ?").run(status, rejection_reason || null, id);
-    res.json({ success: true });
+    try {
+      await query("UPDATE documents SET status = $1, rejection_reason = $2 WHERE id = $3", [status, rejection_reason || null, id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/documents", upload.single('file'), (req, res) => {
+  app.post("/api/documents", upload.single('file'), async (req, res) => {
     const { process_id, name } = req.body;
     const file = req.file;
     const url = file ? `/uploads/${file.filename}` : null;
 
     try {
-      const result = db.prepare("INSERT INTO documents (process_id, name, url, status) VALUES (?, ?, ?, 'uploaded')").run(process_id, name, url);
-      res.json({ id: result.lastInsertRowid, url });
+      const result = await query("INSERT INTO documents (process_id, name, url, status) VALUES ($1, $2, $3, 'uploaded') RETURNING id", [process_id, name, url]);
+      res.json({ id: result.rows[0].id, url });
     } catch (e) {
       console.error('Error uploading document:', e);
       res.status(500).json({ error: "Failed to upload document" });
     }
   });
   // Plans CRUD
-  app.get("/api/plans", (req, res) => {
+  app.get("/api/plans", async (req, res) => {
     const { agency_id } = req.query;
-    let query = "SELECT * FROM plans";
-    let params = [];
-    if (agency_id) {
-      query += " WHERE agency_id = ?";
-      params.push(agency_id);
+    try {
+      let sql = "SELECT * FROM plans";
+      let params = [];
+      if (agency_id) {
+        sql += " WHERE agency_id = $1";
+        params.push(agency_id);
+      }
+      sql += " ORDER BY price ASC";
+      const plansResult = await query(sql, params);
+      const plans = plansResult.rows.map((p: any) => ({
+        ...p,
+        features: JSON.parse(p.features || '[]')
+      }));
+      res.json(plans);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    query += " ORDER BY price ASC";
-    const plans = db.prepare(query).all(...params).map((p: any) => ({
-      ...p,
-      features: JSON.parse(p.features || '[]')
-    }));
-    res.json(plans);
   });
 
-  app.post("/api/plans", (req, res) => {
+  app.post("/api/plans", async (req, res) => {
     const { agency_id, name, description, price, features, is_recommended, icon } = req.body;
-    const result = db.prepare(
-      "INSERT INTO plans (agency_id, name, description, price, features, is_recommended, icon) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(agency_id, name, description, price, JSON.stringify(features || []), is_recommended ? 1 : 0, icon || 'Star');
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query(
+        "INSERT INTO plans (agency_id, name, description, price, features, is_recommended, icon) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        [agency_id, name, description, price, JSON.stringify(features || []), is_recommended, icon || 'Star']
+      );
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/plans/:id", (req, res) => {
+  app.put("/api/plans/:id", async (req, res) => {
     const { name, description, price, features, is_recommended, icon } = req.body;
-    db.prepare(
-      "UPDATE plans SET name = ?, description = ?, price = ?, features = ?, is_recommended = ?, icon = ? WHERE id = ?"
-    ).run(name, description, price, JSON.stringify(features || []), is_recommended ? 1 : 0, icon || 'Star', req.params.id);
-    res.json({ success: true });
+    try {
+      await query(
+        "UPDATE plans SET name = $1, description = $2, price = $3, features = $4, is_recommended = $5, icon = $6 WHERE id = $7",
+        [name, description, price, JSON.stringify(features || []), is_recommended, icon || 'Star', req.params.id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete("/api/plans/:id", (req, res) => {
-    db.prepare("DELETE FROM plans WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+  app.delete("/api/plans/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM plans WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Form Fields CRUD
-  app.get("/api/form-fields", (req, res) => {
+  app.get("/api/form-fields", async (req, res) => {
     const { agency_id, destination_id } = req.query;
-    let query = "SELECT * FROM form_fields WHERE agency_id = ?";
-    let params = [agency_id];
-    if (destination_id) {
-      query += " AND (destination_id = ? OR destination_id IS NULL)";
-      params.push(destination_id);
+    try {
+      let sql = "SELECT * FROM form_fields WHERE agency_id = $1";
+      let params = [agency_id];
+      if (destination_id) {
+        sql += " AND (destination_id = $2 OR destination_id IS NULL)";
+        params.push(destination_id);
+      }
+      sql += " ORDER BY \"order\" ASC";
+      const fieldsResult = await query(sql, params);
+      const fields = fieldsResult.rows.map((f: any) => ({
+        ...f,
+        options: JSON.parse(f.options || '[]')
+      }));
+      res.json(fields);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    query += " ORDER BY \"order\" ASC";
-    const fields = db.prepare(query).all(...params).map((f: any) => ({
-      ...f,
-      options: JSON.parse(f.options || '[]')
-    }));
-    res.json(fields);
   });
 
-  app.post("/api/form-fields", (req, res) => {
+  app.post("/api/form-fields", async (req, res) => {
     const { agency_id, destination_id, label, type, required, options, order } = req.body;
-    const result = db.prepare(
-      "INSERT INTO form_fields (agency_id, destination_id, label, type, required, options, \"order\") VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(agency_id, destination_id || null, label, type, required ? 1 : 0, JSON.stringify(options || []), order || 0);
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query(
+        "INSERT INTO form_fields (agency_id, destination_id, label, type, required, options, \"order\") VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        [agency_id, destination_id || null, label, type, required, JSON.stringify(options || []), order || 0]
+      );
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/form-fields/:id", (req, res) => {
+  app.put("/api/form-fields/:id", async (req, res) => {
     const { destination_id, label, type, required, options, order } = req.body;
-    db.prepare(
-      "UPDATE form_fields SET destination_id = ?, label = ?, type = ?, required = ?, options = ?, \"order\" = ? WHERE id = ?"
-    ).run(destination_id || null, label, type, required ? 1 : 0, JSON.stringify(options || []), order || 0, req.params.id);
-    res.json({ success: true });
+    try {
+      await query(
+        "UPDATE form_fields SET destination_id = $1, label = $2, type = $3, required = $4, options = $5, \"order\" = $6 WHERE id = $7",
+        [destination_id || null, label, type, required, JSON.stringify(options || []), order || 0, req.params.id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete("/api/form-fields/:id", (req, res) => {
-    db.prepare("DELETE FROM form_fields WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+  app.delete("/api/form-fields/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM form_fields WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get("/api/processes", (req, res) => {
+  app.get("/api/processes", async (req, res) => {
     const { agency_id, role, user_id } = req.query;
-    let query = `
-      SELECT 
-        p.*, 
-        u.name as client_name, 
-        v.name as visa_name, 
-        d.name as destination_name,
-        d.image as destination_image,
-        pl.name as plan_name,
-        f.status as payment_status, 
-        f.proof_url as payment_proof_url,
-        cu.name as consultant_name
-      FROM processes p 
-      JOIN users u ON p.client_id = u.id 
-      LEFT JOIN visa_types v ON p.visa_type_id = v.id
-      LEFT JOIN destinations d ON p.destination_id = d.id
-      LEFT JOIN plans pl ON p.plan_id = pl.id
-      LEFT JOIN financials f ON p.id = f.process_id
-      LEFT JOIN users cu ON p.consultant_id = cu.id
-    `;
-    let params = [];
+    try {
+      let sql = `
+        SELECT
+          p.*,
+          u.name as client_name,
+          v.name as visa_name,
+          d.name as destination_name,
+          d.image as destination_image,
+          pl.name as plan_name,
+          f.status as payment_status,
+          f.proof_url as payment_proof_url,
+          cu.name as consultant_name
+        FROM processes p
+        JOIN users u ON p.client_id = u.id
+        LEFT JOIN visa_types v ON p.visa_type_id = v.id
+        LEFT JOIN destinations d ON p.destination_id = d.id
+        LEFT JOIN plans pl ON p.plan_id = pl.id
+        LEFT JOIN financials f ON p.id = f.process_id
+        LEFT JOIN users cu ON p.consultant_id = cu.id
+      `;
+      let params = [];
 
-    if (role === 'master') {
-      // No filter
-    } else if (role === 'client') {
-      query += " WHERE p.client_id = ?";
-      params.push(user_id);
-    } else if (role === 'consultant') {
-      query += " WHERE p.consultant_id = ?";
-      params.push(user_id);
-    } else if (role === 'analyst') {
-      query += " WHERE p.analyst_id = ? OR (p.internal_status = 'reviewing' AND p.agency_id = ?)";
-      params.push(user_id, agency_id);
-    } else {
-      query += " WHERE p.agency_id = ?";
-      params.push(agency_id);
+      if (role === 'master') {
+        // No filter
+      } else if (role === 'client') {
+        sql += " WHERE p.client_id = $1";
+        params.push(user_id);
+      } else if (role === 'consultant') {
+        sql += " WHERE p.consultant_id = $1";
+        params.push(user_id);
+      } else if (role === 'analyst') {
+        sql += " WHERE p.analyst_id = $1 OR (p.internal_status = 'reviewing' AND p.agency_id = $2)";
+        params.push(user_id, agency_id);
+      } else {
+        sql += " WHERE p.agency_id = $1";
+        params.push(agency_id);
+      }
+
+      sql += " ORDER BY p.created_at DESC";
+
+      const processesResult = await query(sql, params);
+      res.json(processesResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    query += " ORDER BY p.created_at DESC";
-
-    const processes = db.prepare(query).all(...params);
-    res.json(processes);
   });
 
-  app.post("/api/processes", (req, res) => {
+  app.post("/api/processes", async (req, res) => {
     const { client_id, agency_id, visa_type_id, consultant_id, analyst_id, status, internal_status } = req.body;
-    
-    const visa = db.prepare("SELECT base_price FROM visa_types WHERE id = ?").get(visa_type_id) as { base_price: number } | undefined;
-    if (!visa) {
-      return res.status(400).json({ error: "Tipo de visto inválido" });
+
+    try {
+      await query('BEGIN', []);
+
+      const visaResult = await query("SELECT base_price FROM visa_types WHERE id = $1", [visa_type_id]);
+      if (visaResult.rows.length === 0) {
+        await query('ROLLBACK', []);
+        return res.status(400).json({ error: "Tipo de visto inválido" });
+      }
+      const visa = visaResult.rows[0];
+
+      const processResult = await query(`
+        INSERT INTO processes (client_id, agency_id, visa_type_id, consultant_id, analyst_id, status, internal_status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+      `, [client_id, agency_id, visa_type_id, consultant_id || null, analyst_id || null, status || 'started', internal_status || 'pending']);
+
+      const processId = processResult.rows[0].id;
+
+      // Create mandatory financial record
+      await query("INSERT INTO financials (process_id, amount, status) VALUES ($1, $2, $3)", [processId, visa.base_price, "pending"]);
+
+      // Create process tasks from agency tasks
+      const agencyTasksResult = await query("SELECT id FROM tasks WHERE agency_id = $1 AND is_active = true", [agency_id]);
+      for (const task of agencyTasksResult.rows) {
+        await query("INSERT INTO process_tasks (process_id, task_id) VALUES ($1, $2)", [processId, task.id]);
+      }
+
+      // Log action
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, client_id, "process_created", `Process ID: ${processId}`]);
+
+      // Return tasks for the UI as requested
+      const tasksResult = await query(`
+        SELECT pt.*, t.title, t.description
+        FROM process_tasks pt
+        JOIN tasks t ON pt.task_id = t.id
+        WHERE pt.process_id = $1
+      `, [processId]);
+
+      await query('COMMIT', []);
+      res.json({ id: processId, tasks: tasksResult.rows });
+    } catch (err: any) {
+      await query('ROLLBACK', []);
+      res.status(500).json({ error: err.message });
     }
-
-    const result = db.prepare(`
-      INSERT INTO processes (client_id, agency_id, visa_type_id, consultant_id, analyst_id, status, internal_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(client_id, agency_id, visa_type_id, consultant_id || null, analyst_id || null, status || 'started', internal_status || 'pending');
-
-    const processId = result.lastInsertRowid;
-    
-    // Create mandatory financial record
-    db.prepare("INSERT INTO financials (process_id, amount, status) VALUES (?, ?, ?)").run(processId, visa.base_price, "pending");
-
-    // Create process tasks from agency tasks
-    const agencyTasks = db.prepare("SELECT id FROM tasks WHERE agency_id = ? AND is_active = 1").all(agency_id) as { id: number }[];
-    for (const task of agencyTasks) {
-      db.prepare("INSERT INTO process_tasks (process_id, task_id) VALUES (?, ?)").run(processId, task.id);
-    }
-
-    // Log action
-    db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id, client_id, "process_created", `Process ID: ${processId}`);
-
-    // Return tasks for the UI as requested
-    const tasks = db.prepare(`
-      SELECT pt.*, t.title, t.description 
-      FROM process_tasks pt 
-      JOIN tasks t ON pt.task_id = t.id 
-      WHERE pt.process_id = ?
-    `).all(processId);
-
-    res.json({ id: processId, tasks });
   });
 
-  app.put("/api/processes/:id", (req, res) => {
+  app.put("/api/processes/:id", async (req, res) => {
     const { visa_type_id, consultant_id, analyst_id, status, internal_status } = req.body;
 
-    const existingProcess = db
-      .prepare("SELECT id, status, internal_status, visa_type_id FROM processes WHERE id = ?")
-      .get(req.params.id) as { id: number; status: string; internal_status: string; visa_type_id: number } | undefined;
+    try {
+      const existingProcessResult = await query("SELECT id, status, internal_status, visa_type_id FROM processes WHERE id = $1", [req.params.id]);
+      if (existingProcessResult.rows.length === 0) {
+        return res.status(404).json({ error: "Processo não encontrado" });
+      }
+      const existingProcess = existingProcessResult.rows[0];
 
-    if (!existingProcess) {
-      return res.status(404).json({ error: "Processo não encontrado" });
+      if (existingProcess.status === 'completed') {
+        return res.status(400).json({ error: "Processos concluídos não podem ser editados" });
+      }
+
+      await query(`
+        UPDATE processes
+        SET visa_type_id = $1, consultant_id = $2, analyst_id = $3, status = $4, internal_status = $5
+        WHERE id = $6
+      `, [
+        visa_type_id !== undefined ? visa_type_id : existingProcess.visa_type_id,
+        consultant_id !== undefined ? consultant_id : existingProcess.consultant_id,
+        analyst_id !== undefined ? analyst_id : existingProcess.analyst_id,
+        status !== undefined ? status : existingProcess.status,
+        internal_status !== undefined ? internal_status : existingProcess.internal_status,
+        req.params.id,
+      ]);
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
+  });
 
-    if (existingProcess.status === 'completed') {
-      return res.status(400).json({ error: "Processos concluídos não podem ser editados" });
+  app.delete("/api/processes/:id", async (req, res) => {
+    try {
+      await query('BEGIN', []);
+      await query("DELETE FROM process_tasks WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM form_responses WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM documents WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM messages WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM financials WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM processes WHERE id = $1", [req.params.id]);
+      await query('COMMIT', []);
+      res.json({ success: true });
+    } catch (err: any) {
+      await query('ROLLBACK', []);
+      res.status(500).json({ error: err.message });
     }
-
-    db.prepare(`
-      UPDATE processes 
-      SET visa_type_id = ?, consultant_id = ?, analyst_id = ?, status = ?, internal_status = ?
-      WHERE id = ?
-    `).run(
-      visa_type_id !== undefined ? visa_type_id : existingProcess.visa_type_id,
-      consultant_id !== undefined ? consultant_id : existingProcess.consultant_id,
-      analyst_id !== undefined ? analyst_id : existingProcess.analyst_id,
-      status !== undefined ? status : existingProcess.status,
-      internal_status !== undefined ? internal_status : existingProcess.internal_status,
-      req.params.id,
-    );
-
-    res.json({ success: true });
   });
 
-  app.delete("/api/processes/:id", (req, res) => {
-    // Transactional delete
-    const transaction = db.transaction(() => {
-      db.prepare("DELETE FROM process_tasks WHERE process_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM form_responses WHERE process_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM documents WHERE process_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM messages WHERE process_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM financials WHERE process_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM processes WHERE id = ?").run(req.params.id);
-    });
-    transaction();
-    res.json({ success: true });
+  app.get("/api/processes/:id", async (req, res) => {
+    try {
+      const processResult = await query(`
+        SELECT
+          p.*,
+          u.name as client_name,
+          v.name as visa_name,
+          v.required_docs,
+          d.name as destination_name,
+          d.image as destination_image,
+          pl.name as plan_name
+        FROM processes p
+        JOIN users u ON p.client_id = u.id
+        LEFT JOIN visa_types v ON p.visa_type_id = v.id
+        LEFT JOIN destinations d ON p.destination_id = d.id
+        LEFT JOIN plans pl ON p.plan_id = pl.id
+        WHERE p.id = $1
+      `, [req.params.id]);
+
+      if (processResult.rows.length === 0) {
+        return res.status(404).json({ error: "Processo não encontrado" });
+      }
+
+      const process = processResult.rows[0];
+
+      const documentsResult = await query("SELECT * FROM documents WHERE process_id = $1", [req.params.id]);
+      const messagesResult = await query("SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.process_id = $1 ORDER BY sent_at ASC", [req.params.id]);
+      const financialResult = await query("SELECT * FROM financials WHERE process_id = $1", [req.params.id]);
+      const responsesResult = await query(`
+        SELECT fr.*, f.title as form_title, f.fields as form_fields
+        FROM form_responses fr
+        JOIN forms f ON fr.form_id = f.id
+        WHERE fr.process_id = $1
+      `, [req.params.id]);
+      const dependentsResult = await query("SELECT * FROM dependents WHERE process_id = $1", [req.params.id]);
+      const tasksResult = await query(`
+        SELECT pt.*, t.title, t.description
+        FROM process_tasks pt
+        JOIN tasks t ON pt.task_id = t.id
+        WHERE pt.process_id = $1
+      `, [req.params.id]);
+
+      res.json({
+        ...process,
+        documents: documentsResult.rows,
+        messages: messagesResult.rows,
+        financial: financialResult.rows[0] || null,
+        responses: responsesResult.rows,
+        dependents: dependentsResult.rows,
+        tasks: tasksResult.rows
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get("/api/processes/:id", (req, res) => {
-    const process = db.prepare(`
-      SELECT 
-        p.*, 
-        u.name as client_name, 
-        v.name as visa_name, 
-        v.required_docs,
-        d.name as destination_name,
-        d.image as destination_image,
-        pl.name as plan_name
-      FROM processes p 
-      JOIN users u ON p.client_id = u.id 
-      LEFT JOIN visa_types v ON p.visa_type_id = v.id
-      LEFT JOIN destinations d ON p.destination_id = d.id
-      LEFT JOIN plans pl ON p.plan_id = pl.id
-      WHERE p.id = ?
-    `).get(req.params.id);
-    
-    const documents = db.prepare("SELECT * FROM documents WHERE process_id = ?").all(req.params.id);
-    const messages = db.prepare("SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.process_id = ? ORDER BY sent_at ASC").all(req.params.id);
-    const financial = db.prepare("SELECT * FROM financials WHERE process_id = ?").get(req.params.id);
-    const responses = db.prepare(`
-      SELECT fr.*, f.title as form_title, f.fields as form_fields 
-      FROM form_responses fr 
-      JOIN forms f ON fr.form_id = f.id 
-      WHERE fr.process_id = ?
-    `).all(req.params.id);
-    const dependents = db.prepare("SELECT * FROM dependents WHERE process_id = ?").all(req.params.id);
-    const tasks = db.prepare(`
-      SELECT pt.*, t.title, t.description 
-      FROM process_tasks pt 
-      JOIN tasks t ON pt.task_id = t.id 
-      WHERE pt.process_id = ?
-    `).all(req.params.id);
-    
-    res.json({ ...process, documents, messages, financial, responses, dependents, tasks });
-  });
-
-  app.post("/api/process-tasks/:id/toggle", (req, res) => {
+  app.post("/api/process-tasks/:id/toggle", async (req, res) => {
     const { status } = req.body;
     const completed_at = status === 'completed' ? new Date().toISOString() : null;
-    db.prepare("UPDATE process_tasks SET status = ?, completed_at = ? WHERE id = ?").run(status, completed_at, req.params.id);
-    res.json({ success: true });
+    try {
+      await query("UPDATE process_tasks SET status = $1, completed_at = $2 WHERE id = $3", [status, completed_at, req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/messages", (req, res) => {
+  app.post("/api/messages", async (req, res) => {
     const { process_id, sender_id, content, is_proof } = req.body;
-    const result = db.prepare("INSERT INTO messages (process_id, sender_id, content, is_proof) VALUES (?, ?, ?, ?)").run(process_id, sender_id, content, is_proof ? 1 : 0);
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query("INSERT INTO messages (process_id, sender_id, content, is_proof) VALUES ($1, $2, $3, $4) RETURNING id", [process_id, sender_id, content, is_proof]);
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/agencies/:id/reset-password", (req, res) => {
+  app.post("/api/agencies/:id/reset-password", async (req, res) => {
     console.log(`Recebendo requisição para resetar senha da agência ${req.params.id}`);
     const { new_password } = req.body;
     if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
 
     try {
-      const supervisor = db.prepare("SELECT id FROM users WHERE agency_id = ? AND role = 'supervisor' LIMIT 1").get(req.params.id) as { id: number } | undefined;
-      const fallbackAgencyUser = db
-        .prepare("SELECT id FROM users WHERE agency_id = ? ORDER BY id ASC LIMIT 1")
-        .get(req.params.id) as { id: number } | undefined;
-      const userToReset = supervisor?.id || fallbackAgencyUser?.id;
-      
+      const supervisorResult = await query("SELECT id FROM users WHERE agency_id = $1 AND role = 'supervisor' LIMIT 1", [req.params.id]);
+      const fallbackAgencyUserResult = await query("SELECT id FROM users WHERE agency_id = $1 ORDER BY id ASC LIMIT 1", [req.params.id]);
+      const userToReset = supervisorResult.rows[0]?.id || fallbackAgencyUserResult.rows[0]?.id;
+
       if (!userToReset) {
         return res.status(404).json({ error: "Administrador da agência não encontrado" });
       }
 
-      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(new_password, userToReset);
+      await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, userToReset]);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });
     }
   });
 
-  app.post("/api/users/:id/reset-password", (req, res) => {
+  app.post("/api/users/:id/reset-password", async (req, res) => {
     const { new_password } = req.body;
     if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
 
     try {
-      db.prepare("UPDATE users SET password = ? WHERE id = ?").run(new_password, req.params.id);
+      await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, req.params.id]);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });
     }
   });
 
-  app.get("/api/leads", (req, res) => {
+  app.get("/api/leads", async (req, res) => {
     const { agency_id } = req.query;
-    
-    let query = `
-      SELECT 
-        u.id, u.name, u.email, u.phone, u.created_at,
-        p.status as process_status,
-        p.internal_status as process_internal_status,
-        p.id as process_id
-      FROM users u
-      LEFT JOIN processes p ON u.id = p.client_id
-      WHERE u.role = 'client'
-    `;
-    
-    const params: any[] = [];
-    if (agency_id && agency_id !== '') {
-      query += " AND u.agency_id = ?";
-      params.push(agency_id);
-    }
-    
-    query += " ORDER BY u.created_at DESC";
 
-    const leads = db.prepare(query).all(...params);
-    res.json(leads);
+    try {
+      let sql = `
+        SELECT
+          u.id, u.name, u.email, u.phone, u.created_at,
+          p.status as process_status,
+          p.internal_status as process_internal_status,
+          p.id as process_id
+        FROM users u
+        LEFT JOIN processes p ON u.id = p.client_id
+        WHERE u.role = 'client'
+      `;
+
+      const params: any[] = [];
+      if (agency_id && agency_id !== '') {
+        sql += " AND u.agency_id = $1";
+        params.push(agency_id);
+      }
+
+      sql += " ORDER BY u.created_at DESC";
+
+      const leadsResult = await query(sql, params);
+      res.json(leadsResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Expenses (Contas a Pagar)
-  app.get("/api/expenses", (req, res) => {
+  app.get("/api/expenses", async (req, res) => {
     const { agency_id } = req.query;
-    let query = "SELECT * FROM expenses";
-    let params = [];
-    if (agency_id) {
-      query += " WHERE agency_id = ?";
-      params.push(agency_id);
+    try {
+      let sql = "SELECT * FROM expenses";
+      let params = [];
+      if (agency_id) {
+        sql += " WHERE agency_id = $1";
+        params.push(agency_id);
+      }
+      sql += " ORDER BY due_date ASC";
+      const expensesResult = await query(sql, params);
+      res.json(expensesResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    query += " ORDER BY due_date ASC";
-    const expenses = db.prepare(query).all(...params);
-    res.json(expenses);
   });
 
-  app.post("/api/expenses", (req, res) => {
+  app.post("/api/expenses", async (req, res) => {
     const { agency_id, description, amount, due_date, status, category } = req.body;
 
     if (!isFinanceModuleEnabledForAgency(agency_id)) {
       return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
     }
 
-    const result = db.prepare(`
-      INSERT INTO expenses (agency_id, description, amount, due_date, status, category)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(agency_id, description, amount, due_date, status || 'pending', category);
-    const auditUserId = getAuditUserId(agency_id);
-    db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id || null, auditUserId, "expense_created", `Despesa: ${description} ($${amount})`);
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query(`
+        INSERT INTO expenses (agency_id, description, amount, due_date, status, category)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+      `, [agency_id, description, amount, due_date, status || 'pending', category]);
+      const auditUserId = await getAuditUserId(agency_id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id || null, auditUserId, "expense_created", `Despesa: ${description} ($${amount})`]);
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/expenses/:id", (req, res) => {
+  app.put("/api/expenses/:id", async (req, res) => {
     const { description, amount, due_date, status, category } = req.body;
 
-    const expense = db.prepare("SELECT agency_id FROM expenses WHERE id = ?").get(req.params.id) as { agency_id?: number } | undefined;
-    if (!expense) {
-      return res.status(404).json({ error: "Despesa não encontrada" });
-    }
+    try {
+      const expenseResult = await query("SELECT agency_id FROM expenses WHERE id = $1", [req.params.id]);
+      if (expenseResult.rows.length === 0) {
+        return res.status(404).json({ error: "Despesa não encontrada" });
+      }
+      const expense = expenseResult.rows[0];
 
-    if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
-      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
-    }
+      if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
+      }
 
-    db.prepare(`
-      UPDATE expenses SET description = ?, amount = ?, due_date = ?, status = ?, category = ?
-      WHERE id = ?
-    `).run(description, amount, due_date, status, category, req.params.id);
-    res.json({ success: true });
+      await query(`
+        UPDATE expenses SET description = $1, amount = $2, due_date = $3, status = $4, category = $5
+        WHERE id = $6
+      `, [description, amount, due_date, status, category, req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete("/api/expenses/:id", (req, res) => {
-    const expense = db.prepare("SELECT agency_id FROM expenses WHERE id = ?").get(req.params.id) as { agency_id?: number } | undefined;
-    if (!expense) {
-      return res.status(404).json({ error: "Despesa não encontrada" });
-    }
+  app.delete("/api/expenses/:id", async (req, res) => {
+    try {
+      const expenseResult = await query("SELECT agency_id FROM expenses WHERE id = $1", [req.params.id]);
+      if (expenseResult.rows.length === 0) {
+        return res.status(404).json({ error: "Despesa não encontrada" });
+      }
+      const expense = expenseResult.rows[0];
 
-    if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
-      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
-    }
+      if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
+      }
 
-    db.prepare("DELETE FROM expenses WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+      await query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Revenues (Contas a Receber)
-  app.get("/api/revenues", (req, res) => {
+  app.get("/api/revenues", async (req, res) => {
     const { agency_id } = req.query;
-    let query = "SELECT * FROM revenues";
-    let params = [];
-    if (agency_id) {
-      query += " WHERE agency_id = ?";
-      params.push(agency_id);
+    try {
+      let sql = "SELECT * FROM revenues";
+      let params = [];
+      if (agency_id) {
+        sql += " WHERE agency_id = $1";
+        params.push(agency_id);
+      }
+      sql += " ORDER BY due_date ASC";
+      const revenuesResult = await query(sql, params);
+      res.json(revenuesResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    query += " ORDER BY due_date ASC";
-    const revenues = db.prepare(query).all(...params);
-    res.json(revenues);
   });
 
-  app.post("/api/revenues", (req, res) => {
+  app.post("/api/revenues", async (req, res) => {
     const { agency_id, description, amount, due_date, status, category } = req.body;
 
     if (!isFinanceModuleEnabledForAgency(agency_id)) {
       return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
     }
 
-    const result = db.prepare(`
-      INSERT INTO revenues (agency_id, description, amount, due_date, status, category)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(agency_id, description, amount, due_date, status || 'pending', category);
-    const auditUserId = getAuditUserId(agency_id);
-    db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id || null, auditUserId, "revenue_created", `Receita: ${description} ($${amount})`);
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query(`
+        INSERT INTO revenues (agency_id, description, amount, due_date, status, category)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+      `, [agency_id, description, amount, due_date, status || 'pending', category]);
+      const auditUserId = await getAuditUserId(agency_id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id || null, auditUserId, "revenue_created", `Receita: ${description} ($${amount})`]);
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/revenues/:id", (req, res) => {
+  app.put("/api/revenues/:id", async (req, res) => {
     const { description, amount, due_date, status, category } = req.body;
 
-    const revenue = db.prepare("SELECT agency_id FROM revenues WHERE id = ?").get(req.params.id) as { agency_id?: number } | undefined;
-    if (!revenue) {
-      return res.status(404).json({ error: "Receita não encontrada" });
-    }
+    try {
+      const revenueResult = await query("SELECT agency_id FROM revenues WHERE id = $1", [req.params.id]);
+      if (revenueResult.rows.length === 0) {
+        return res.status(404).json({ error: "Receita não encontrada" });
+      }
+      const revenue = revenueResult.rows[0];
 
-    if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
-      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
-    }
+      if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
+      }
 
-    db.prepare(`
-      UPDATE revenues SET description = ?, amount = ?, due_date = ?, status = ?, category = ?
-      WHERE id = ?
-    `).run(description, amount, due_date, status, category, req.params.id);
-    res.json({ success: true });
+      await query(`
+        UPDATE revenues SET description = $1, amount = $2, due_date = $3, status = $4, category = $5
+        WHERE id = $6
+      `, [description, amount, due_date, status, category, req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete("/api/revenues/:id", (req, res) => {
-    const revenue = db.prepare("SELECT agency_id FROM revenues WHERE id = ?").get(req.params.id) as { agency_id?: number } | undefined;
-    if (!revenue) {
-      return res.status(404).json({ error: "Receita não encontrada" });
-    }
+  app.delete("/api/revenues/:id", async (req, res) => {
+    try {
+      const revenueResult = await query("SELECT agency_id FROM revenues WHERE id = $1", [req.params.id]);
+      if (revenueResult.rows.length === 0) {
+        return res.status(404).json({ error: "Receita não encontrada" });
+      }
+      const revenue = revenueResult.rows[0];
 
-    if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
-      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
-    }
+      if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
+      }
 
-    db.prepare("DELETE FROM revenues WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+      await query("DELETE FROM revenues WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/clients", (req, res) => {
+  app.post("/api/clients", async (req, res) => {
     const { name, email, password, phone, agency_id } = req.body;
 
     if (!name || !email || !agency_id) {
@@ -1138,23 +1308,24 @@ async function startServer() {
     }
 
     try {
-      const result = db
-        .prepare("INSERT INTO users (name, email, password, role, agency_id, phone) VALUES (?, ?, ?, 'client', ?, ?)")
-        .run(name, email, passwordToUse, agency_id, phone || null);
-      res.json({ id: result.lastInsertRowid });
+      const result = await query(
+        "INSERT INTO users (name, email, password, role, agency_id, phone) VALUES ($1, $2, $3, 'client', $4, $5) RETURNING id",
+        [name, email, passwordToUse, agency_id, phone || null]
+      );
+      res.json({ id: result.rows[0].id });
     } catch (e: any) {
       const message = String(e?.message || '');
-      if (message.includes('UNIQUE constraint failed: users.email')) {
+      if (message.includes('duplicate key value violates unique constraint') && message.includes('users_email_key')) {
         return res.status(400).json({ error: "Email já cadastrado" });
       }
-      if (message.includes('FOREIGN KEY constraint failed')) {
+      if (message.includes('violates foreign key constraint')) {
         return res.status(400).json({ error: "Agência inválida para cadastro do cliente" });
       }
       return res.status(500).json({ error: "Erro ao cadastrar cliente" });
     }
   });
 
-  app.post("/api/clients/:id/reset-password", (req, res) => {
+  app.post("/api/clients/:id/reset-password", async (req, res) => {
     const clientId = Number(req.params.id);
     const { new_password, reset_by_user_id } = req.body;
 
@@ -1166,131 +1337,163 @@ async function startServer() {
       return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres" });
     }
 
-    const client = db
-      .prepare("SELECT id, agency_id FROM users WHERE id = ? AND role = 'client'")
-      .get(clientId) as { id: number; agency_id: number } | undefined;
-    if (!client) {
-      return res.status(404).json({ error: "Cliente não encontrado" });
-    }
-
-    let resetByUserId = Number(reset_by_user_id || 0);
-    if (resetByUserId) {
-      const resetActor = db
-        .prepare("SELECT id FROM users WHERE id = ? AND (agency_id = ? OR role = 'master')")
-        .get(resetByUserId, client.agency_id) as { id: number } | undefined;
-      if (!resetActor) {
-        resetByUserId = getAuditUserId(client.agency_id);
+    try {
+      const clientResult = await query("SELECT id, agency_id FROM users WHERE id = $1 AND role = 'client'", [clientId]);
+      if (clientResult.rows.length === 0) {
+        return res.status(404).json({ error: "Cliente não encontrado" });
       }
-    } else {
-      resetByUserId = getAuditUserId(client.agency_id);
-    }
+      const client = clientResult.rows[0];
 
-    db.prepare("UPDATE users SET password = ? WHERE id = ?").run(String(new_password).trim(), clientId);
-    db.prepare("INSERT INTO client_password_resets (client_id, agency_id, reset_by_user_id) VALUES (?, ?, ?)")
-      .run(clientId, client.agency_id, resetByUserId || null);
-    res.json({ success: true });
+      let resetByUserId = Number(reset_by_user_id || 0);
+      if (resetByUserId) {
+        const resetActorResult = await query("SELECT id FROM users WHERE id = $1 AND (agency_id = $2 OR role = 'master')", [resetByUserId, client.agency_id]);
+        if (resetActorResult.rows.length === 0) {
+          resetByUserId = await getAuditUserId(client.agency_id);
+        }
+      } else {
+        resetByUserId = await getAuditUserId(client.agency_id);
+      }
+
+      await query("UPDATE users SET password = $1 WHERE id = $2", [String(new_password).trim(), clientId]);
+      await query("INSERT INTO client_password_resets (client_id, agency_id, reset_by_user_id) VALUES ($1, $2, $3)", [clientId, client.agency_id, resetByUserId || null]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get("/api/clients/password-resets", (req, res) => {
+  app.get("/api/clients/password-resets", async (req, res) => {
     const { agency_id } = req.query;
 
     if (!agency_id) {
       return res.status(400).json({ error: "agency_id é obrigatório" });
     }
 
-    const history = db.prepare(`
-      SELECT
-        cpr.id,
-        cpr.client_id,
-        c.name as client_name,
-        c.email as client_email,
-        cpr.reset_by_user_id,
-        rb.name as reset_by_name,
-        cpr.created_at
-      FROM client_password_resets cpr
-      JOIN users c ON c.id = cpr.client_id
-      LEFT JOIN users rb ON rb.id = cpr.reset_by_user_id
-      WHERE cpr.agency_id = ?
-      ORDER BY cpr.created_at DESC, cpr.id DESC
-      LIMIT 200
-    `).all(agency_id);
+    try {
+      const historyResult = await query(`
+        SELECT
+          cpr.id,
+          cpr.client_id,
+          c.name as client_name,
+          c.email as client_email,
+          cpr.reset_by_user_id,
+          rb.name as reset_by_name,
+          cpr.created_at
+        FROM client_password_resets cpr
+        JOIN users c ON c.id = cpr.client_id
+        LEFT JOIN users rb ON rb.id = cpr.reset_by_user_id
+        WHERE cpr.agency_id = $1
+        ORDER BY cpr.created_at DESC, cpr.id DESC
+        LIMIT 200
+      `, [agency_id]);
 
-    res.json(history);
+      res.json(historyResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Agency Users (Consultants and Analysts)
-  app.get("/api/agency-users", (req, res) => {
+  app.get("/api/agency-users", async (req, res) => {
     const { agency_id } = req.query;
-    let query = "SELECT id, name, email, role, agency_id, created_at FROM users WHERE role IN ('consultant', 'analyst', 'supervisor', 'gerente_financeiro')";
-    let params = [];
-    if (agency_id) {
-      query += " AND agency_id = ?";
-      params.push(agency_id);
+    try {
+      let sql = "SELECT id, name, email, role, agency_id, created_at FROM users WHERE role IN ('consultant', 'analyst', 'supervisor', 'gerente_financeiro')";
+      let params = [];
+      if (agency_id) {
+        sql += " AND agency_id = $1";
+        params.push(agency_id);
+      }
+      const usersResult = await query(sql, params);
+      res.json(usersResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const users = db.prepare(query).all(...params);
-    res.json(users);
   });
 
-  app.get("/api/global-users", (req, res) => {
-    const users = db.prepare(`
-      SELECT u.id, u.name, u.email, u.role, u.agency_id, a.name as agency_name, u.created_at 
-      FROM users u 
-      LEFT JOIN agencies a ON u.agency_id = a.id 
-      WHERE u.role != 'master'
-      ORDER BY u.created_at DESC
-    `).all();
-    res.json(users);
+  app.get("/api/global-users", async (req, res) => {
+    try {
+      const usersResult = await query(`
+        SELECT u.id, u.name, u.email, u.role, u.agency_id, a.name as agency_name, u.created_at
+        FROM users u
+        LEFT JOIN agencies a ON u.agency_id = a.id
+        WHERE u.role != 'master'
+        ORDER BY u.created_at DESC
+      `, []);
+      res.json(usersResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/agency-users", (req, res) => {
+  app.post("/api/agency-users", async (req, res) => {
     const { name, email, password, role, agency_id } = req.body;
     try {
-      const result = db.prepare("INSERT INTO users (name, email, password, role, agency_id) VALUES (?, ?, ?, ?, ?)").run(name, email, password, role, agency_id);
-      const auditUserId = getAuditUserId(agency_id);
-      db.prepare("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES (?, ?, ?, ?)").run(agency_id, auditUserId, "user_created", `Usuário criado: ${name} (${role})`);
-      res.json({ id: result.lastInsertRowid });
+      const result = await query("INSERT INTO users (name, email, password, role, agency_id) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, email, password, role, agency_id]);
+      const auditUserId = await getAuditUserId(agency_id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, auditUserId, "user_created", `Usuário criado: ${name} (${role})`]);
+      res.json({ id: result.rows[0].id });
     } catch (e) {
       res.status(400).json({ error: "Email already exists" });
     }
   });
 
-  app.put("/api/agency-users/:id", (req, res) => {
+  app.put("/api/agency-users/:id", async (req, res) => {
     const { name, email, role } = req.body;
     try {
-      db.prepare("UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?").run(name, email, role, req.params.id);
+      await query("UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4", [name, email, role, req.params.id]);
       res.json({ success: true });
     } catch (e) {
       res.status(400).json({ error: "Email already exists" });
     }
   });
 
-  app.delete("/api/agency-users/:id", (req, res) => {
-    db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+  app.delete("/api/agency-users/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM users WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Tasks
-  app.get("/api/tasks", (req, res) => {
+  app.get("/api/tasks", async (req, res) => {
     const { agency_id } = req.query;
-    const tasks = db.prepare("SELECT * FROM tasks WHERE agency_id = ? ORDER BY created_at DESC").all(agency_id);
-    res.json(tasks);
+    try {
+      const tasksResult = await query("SELECT * FROM tasks WHERE agency_id = $1 ORDER BY created_at DESC", [agency_id]);
+      res.json(tasksResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post("/api/tasks", (req, res) => {
+  app.post("/api/tasks", async (req, res) => {
     const { agency_id, title, description } = req.body;
-    const result = db.prepare("INSERT INTO tasks (agency_id, title, description) VALUES (?, ?, ?)").run(agency_id, title, description);
-    res.json({ id: result.lastInsertRowid });
+    try {
+      const result = await query("INSERT INTO tasks (agency_id, title, description) VALUES ($1, $2, $3) RETURNING id", [agency_id, title, description]);
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/tasks/:id", (req, res) => {
+  app.put("/api/tasks/:id", async (req, res) => {
     const { title, description, is_active } = req.body;
-    db.prepare("UPDATE tasks SET title = ?, description = ?, is_active = ? WHERE id = ?").run(title, description, is_active ? 1 : 0, req.params.id);
-    res.json({ success: true });
+    try {
+      await query("UPDATE tasks SET title = $1, description = $2, is_active = $3 WHERE id = $4", [title, description, is_active, req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.delete("/api/tasks/:id", (req, res) => {
-    db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+  app.delete("/api/tasks/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM tasks WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Vite middleware for development

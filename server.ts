@@ -1,5 +1,6 @@
 ﻿import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { testConnection, query } from "./src/lib/db.js";
 import { initializeDatabase } from "./src/lib/init-db.js";
 import path from "path";
@@ -106,6 +107,7 @@ async function startServer() {
   }
 
   app.use(express.json());
+  app.use(cors());
   app.use("/uploads", express.static(uploadsDir));
 
   app.use((req, _res, next) => {
@@ -1503,7 +1505,7 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
+  // Vite middleware for development only
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -1511,12 +1513,8 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.use((req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
   }
+  // In production: backend is API-only, frontend served separately
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);

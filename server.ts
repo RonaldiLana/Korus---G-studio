@@ -29,9 +29,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Initialize Database
-await initializeDatabase();
-
 // Round Robin Helper
 async function getNextConsultant(agencyId: number) {
   const consultants = await query("SELECT id FROM users WHERE role = 'consultant' AND agency_id = $1", [agencyId]);
@@ -90,20 +87,22 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
 
 async function startServer() {
   try {
-    // Test database connection
     console.log('[BOOT] Iniciando servidor...');
     await testConnection();
-    console.log('[BOOT] Ô£ô Banco de dados conectado com sucesso');
+    console.log('[BOOT] Banco de dados conectado com sucesso');
+
+    await initializeDatabase();
+    console.log('[BOOT] Banco inicializado com sucesso');
   } catch (dbError) {
-    console.error('[BOOT] Ô£ù Falha na conex├úo com banco de dados');
-    console.error('[BOOT] Configure a vari├ível DATABASE_URL antes de rodar o servidor');
+    console.error('[BOOT] ✗ Falha na conexão com banco de dados');
+    console.error(dbError);
     process.exit(1);
   }
 
   const app = express();
   const PORT = Number(process.env.PORT);
   if (!PORT) {
-    console.error('[BOOT] PORT n├úo definida');
+    console.error('[BOOT] PORT não definida');
     throw new Error("PORT environment variable is required");
   }
 
@@ -191,7 +190,7 @@ async function startServer() {
           }
         } else {
           // Fallback for default plans if not in DB
-          if (plan_id === 'basic') { amount = 497; planName = 'Consultoria B├ísica'; }
+          if (plan_id === 'basic') { amount = 497; planName = 'Consultoria Básica'; }
           else if (plan_id === 'complete') { amount = 1497; planName = 'Consultoria Completa'; }
           else if (plan_id === 'premium') { amount = 2997; planName = 'Consultoria Premium'; }
         }
@@ -366,7 +365,7 @@ async function startServer() {
         WHERE a.id = $1
       `, [req.params.id]);
       if (agencyResult.rows.length === 0) {
-        return res.status(404).json({ error: "Ag├¬ncia n├úo encontrada" });
+        return res.status(404).json({ error: "Agência não encontrada" });
       }
       res.json(agencyResult.rows[0]);
     } catch (err: any) {
@@ -375,7 +374,7 @@ async function startServer() {
   });
 
   app.post("/api/agencies", async (req, res) => {
-    console.log('Recebendo requisi├º├úo para criar ag├¬ncia:', req.body);
+    console.log('Recebendo requisição para criar agência:', req.body);
     const { name, slug, has_finance, admin_name, admin_email, admin_password } = req.body;
 
     try {
@@ -397,24 +396,24 @@ async function startServer() {
         auditUserId = adminInsertResult.rows[0].id;
       }
 
-      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agencyId, auditUserId, "agency_created", `Ag├¬ncia criada: ${name}`]);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agencyId, auditUserId, "agency_created", `Agência criada: ${name}`]);
 
       await query('COMMIT', []);
       res.json({ id: agencyId });
     } catch (e: any) {
       await query('ROLLBACK', []);
       if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("users_email_key")) {
-        res.status(400).json({ error: "Email do administrador j├í cadastrado" });
+        res.status(400).json({ error: "Email do administrador já cadastrado" });
       } else if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("agencies_slug_key")) {
-        res.status(400).json({ error: "Slug da ag├¬ncia j├í existe" });
+        res.status(400).json({ error: "Slug da agência já existe" });
       } else {
-        res.status(500).json({ error: "Erro ao criar ag├¬ncia" });
+        res.status(500).json({ error: "Erro ao criar agência" });
       }
     }
   });
 
   app.put("/api/agencies/:id", async (req, res) => {
-    console.log(`Recebendo requisi├º├úo para atualizar ag├¬ncia ${req.params.id}:`, req.body);
+    console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
     const { name, slug, has_finance, has_pipefy } = req.body;
     const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy });
     try {
@@ -422,9 +421,9 @@ async function startServer() {
       res.json({ success: true });
     } catch (e: any) {
       if (e.message.includes("duplicate key value violates unique constraint") && e.message.includes("agencies_slug_key")) {
-        res.status(400).json({ error: "Slug da ag├¬ncia j├í existe" });
+        res.status(400).json({ error: "Slug da agência já existe" });
       } else {
-        res.status(500).json({ error: "Erro ao atualizar ag├¬ncia" });
+        res.status(500).json({ error: "Erro ao atualizar agência" });
       }
     }
   });
@@ -433,13 +432,13 @@ async function startServer() {
     const agencyId = Number(req.params.id);
 
     if (!agencyId) {
-      return res.status(400).json({ error: "ID de ag├¬ncia inv├ílido" });
+      return res.status(400).json({ error: "ID de agência inválido" });
     }
 
     try {
       const agencyResult = await query("SELECT id, name FROM agencies WHERE id = $1", [agencyId]);
       if (agencyResult.rows.length === 0) {
-        return res.status(404).json({ error: "Ag├¬ncia n├úo encontrada" });
+        return res.status(404).json({ error: "Agência não encontrada" });
       }
       const agency = agencyResult.rows[0];
 
@@ -468,7 +467,7 @@ async function startServer() {
       return res.json({ success: true, deleted_agency_id: agencyId, deleted_agency_name: agency.name });
     } catch (error) {
       await query('ROLLBACK', []);
-      return res.status(500).json({ error: "Erro ao excluir ag├¬ncia e dados vinculados" });
+      return res.status(500).json({ error: "Erro ao excluir agência e dados vinculados" });
     }
   });
 
@@ -496,7 +495,7 @@ async function startServer() {
         req.params.id
       ]);
       const auditUserId = await getAuditUserId(req.params.id);
-      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "agency_settings_updated", `Configura├º├Áes da ag├¬ncia atualizadas: ${name}`]);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "agency_settings_updated", `Configurações da agência atualizadas: ${name}`]);
       res.json({ success: true });
     } catch (e) {
       console.error('Error updating agency settings:', e);
@@ -913,7 +912,7 @@ async function startServer() {
       const visaResult = await query("SELECT base_price FROM visa_types WHERE id = $1", [visa_type_id]);
       if (visaResult.rows.length === 0) {
         await query('ROLLBACK', []);
-        return res.status(400).json({ error: "Tipo de visto inv├ílido" });
+        return res.status(400).json({ error: "Tipo de visto inválido" });
       }
       const visa = visaResult.rows[0];
 
@@ -958,12 +957,12 @@ async function startServer() {
     try {
       const existingProcessResult = await query("SELECT id, status, internal_status, visa_type_id FROM processes WHERE id = $1", [req.params.id]);
       if (existingProcessResult.rows.length === 0) {
-        return res.status(404).json({ error: "Processo n├úo encontrado" });
+        return res.status(404).json({ error: "Processo não encontrado" });
       }
       const existingProcess = existingProcessResult.rows[0];
 
       if (existingProcess.status === 'completed') {
-        return res.status(400).json({ error: "Processos conclu├¡dos n├úo podem ser editados" });
+        return res.status(400).json({ error: "Processos concluídos não podem ser editados" });
       }
 
       await query(`
@@ -1022,7 +1021,7 @@ async function startServer() {
       `, [req.params.id]);
 
       if (processResult.rows.length === 0) {
-        return res.status(404).json({ error: "Processo n├úo encontrado" });
+        return res.status(404).json({ error: "Processo não encontrado" });
       }
 
       const process = processResult.rows[0];
@@ -1080,9 +1079,9 @@ async function startServer() {
   });
 
   app.post("/api/agencies/:id/reset-password", async (req, res) => {
-    console.log(`Recebendo requisi├º├úo para resetar senha da ag├¬ncia ${req.params.id}`);
+    console.log(`Recebendo requisição para resetar senha da agência ${req.params.id}`);
     const { new_password } = req.body;
-    if (!new_password) return res.status(400).json({ error: "Nova senha ├® obrigat├│ria" });
+    if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
 
     try {
       const supervisorResult = await query("SELECT id FROM users WHERE agency_id = $1 AND role = 'supervisor' LIMIT 1", [req.params.id]);
@@ -1090,7 +1089,7 @@ async function startServer() {
       const userToReset = supervisorResult.rows[0]?.id || fallbackAgencyUserResult.rows[0]?.id;
 
       if (!userToReset) {
-        return res.status(404).json({ error: "Administrador da ag├¬ncia n├úo encontrado" });
+        return res.status(404).json({ error: "Administrador da agência não encontrado" });
       }
 
       await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, userToReset]);
@@ -1102,7 +1101,7 @@ async function startServer() {
 
   app.post("/api/users/:id/reset-password", async (req, res) => {
     const { new_password } = req.body;
-    if (!new_password) return res.status(400).json({ error: "Nova senha ├® obrigat├│ria" });
+    if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
 
     try {
       await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, req.params.id]);
@@ -1164,7 +1163,7 @@ async function startServer() {
     const { agency_id, description, amount, due_date, status, category } = req.body;
 
     if (!isFinanceModuleEnabledForAgency(agency_id)) {
-      return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
     }
 
     try {
@@ -1186,12 +1185,12 @@ async function startServer() {
     try {
       const expenseResult = await query("SELECT agency_id FROM expenses WHERE id = $1", [req.params.id]);
       if (expenseResult.rows.length === 0) {
-        return res.status(404).json({ error: "Despesa n├úo encontrada" });
+        return res.status(404).json({ error: "Despesa não encontrada" });
       }
       const expense = expenseResult.rows[0];
 
       if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
-        return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
       }
 
       await query(`
@@ -1208,12 +1207,12 @@ async function startServer() {
     try {
       const expenseResult = await query("SELECT agency_id FROM expenses WHERE id = $1", [req.params.id]);
       if (expenseResult.rows.length === 0) {
-        return res.status(404).json({ error: "Despesa n├úo encontrada" });
+        return res.status(404).json({ error: "Despesa não encontrada" });
       }
       const expense = expenseResult.rows[0];
 
       if (!isFinanceModuleEnabledForAgency(expense.agency_id || null)) {
-        return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
       }
 
       await query("DELETE FROM expenses WHERE id = $1", [req.params.id]);
@@ -1245,7 +1244,7 @@ async function startServer() {
     const { agency_id, description, amount, due_date, status, category } = req.body;
 
     if (!isFinanceModuleEnabledForAgency(agency_id)) {
-      return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+      return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
     }
 
     try {
@@ -1267,12 +1266,12 @@ async function startServer() {
     try {
       const revenueResult = await query("SELECT agency_id FROM revenues WHERE id = $1", [req.params.id]);
       if (revenueResult.rows.length === 0) {
-        return res.status(404).json({ error: "Receita n├úo encontrada" });
+        return res.status(404).json({ error: "Receita não encontrada" });
       }
       const revenue = revenueResult.rows[0];
 
       if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
-        return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
       }
 
       await query(`
@@ -1289,12 +1288,12 @@ async function startServer() {
     try {
       const revenueResult = await query("SELECT agency_id FROM revenues WHERE id = $1", [req.params.id]);
       if (revenueResult.rows.length === 0) {
-        return res.status(404).json({ error: "Receita n├úo encontrada" });
+        return res.status(404).json({ error: "Receita não encontrada" });
       }
       const revenue = revenueResult.rows[0];
 
       if (!isFinanceModuleEnabledForAgency(revenue.agency_id || null)) {
-        return res.status(403).json({ error: "M├│dulo financeiro desativado para esta ag├¬ncia" });
+        return res.status(403).json({ error: "Módulo financeiro desativado para esta agência" });
       }
 
       await query("DELETE FROM revenues WHERE id = $1", [req.params.id]);
@@ -1308,12 +1307,12 @@ async function startServer() {
     const { name, email, password, phone, agency_id } = req.body;
 
     if (!name || !email || !agency_id) {
-      return res.status(400).json({ error: "Nome, email e ag├¬ncia s├úo obrigat├│rios" });
+      return res.status(400).json({ error: "Nome, email e agência são obrigatórios" });
     }
 
     const passwordToUse = (password || '').trim() ? String(password).trim() : 'password';
     if (passwordToUse.length < 6) {
-      return res.status(400).json({ error: "A senha deve ter no m├¡nimo 6 caracteres" });
+      return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres" });
     }
 
     try {
@@ -1325,10 +1324,10 @@ async function startServer() {
     } catch (e: any) {
       const message = String(e?.message || '');
       if (message.includes('duplicate key value violates unique constraint') && message.includes('users_email_key')) {
-        return res.status(400).json({ error: "Email j├í cadastrado" });
+        return res.status(400).json({ error: "Email já cadastrado" });
       }
       if (message.includes('violates foreign key constraint')) {
-        return res.status(400).json({ error: "Ag├¬ncia inv├ílida para cadastro do cliente" });
+        return res.status(400).json({ error: "Agência inválida para cadastro do cliente" });
       }
       return res.status(500).json({ error: "Erro ao cadastrar cliente" });
     }
@@ -1339,17 +1338,17 @@ async function startServer() {
     const { new_password, reset_by_user_id } = req.body;
 
     if (!clientId) {
-      return res.status(400).json({ error: "Cliente inv├ílido" });
+      return res.status(400).json({ error: "Cliente inválido" });
     }
 
     if (!new_password || String(new_password).trim().length < 6) {
-      return res.status(400).json({ error: "A senha deve ter no m├¡nimo 6 caracteres" });
+      return res.status(400).json({ error: "A senha deve ter no mínimo 6 caracteres" });
     }
 
     try {
       const clientResult = await query("SELECT id, agency_id FROM users WHERE id = $1 AND role = 'client'", [clientId]);
       if (clientResult.rows.length === 0) {
-        return res.status(404).json({ error: "Cliente n├úo encontrado" });
+        return res.status(404).json({ error: "Cliente não encontrado" });
       }
       const client = clientResult.rows[0];
 
@@ -1375,7 +1374,7 @@ async function startServer() {
     const { agency_id } = req.query;
 
     if (!agency_id) {
-      return res.status(400).json({ error: "agency_id ├® obrigat├│rio" });
+      return res.status(400).json({ error: "agency_id é obrigatório" });
     }
 
     try {
@@ -1439,7 +1438,7 @@ async function startServer() {
     try {
       const result = await query("INSERT INTO users (name, email, password, role, agency_id) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, email, password, role, agency_id]);
       const auditUserId = await getAuditUserId(agency_id);
-      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, auditUserId, "user_created", `Usu├írio criado: ${name} (${role})`]);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, auditUserId, "user_created", `Usuário criado: ${name} (${role})`]);
       res.json({ id: result.rows[0].id });
     } catch (e) {
       res.status(400).json({ error: "Email already exists" });
@@ -1520,8 +1519,8 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[BOOT] Ô£ô Servidor rodando em http://localhost:${PORT}`);
-    console.log(`[BOOT] Ô£ô Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);
+    console.log(`[BOOT] ✓ Ambiente: ${process.env.NODE_ENV || 'development'}`);
   });
 }
 

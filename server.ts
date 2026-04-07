@@ -155,10 +155,23 @@ async function startServer() {
 
       // Credenciais válidas
       if (user.rows[0]) {
-        const { password, ...userWithoutPassword } = user.rows[0];
+        const userData = user.rows[0];
+        const { password, ...userWithoutPassword } = userData;
+        
+        // Ensure all required fields are present
+        const completeUser = {
+          ...userWithoutPassword,
+          id: userData.id,
+          name: userData.name,
+          email: userData.email,
+          role: userData.role,
+          agency_id: userData.agency_id || null,
+          agency_modules: userData.agency_modules || null
+        };
+        
         return res.json({
           success: true,
-          user: userWithoutPassword
+          user: completeUser
         });
       }
 

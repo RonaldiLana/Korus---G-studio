@@ -87,7 +87,7 @@ async function seedInitialData() {
     await query(
       `INSERT INTO users (name, email, password, role, agency_id) 
        VALUES ($1, $2, $3, $4, $5)`,
-      ["Master User", "master@korus.com", "Korus2024!", "master", agencyId]
+      ["Master User", "master@korus.com", "Master123456", "master", agencyId]
     );
 
     console.log("✅ Dados iniciais inseridos com sucesso");
@@ -99,16 +99,29 @@ async function seedInitialData() {
 
 async function ensureMasterUser() {
   try {
+    const masterPassword = "Master123456";
+    
+    // Verificar se existe um usuário master
     const masterCheck = await query("SELECT id FROM users WHERE role = 'master' LIMIT 1");
-    if (masterCheck.rows.length === 0) {
+    
+    if (masterCheck.rows.length > 0) {
+      // Usuário master já existe - atualizar a senha para garantir acesso
+      await query(
+        `UPDATE users SET password = $1 WHERE role = 'master'`,
+        [masterPassword]
+      );
+      console.log("🔐 Senha do usuário master atualizada");
+    } else {
+      // Usuário master não existe - criar novo
       const agencyCheck = await query("SELECT id FROM agencies LIMIT 1");
       if (agencyCheck.rows.length > 0) {
         const agencyId = agencyCheck.rows[0].id;
         await query(
           `INSERT INTO users (name, email, password, role, agency_id) 
            VALUES ($1, $2, $3, $4, $5)`,
-          ["Master User", "master@korus.com", "Korus2024!", "master", agencyId]
+          ["Master User", "master@korus.com", masterPassword, "master", agencyId]
         );
+        console.log("👤 Usuário master criado");
       }
     }
   } catch (error) {

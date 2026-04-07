@@ -159,6 +159,43 @@ const canAccessPipefyModule = (user?: User | null): boolean => {
   return false;
 };
 
+/**
+ * Check if user can view/edit audit logs (only master)
+ */
+const canViewAudit = (user?: User | null): boolean => {
+  return isMaster(user);
+};
+
+/**
+ * Check if user can view/edit global settings (only master)
+ */
+const canViewSettings = (user?: User | null): boolean => {
+  return isMaster(user);
+};
+
+/**
+ * Check if user can view agencies panel (master or supervisor)
+ */
+const canViewAgenciesPanel = (user?: User | null): boolean => {
+  return isMaster(user) || user?.role === 'supervisor';
+};
+
+/**
+ * Check if user can edit process (consultant, supervisor, or master)
+ */
+const canEditProcess = (user?: User | null, processStatus?: string): boolean => {
+  if (!user || processStatus === 'completed') return false;
+  return user.role === 'consultant' || hasAdminAccess(user);
+};
+
+/**
+ * Check if user can view financial for process (consultant, supervisor, or master)
+ */
+const canViewProcessFinancial = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'consultant' || hasAdminAccess(user);
+};
+
 // ============================================================================
 // COMPONENTS
 // ============================================================================
@@ -741,35 +778,35 @@ export default function App() {
   };
 
   const fetchAgencies = async () => {
-    if (user?.role !== 'master') return;
+    if (!canManageAgencies(user)) return;
     const res = await fetch(`${API_URL}/api/agencies`);
     const data = await res.json();
     setAgencies(data);
   };
 
   const fetchExpenses = async () => {
-    const url = user?.role === 'master' ? '/api/expenses' : `/api/expenses?agency_id=${user?.agency_id}`;
+    const url = isMaster(user) ? '/api/expenses' : `/api/expenses?agency_id=${user?.agency_id}`;
     const res = await fetch(url);
     const data = await res.json();
     setExpenses(data);
   };
 
   const fetchRevenues = async () => {
-    const url = user?.role === 'master' ? '/api/revenues' : `/api/revenues?agency_id=${user?.agency_id}`;
+    const url = isMaster(user) ? '/api/revenues' : `/api/revenues?agency_id=${user?.agency_id}`;
     const res = await fetch(url);
     const data = await res.json();
     setRevenues(data);
   };
 
   const fetchAuditLogs = async () => {
-    if (user?.role !== 'master') return;
+    if (!canViewAudit(user)) return;
     const res = await fetch(`${API_URL}/api/audit-logs`);
     const data = await res.json();
     setAuditLogs(data);
   };
 
   const fetchGlobalUsers = async () => {
-    if (user?.role !== 'master') return;
+    if (!canManageAgencies(user)) return;
     const res = await fetch(`${API_URL}/api/global-users`);
     const data = await res.json();
     setGlobalUsers(data);
@@ -1144,7 +1181,7 @@ export default function App() {
   const handleFinanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!isFinanceModuleEnabled && user?.role !== 'master') {
+    if (!isFinanceModuleEnabled && !isMaster(user)) {
       notify('Módulo financeiro desativado para esta agência. Lançamentos estão bloqueados.', 'error');
       return;
     }
@@ -1188,7 +1225,7 @@ export default function App() {
   };
 
   const deleteFinance = async (id: number, type: 'payable' | 'receivable') => {
-    if (!isFinanceModuleEnabled && user?.role !== 'master') {
+    if (!isFinanceModuleEnabled && !isMaster(user)) {
       notify('Módulo financeiro desativado para esta agência. Exclusão de lançamentos bloqueada.', 'error');
       return;
     }
@@ -2183,7 +2220,7 @@ export default function App() {
           )}
 
 
-          {user.role === 'master' && (
+          {isMaster(user) && (
             <SidebarItem 
               icon={Building2} 
               label="Agências" 
@@ -2219,7 +2256,7 @@ export default function App() {
             />
           )}
 
-          {(isMaster(user) || user?.role === 'supervisor') && (
+          {canViewAgenciesPanel(user) && (
             <SidebarItem
               icon={Building2}
               label="Painel Agência"
@@ -2228,7 +2265,7 @@ export default function App() {
             />
           )}
 
-          {user.role === 'master' && (
+          {canViewAudit(user) && (
             <SidebarItem 
               icon={ShieldCheck} 
               label="Auditoria" 
@@ -2237,7 +2274,7 @@ export default function App() {
             />
           )}
 
-          {user.role === 'master' && (
+          {canViewSettings(user) && (
             <SidebarItem 
               icon={ClipboardList} 
               label="Configurações" 
@@ -2463,7 +2500,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              {!isFinanceModuleEnabled && user?.role !== 'master' && (
+              {!isFinanceModuleEnabled && !isMaster(user) && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3" data-testid="finance-module-disabled-warning">
                   <p className="text-sm font-bold text-amber-300">
                     O módulo financeiro desta agência está desativado. Você pode visualizar os dados, mas não pode lançar novas contas.
@@ -2531,9 +2568,9 @@ export default function App() {
                   </div>
                   <button 
                     data-testid="finance-new-entry-button"
-                    disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                    disabled={!isFinanceModuleEnabled && !isMaster(user)}
                     onClick={() => {
-                      if (!isFinanceModuleEnabled && user?.role !== 'master') {
+                      if (!isFinanceModuleEnabled && !isMaster(user)) {
                         notify('Módulo financeiro desativado para esta agência.', 'error');
                         return;
                       }
@@ -2550,7 +2587,7 @@ export default function App() {
                       setShowFinanceModal(true);
                     }}
                     className={`brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 ${
-                      !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-50 cursor-not-allowed' : ''
+                      !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     <Plus size={16} />
@@ -2604,9 +2641,9 @@ export default function App() {
                           <td className="px-6 py-4 text-right">
                             <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button 
-                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
                                 onClick={() => {
-                                  if (!isFinanceModuleEnabled && user?.role !== 'master') {
+                                  if (!isFinanceModuleEnabled && !isMaster(user)) {
                                     notify('Módulo financeiro desativado para esta agência.', 'error');
                                     return;
                                   }
@@ -2623,16 +2660,16 @@ export default function App() {
                                   setShowFinanceModal(true);
                                 }}
                                 className={`p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all ${
-                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
                                 <Search size={14} />
                               </button>
                               <button 
-                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
                                 onClick={() => deleteFinance(item.id, financeTab)}
                                 className={`p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all ${
-                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
                                 <Trash2 size={14} />

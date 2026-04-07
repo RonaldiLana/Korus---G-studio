@@ -81,6 +81,88 @@ const KorusLogo = ({ size = 40, className = "" }: { size?: number, className?: s
   </div>
 );
 
+// ============================================================================
+// PERMISSION & AUTHORIZATION UTILITIES
+// ============================================================================
+
+/**
+ * Parse agency modules from JSON string
+ */
+const parseAgencyModules = (modulesString?: string): { finance: boolean; chat: boolean; pipefy: boolean } => {
+  if (!modulesString) return { finance: true, chat: true, pipefy: true };
+  try {
+    return JSON.parse(modulesString);
+  } catch {
+    return { finance: true, chat: true, pipefy: true };
+  }
+};
+
+/**
+ * Check if user is master
+ */
+const isMaster = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Check if user has admin access (master or supervisor)
+ */
+const hasAdminAccess = (user?: User | null): boolean => {
+  return user?.role === 'master' || user?.role === 'supervisor';
+};
+
+/**
+ * Check if user can manage agencies (only master)
+ */
+const canManageAgencies = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Check if user has global data access (master has access to all, others limited to their agency)
+ */
+const canAccessGlobalData = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Get effective agency ID - master can view/manage all, others limited to theirs
+ */
+const getEffectiveAgencyId = (user?: User | null, viewAgencyId?: number | null): number | null | undefined => {
+  // Master has no agency restriction
+  if (isMaster(user)) return undefined;
+  // Use provided view context or user's agency
+  return viewAgencyId || user?.agency_id;
+};
+
+/**
+ * Check if user can access finances module
+ */
+const canAccessFinanceModule = (user?: User | null): boolean => {
+  if (!user) return false;
+  if (isMaster(user)) return true;
+  if (user.role === 'supervisor' || user.role === 'gerente_financeiro') return true;
+  const modules = parseAgencyModules(user.agency_modules);
+  return modules.finance || false;
+};
+
+/**
+ * Check if user can access pipefy module
+ */
+const canAccessPipefyModule = (user?: User | null): boolean => {
+  if (!user) return false;
+  if (isMaster(user)) return true;
+  if (user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') {
+    const modules = parseAgencyModules(user.agency_modules);
+    return modules.pipefy || false;
+  }
+  return false;
+};
+
+// ============================================================================
+// COMPONENTS
+// ============================================================================
+
 // Components
 const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
   <button
@@ -561,8 +643,8 @@ export default function App() {
   const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
   const [formEditData, setFormEditData] = useState<any>({});
 
-  const canAccessFinance = user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro';
-  const isFinanceModuleEnabled = user?.role === 'master' ? true : agencyModules.finance;
+  // Finance access check - now uses centralized function instead of local variable
+  const isFinanceModuleEnabled = canAccessFinanceModule(user) || agencyModules.finance;
 
   const notify = (message: string, type: ToastType = 'info') => {
     const id = Date.now() + Math.floor(Math.random() * 10000);
@@ -694,15 +776,19 @@ export default function App() {
   };
 
   const fetchAgencyUsers = async () => {
-    if (!user?.agency_id) return;
-    const res = await fetch(`/api/agency-users?agency_id=${user.agency_id}`);
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/agency-users?agency_id=${agencyId}`);
     const data = await res.json();
     setAgencyUsers(data);
   };
 
   const fetchAgencySettings = async () => {
-    if (!user?.agency_id) return;
-    const res = await fetch(`/api/agencies/${user.agency_id}`);
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/agencies/${agencyId}`);
     if (!res.ok) return;
     const data = await res.json();
     let parsedModules = { finance: true, chat: true };
@@ -738,14 +824,17 @@ export default function App() {
   };
 
   const fetchTasks = async () => {
-    if (!user?.agency_id) return;
-    const res = await fetch(`/api/tasks?agency_id=${user.agency_id}`);
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/tasks?agency_id=${agencyId}`);
     const data = await res.json();
     setTasks(data);
   };
 
   const fetchVisaTypes = async () => {
-    if (!user?.agency_id && user?.role !== 'master') return;
+    // Master can view visa types globally, others limited to their agency
+    if (!isMaster(user) && !user?.agency_id) return;
     const res = await fetch(`/api/visa-types?agency_id=${user?.agency_id || ''}`);
     const data = await res.json();
     setVisaTypes(data);
@@ -1070,7 +1159,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...financeForm,
-          agency_id: user?.role === 'master' ? (financeForm.agency_id || null) : user?.agency_id
+          agency_id: isMaster(user) ? (financeForm.agency_id || null) : user?.agency_id
         }),
       });
 
@@ -1241,7 +1330,7 @@ export default function App() {
   };
 
   const fetchLeads = async () => {
-    if (!user || (user.role !== 'supervisor' && user.role !== 'master')) return;
+    if (!user || !hasAdminAccess(user)) return;
     const agencyId = user.agency_id || '';
     const res = await fetch(`/api/leads?agency_id=${agencyId}`);
     const data = await res.json();
@@ -1249,7 +1338,7 @@ export default function App() {
   };
 
   const fetchClientResetHistory = async () => {
-    if (!user || (user.role !== 'supervisor' && user.role !== 'master')) return;
+    if (!user || !hasAdminAccess(user)) return;
     const agencyId = user.agency_id || '';
     const res = await fetch(`/api/clients/password-resets?agency_id=${agencyId}`);
     if (!res.ok) {
@@ -1264,20 +1353,20 @@ export default function App() {
     if (user) {
       fetchProcesses();
 
-      if (user.role === 'master') {
+      if (isMaster(user)) {
         fetchAgencies();
         fetchAuditLogs();
         fetchGlobalUsers();
       }
 
-      if (user.role !== 'master') fetchVisaTypes();
+      if (!isMaster(user)) fetchVisaTypes();
 
-      if (canAccessFinance) {
+      if (isFinanceModuleEnabled) {
         fetchExpenses();
         fetchRevenues();
       }
 
-      if (user.role === 'supervisor' || user.role === 'master') {
+      if (hasAdminAccess(user)) {
         fetchLeads();
         fetchClientResetHistory();
         fetchAgencyUsers();
@@ -1294,7 +1383,7 @@ export default function App() {
         fetchFormFields();
       }
     }
-  }, [user, view, canAccessFinance]);
+  }, [user, view, canAccessFinanceModule(user)]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -1324,7 +1413,7 @@ export default function App() {
     if (!user?.agency_id) return;
 
     try {
-      const res = await fetch(`/api/agencies/${user.agency_id}/settings`, {
+      const res = await fetch(`/api/agencies/${agencyId}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2016,7 +2105,7 @@ export default function App() {
   }
 
   // New Client Journey Flow
-  if (user.role === 'client') {
+  if (user?.role === 'client') {
     return (
       <ClientJourneyFlow 
         user={user} 
@@ -2039,7 +2128,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-72 bg-[var(--bg-card)]/50 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col">
         <div className="flex items-center gap-3 mb-10 px-2">
-          {user.role !== 'master' && agencySettings.logo_url ? (
+          {!isMaster(user) && agencySettings.logo_url ? (
             <img 
               src={agencySettings.logo_url} 
               alt={agencySettings.name} 
@@ -2050,7 +2139,7 @@ export default function App() {
             <KorusLogo size={32} />
           )}
           <span className="font-black text-2xl tracking-tighter brand-text-gradient">
-            {user.role !== 'master' && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
+            {!isMaster(user) && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
           </span>
         </div>
 
@@ -2075,7 +2164,7 @@ export default function App() {
             onClick={() => setView('dashboard')} 
           />
           
-          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') && (user.role === 'master' || JSON.parse(user.agency_modules || '{}').pipefy) && (
+          {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Trello} 
               label="Pipefy teste" 
@@ -2084,7 +2173,7 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') && (
+          {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Users} 
               label="Processos" 
@@ -2103,7 +2192,7 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor') && (
+          {hasAdminAccess(user) && (
             <SidebarItem 
               icon={Users} 
               label="Equipe" 
@@ -2112,7 +2201,7 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor') && (
+          {hasAdminAccess(user) && (
             <SidebarItem 
               icon={Contact} 
               label="Clientes" 
@@ -2121,7 +2210,7 @@ export default function App() {
             />
           )}
 
-          {(user.role === 'master' || user.role === 'supervisor' || user.role === 'gerente_financeiro') && (user.role === 'master' || JSON.parse(user.agency_modules || '{}').finance) && (
+          {canAccessFinanceModule(user) && (
             <SidebarItem 
               icon={DollarSign} 
               label="Financeiro" 
@@ -2130,7 +2219,7 @@ export default function App() {
             />
           )}
 
-          {user.role === 'supervisor' && (
+          {(isMaster(user) || user?.role === 'supervisor') && (
             <SidebarItem
               icon={Building2}
               label="Painel Agência"
@@ -2212,7 +2301,7 @@ export default function App() {
                 className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-64 text-sm"
               />
             </div>
-            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user.role === 'supervisor' || user.role === 'master') && (
+            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && hasAdminAccess(user) && (
               <button 
                 data-testid="new-process-button"
                 onClick={() => {
@@ -2233,7 +2322,7 @@ export default function App() {
                 <span>Novo Processo</span>
               </button>
             )}
-            {view === 'agencies' && user.role === 'master' && (
+            {view === 'agencies' && isMaster(user) && (
               <button 
                 data-testid="new-agency-button"
                 onClick={() => setShowAgencyModal(true)}
@@ -2367,7 +2456,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'finance' && canAccessFinance && (
+          {view === 'finance' && canAccessFinanceModule(user) && (
             <motion.div 
               key="finance"
               initial={{ opacity: 0 }}
@@ -2567,7 +2656,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'agencies' && user.role === 'master' && (
+          {view === 'agencies' && isMaster(user) && (
             <motion.div 
               key="agencies"
               initial={{ opacity: 0 }}
@@ -2760,7 +2849,7 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-2">
-                            {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && process.status !== 'completed' && (
+                            {(user.role === 'consultant' || hasAdminAccess(user)) && process.status !== 'completed' && (
                               <button
                                 data-testid={`process-edit-button-${process.id}`}
                                 onClick={() => openProcessEditModal(process)}
@@ -2778,7 +2867,7 @@ export default function App() {
                             >
                               <ChevronRight size={20} />
                             </button>
-                            {(user.role === 'master' || user.role === 'supervisor') && (
+                            {hasAdminAccess(user) && (
                               <button 
                                 data-testid={`process-delete-button-${process.id}`}
                                 onClick={() => deleteProcess(process.id)}
@@ -2814,7 +2903,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'leads' && (user.role === 'master' || user.role === 'supervisor') && (
+          {view === 'leads' && hasAdminAccess(user) && (
             <motion.div 
               key="leads"
               initial={{ opacity: 0 }}
@@ -2913,7 +3002,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'audit' && user.role === 'master' && (
+          {view === 'audit' && isMaster(user) && (
             <motion.div 
               key="audit"
               initial={{ opacity: 0 }}
@@ -2972,7 +3061,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'settings' && user.role === 'master' && (
+          {view === 'settings' && isMaster(user) && (
             <motion.div 
               key="settings-master"
               initial={{ opacity: 0 }}
@@ -3104,7 +3193,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'team' && (user.role === 'master' || user.role === 'supervisor') && (
+          {view === 'team' && hasAdminAccess(user) && (
             <motion.div 
               key="team"
               initial={{ opacity: 0 }}
@@ -3189,7 +3278,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'agency_panel' && user.role === 'supervisor' && (
+          {view === 'agency_panel' && (isMaster(user) || user?.role === 'supervisor') && (
             <motion.div 
               key="agency-panel"
               initial={{ opacity: 0 }}

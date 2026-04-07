@@ -134,8 +134,18 @@ async function startServer() {
   });
 
   app.post("/api/login", async (req, res) => {
-    const { email, password } = req.body;
     try {
+      const { email, password } = req.body;
+
+      // Validar campos obrigatórios
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          error: "Email e senha são obrigatórios"
+        });
+      }
+
+      // Buscar usuário
       const user = await query(`
         SELECT u.*, a.modules as agency_modules
         FROM users u
@@ -143,14 +153,27 @@ async function startServer() {
         WHERE LOWER(u.email) = LOWER($1) AND u.password = $2
       `, [email, password]);
 
+      // Credenciais válidas
       if (user.rows[0]) {
         const { password, ...userWithoutPassword } = user.rows[0];
-        res.json(userWithoutPassword);
-      } else {
-        res.status(401).json({ error: "Invalid credentials" });
+        return res.json({
+          success: true,
+          user: userWithoutPassword
+        });
       }
+
+      // Credenciais inválidas
+      return res.status(401).json({
+        success: false,
+        error: "Credenciais inválidas"
+      });
+
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error('[LOGIN ERROR]', err);
+      return res.status(500).json({
+        success: false,
+        error: "Erro interno no servidor"
+      });
     }
   });
 

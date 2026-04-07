@@ -1809,7 +1809,7 @@ export default function App() {
               />
             ) : (
               <div className="w-16 h-16 brand-gradient rounded-2xl flex items-center justify-center text-black font-black text-2xl">
-                {publicAgency.name.charAt(0)}
+                {(publicAgency?.name || "A").charAt(0).toUpperCase()}
               </div>
             )}
           </div>
@@ -2161,7 +2161,7 @@ export default function App() {
         <div className="mt-auto pt-6 border-t border-[var(--border-color)]">
           <div className="flex items-center gap-3 px-2 mb-6">
             <div className="w-10 h-10 brand-gradient rounded-full flex items-center justify-center text-black font-black">
-              {user.name.charAt(0)}
+              {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold truncate">{user.name}</p>
@@ -2845,7 +2845,7 @@ export default function App() {
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
-                                {lead.name.charAt(0)}
+                                {(lead?.name || "L").charAt(0).toUpperCase()}
                               </div>
                               <span className="font-bold">{lead.name}</span>
                             </div>

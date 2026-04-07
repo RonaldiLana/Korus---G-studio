@@ -192,6 +192,7 @@ type ConfirmDialogState = {
 };
 
 export default function App() {
+  const API_URL = import.meta.env.VITE_API_URL || '';
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState('');
   const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
@@ -505,7 +506,7 @@ export default function App() {
         ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.' 
         : 'Deseja recusar este comprovante? O cliente precisará enviar um novo.',
       async () => {
-        const res = await fetch('/api/financials/validate', {
+        const res = await fetch(`${API_URL}/api/financials/validate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ process_id: processId, status })
@@ -630,7 +631,7 @@ export default function App() {
     setError('');
     console.log('Tentando login com:', loginForm.email);
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm),
@@ -659,7 +660,7 @@ export default function App() {
 
   const fetchAgencies = async () => {
     if (user?.role !== 'master') return;
-    const res = await fetch('/api/agencies');
+    const res = await fetch(`${API_URL}/api/agencies`);
     const data = await res.json();
     setAgencies(data);
   };
@@ -680,14 +681,14 @@ export default function App() {
 
   const fetchAuditLogs = async () => {
     if (user?.role !== 'master') return;
-    const res = await fetch('/api/audit-logs');
+    const res = await fetch(`${API_URL}/api/audit-logs`);
     const data = await res.json();
     setAuditLogs(data);
   };
 
   const fetchGlobalUsers = async () => {
     if (user?.role !== 'master') return;
-    const res = await fetch('/api/global-users');
+    const res = await fetch(`${API_URL}/api/global-users`);
     const data = await res.json();
     setGlobalUsers(data);
   };
@@ -753,7 +754,7 @@ export default function App() {
   const handleStartProcess = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const res = await fetch('/api/processes/start', {
+    const res = await fetch(`${API_URL}/api/processes/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -866,7 +867,7 @@ export default function App() {
       const formData = new FormData();
       formData.append('logo', file);
 
-      const uploadResponse = await fetch('/api/upload-logo', {
+      const uploadResponse = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
         body: formData,
       });
@@ -1010,7 +1011,7 @@ export default function App() {
     if (!editingFormResponse || !selectedProcess) return;
 
     try {
-      const res = await fetch('/api/form-responses', {
+      const res = await fetch(`${API_URL}/api/form-responses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1197,7 +1198,7 @@ export default function App() {
     if (!chatMessage.trim() || !selectedProcess) return;
 
     try {
-      const res = await fetch('/api/messages', {
+      const res = await fetch(`${API_URL}/api/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1434,7 +1435,7 @@ export default function App() {
     formData.append('logo', file);
 
     try {
-      const res = await fetch('/api/upload-logo', {
+      const res = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
         body: formData,
       });
@@ -1462,7 +1463,7 @@ export default function App() {
     
     setIsRegistering(true);
     try {
-      const res = await fetch('/api/clients', {
+      const res = await fetch(`${API_URL}/api/clients`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

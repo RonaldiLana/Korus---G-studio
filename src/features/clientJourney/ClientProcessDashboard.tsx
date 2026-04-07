@@ -39,6 +39,7 @@ const getStepStatus = (process: Process, stepId: string) => {
 };
 
 export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, processes }) => {
+  const API_URL = import.meta.env.VITE_API_URL || '';
   const latestProcess = processes.length > 0 ? processes[0] : null;
   const [fullProcess, setFullProcess] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
@@ -87,7 +88,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     if (!chatMessage.trim() || !latestProcess) return;
 
     try {
-      await axios.post('/api/messages', {
+      await axios.post(`${API_URL}/api/messages`, {
         process_id: latestProcess.id,
         sender_id: latestProcess.client_id,
         content: chatMessage,
@@ -124,7 +125,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     formData.append('process_id', latestProcess.id.toString());
 
     try {
-      await axios.post('/api/financials/confirm-proof', formData);
+      await axios.post(`${API_URL}/api/financials/confirm-proof`, formData);
       toast.success('Comprovante enviado com sucesso! Aguarde a confirmação do consultor.');
       // In a real app, we'd refresh the process data here
       setTimeout(() => window.location.reload(), 1500);
@@ -147,7 +148,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     formData.append('name', docName);
 
     try {
-      await axios.post('/api/documents', formData);
+      await axios.post(`${API_URL}/api/documents`, formData);
       toast.success(`Documento "${docName}" enviado com sucesso!`);
       fetchFullProcess();
     } catch (error) {
@@ -163,7 +164,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     if (!editingForm || !latestProcess) return;
 
     try {
-      await axios.post('/api/form-responses', {
+      await axios.post(`${API_URL}/api/form-responses`, {
         process_id: latestProcess.id,
         form_id: editingForm.form_id,
         data: formData

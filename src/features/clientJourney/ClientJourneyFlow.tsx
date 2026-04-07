@@ -48,6 +48,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   formFields,
   visaTypes
 }) => {
+  const API_URL = import.meta.env.VITE_API_URL || '';
   const [currentStep, setCurrentStep] = useState<JourneyStep>(processes.length > 0 ? 'dashboard' : 'destination');
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
@@ -86,7 +87,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   const handlePaymentComplete = async () => {
     try {
       // Create process in backend
-      await axios.post('/api/processes/start', {
+      await axios.post(`${API_URL}/api/processes/start`, {
         client_id: user.id,
         agency_id: user.agency_id,
         destination_id: selectedDestination?.id,

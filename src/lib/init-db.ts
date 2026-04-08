@@ -106,12 +106,12 @@ async function ensureMasterUser() {
     const masterCheck = await query("SELECT id FROM users WHERE role = 'master' LIMIT 1");
     
     if (masterCheck.rows.length > 0) {
-      // Usuário master já existe - atualizar a senha para garantir acesso
+      // Usuário master já existe - atualizar a senha e garantir agency_id = NULL para acesso global
       await query(
-        `UPDATE users SET password = $1 WHERE role = 'master'`,
+        `UPDATE users SET password = $1, agency_id = NULL WHERE role = 'master'`,
         [masterPassword]
       );
-      console.log("🔐 Senha do usuário master atualizada");
+      console.log("🔐 Usuário master garantido com agency_id = NULL (acesso global)");
     } else {
       // Master user not found - create new one with NULL agency_id for global access
       await query(
@@ -119,7 +119,7 @@ async function ensureMasterUser() {
          VALUES ($1, $2, $3, $4, $5)`,
         ["Master User", "master@korus.com", masterPassword, "master", null]
       );
-      console.log("👤 Usuário master criado com acesso global");
+      console.log("👤 Usuário master criado com acesso global (agency_id = NULL)");
     }
   } catch (error) {
     console.warn("⚠️ Aviso ao garantir usuário master:", error);

@@ -1396,6 +1396,10 @@ export default function App() {
         fetchGlobalUsers();
       }
 
+      if (isMaster(user)) {
+        fetchVisaTypes();  // Master needs visa types globally
+      }
+
       if (!isMaster(user)) fetchVisaTypes();
 
       if (isFinanceModuleEnabled) {
@@ -5227,5 +5231,6 @@ export default function App() {
     </div>
   );
 }
+
 
 

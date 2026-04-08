@@ -825,7 +825,7 @@ export default function App() {
     // Get effective agency ID (master can view any agency, others limited to theirs)
     const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
     if (!agencyId) return;
-    const res = await fetch(`/api/agencies/${agencyId}`);
+    const res = await fetch(`\\/api/agencies/\$\{agencyId\}`);
     if (!res.ok) return;
     const data = await res.json();
     let parsedModules = { finance: true, chat: true };
@@ -854,7 +854,7 @@ export default function App() {
       name: data.name || '',
       logo_url: data.logo_url || '',
       slug: data.slug || '',
-      admin_email: data.admin_email || user.email,
+      admin_email: data.admin_email || user?.email ||'',
       destinations,
       pre_form_questions,
     });
@@ -1450,7 +1450,7 @@ export default function App() {
     if (!user?.agency_id) return;
 
     try {
-      const res = await fetch(`/api/agencies/${agencyId}/settings`, {
+      const res = await fetch(`\\/api/agencies/\$\{agencyId\}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -5227,3 +5227,5 @@ export default function App() {
     </div>
   );
 }
+
+

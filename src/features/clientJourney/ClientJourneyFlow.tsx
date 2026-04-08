@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Home, LogOut, LayoutDashboard, User as UserIcon, Globe, Zap } from 'lucide-react';
 import axios from 'axios';
@@ -55,7 +55,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   const [formData, setFormData] = useState<any>(null);
 
   // Update step if processes change (e.g. after creation)
-  React.useEffect(() => {
+  useEffect(() => {
     if (processes.length > 0 && currentStep !== 'dashboard') {
       setCurrentStep('dashboard');
     }

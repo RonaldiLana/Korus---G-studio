@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowRight, ArrowLeft, CheckCircle2, User, Phone, Mail, MapPin, Globe, Plane, Users, Target, ClipboardList, Briefcase, Heart, GraduationCap, Plus, Trash2 } from 'lucide-react';
 

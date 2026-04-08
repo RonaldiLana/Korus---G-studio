@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2, Clock, AlertCircle, FileText, MessageSquare, LayoutDashboard, Globe, Star, ShieldCheck, ArrowUpRight, Calendar, DollarSign, Upload, Loader2, Zap, ShieldCheck as ShieldCheckIcon, X, Send, User as UserIcon, Pencil, Check } from 'lucide-react';
 import { Process } from '../../types';
@@ -69,7 +69,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     }
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     fetchFullProcess();
   }, [latestProcess?.id, latestProcess?.status]);
 
@@ -101,7 +101,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     }
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (showChat) {
       fetchMessages();
       const interval = setInterval(fetchMessages, 5000);
@@ -109,7 +109,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     }
   }, [showChat, latestProcess?.id]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }

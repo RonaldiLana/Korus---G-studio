@@ -61,7 +61,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
   const fetchFullProcess = async () => {
     if (!latestProcess) return;
     try {
-      const res = await axios.get(`/api/processes/${latestProcess.id}`);
+      const res = await axios.get(`${API_URL}/api/processes/${latestProcess.id}`);
       setFullProcess(res.data);
       setMessages(res.data.messages || []);
     } catch (err) {
@@ -76,7 +76,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
   const fetchMessages = async () => {
     if (!latestProcess) return;
     try {
-      const res = await axios.get(`/api/processes/${latestProcess.id}`);
+      const res = await axios.get(`${API_URL}/api/processes/${latestProcess.id}`);
       setMessages(res.data.messages || []);
     } catch (err) {
       console.error('Erro ao buscar mensagens:', err);

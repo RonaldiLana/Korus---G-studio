@@ -48,7 +48,9 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   formFields,
   visaTypes
 }) => {
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  const API_URL =
+    import.meta.env.VITE_API_URL?.trim() ||
+    'https://korus-backend-a55k.onrender.com';
   console.log('[BUILD] ClientJourneyFlow API_URL =', API_URL, '| user:', user?.id, user?.email);
   const [currentStep, setCurrentStep] = useState<JourneyStep>(processes.length > 0 ? 'dashboard' : 'destination');
   const [selectedDestination, setSelectedDestination] = useState<any>(null);

@@ -39,7 +39,9 @@ const getStepStatus = (process: Process, stepId: string) => {
 };
 
 export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, processes }) => {
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  const API_URL =
+    import.meta.env.VITE_API_URL?.trim() ||
+    'https://korus-backend-a55k.onrender.com';
   console.log('[BUILD] ClientProcessDashboard API_URL =', API_URL);
   const latestProcess = processes.length > 0 ? processes[0] : null;
   const [fullProcess, setFullProcess] = useState<any>(null);

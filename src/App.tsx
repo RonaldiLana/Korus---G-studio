@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Users, 
   Contact,
@@ -138,12 +138,28 @@ const getEffectiveAgencyId = (user?: User | null, viewAgencyId?: number | null):
 /**
  * Check if user can access finances module
  */
+const isSupervisorOrFinanceManager = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'supervisor' || user.role === 'gerente_financeiro';
+};
+
+/**
+ * Check if user can access finances module
+ */
 const canAccessFinanceModule = (user?: User | null): boolean => {
   if (!user) return false;
   if (isMaster(user)) return true;
-  if (user.role === 'supervisor' || user.role === 'gerente_financeiro') return true;
+  if (isSupervisorOrFinanceManager(user)) return true;
   const modules = parseAgencyModules(user.agency_modules);
   return modules.finance || false;
+};
+
+/**
+ * Check if user can access pipefy module
+ */
+const isSupervisorConsultantOrAnalyst = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
 };
 
 /**
@@ -152,11 +168,27 @@ const canAccessFinanceModule = (user?: User | null): boolean => {
 const canAccessPipefyModule = (user?: User | null): boolean => {
   if (!user) return false;
   if (isMaster(user)) return true;
-  if (user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') {
+  if (isSupervisorConsultantOrAnalyst(user)) {
     const modules = parseAgencyModules(user.agency_modules);
     return modules.pipefy || false;
   }
   return false;
+};
+
+/**
+ * Check if user is consultant, supervisor, or master
+ */
+const isConsultantSupervisorOrMaster = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master';
+};
+
+/**
+ * Check if user is a client
+ */
+const isClient = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'client';
 };
 
 /**
@@ -194,6 +226,23 @@ const canEditProcess = (user?: User | null, processStatus?: string): boolean => 
 const canViewProcessFinancial = (user?: User | null): boolean => {
   if (!user) return false;
   return user.role === 'consultant' || hasAdminAccess(user);
+};
+
+/**
+ * Determine recommended view based on user role
+ */
+const getRecommendedInitialView = (user?: User | null): 'dashboard' | 'agencies' | 'settings' | 'clients' => {
+  if (!user) return 'dashboard';
+  
+  if (isMaster(user)) {
+    return 'agencies'; // Master starts at agencies management
+  }
+  
+  if (user.role === 'supervisor' || user.role === 'gerente_financeiro') {
+    return 'clients'; // Supervisors start at client/process list
+  }
+  
+  return 'dashboard'; // Default for others
 };
 
 // ============================================================================
@@ -311,7 +360,10 @@ type ConfirmDialogState = {
 };
 
 export default function App() {
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  const API_URL =
+    import.meta.env.VITE_API_URL?.trim() ||
+    'https://korus-backend-a55k.onrender.com';
+  console.log('[BUILD] API_URL =', API_URL, '| VITE_API_URL env:', import.meta.env.VITE_API_URL);
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState('');
   const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
@@ -379,20 +431,40 @@ export default function App() {
     destination_id: null as number | null
   });
 
+  // ========== HELPER: Determine scoped agency ID for API calls ==========
+  const getScopedAgencyId = (): number | null => {
+    // Master user has global access
+    if (isMaster(user)) {
+      // If viewing a specific agency panel, use that agency
+      if (view === 'agency_panel' && agencySettings?.id) {
+        return agencySettings.id;
+      }
+      // Otherwise, master doesn't need agency filter for global views
+      return null;
+    }
+    // Non-master users are limited to their agency
+    return user?.agency_id || null;
+  };
+
   const fetchPlans = async () => {
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`/api/plans?agency_id=${agencyId}`);
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    const url = agencyId 
+      ? `${API_URL}/api/plans?agency_id=${agencyId}`
+      : `${API_URL}/api/plans`;
+    const res = await fetch(url);
     const data = await res.json();
     setPlans(data);
   };
 
   const savePlan = async (e: React.FormEvent) => {
     e.preventDefault();
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
 
-    const url = editingPlan ? `/api/plans/${editingPlan.id}` : '/api/plans';
+    const url = editingPlan 
+      ? `${API_URL}/api/plans/${editingPlan.id}` 
+      : `${API_URL}/api/plans`;
     const method = editingPlan ? 'PUT' : 'POST';
     const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
 
@@ -411,7 +483,7 @@ export default function App() {
 
   const deletePlan = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este plano?', async () => {
-      const res = await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/plans/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchPlans();
         notify('Plano excluído!', 'success');
@@ -420,19 +492,24 @@ export default function App() {
   };
 
   const fetchFormFields = async () => {
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`/api/form-fields?agency_id=${agencyId}`);
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    const url = agencyId 
+      ? `${API_URL}/api/form-fields?agency_id=${agencyId}`
+      : `${API_URL}/api/form-fields`;
+    const res = await fetch(url);
     const data = await res.json();
     setFormFields(data);
   };
 
   const saveFormField = async (e: React.FormEvent) => {
     e.preventDefault();
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
 
-    const url = editingFormField ? `/api/form-fields/${editingFormField.id}` : '/api/form-fields';
+    const url = editingFormField 
+      ? `${API_URL}/api/form-fields/${editingFormField.id}` 
+      : `${API_URL}/api/form-fields`;
     const method = editingFormField ? 'PUT' : 'POST';
     const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
 
@@ -451,7 +528,7 @@ export default function App() {
 
   const deleteFormField = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este campo de formulário?', async () => {
-      const res = await fetch(`/api/form-fields/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/form-fields/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchFormFields();
         notify('Campo excluído!', 'success');
@@ -522,19 +599,25 @@ export default function App() {
   const [formForm, setFormForm] = useState({ visa_type_id: 0, title: '', fields: [] as any[] });
 
   const fetchForms = async (visaTypeId: number) => {
-    const res = await fetch(`/api/forms/${visaTypeId}`);
+    const res = await fetch(`${API_URL}/api/forms/${visaTypeId}`);
     const data = await res.json();
     setForms(data);
   };
 
   const saveVisaType = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingVisaType ? `/api/visa-types/${editingVisaType.id}` : '/api/visa-types';
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    
+    const url = editingVisaType 
+      ? `${API_URL}/api/visa-types/${editingVisaType.id}` 
+      : `${API_URL}/api/visa-types`;
     const method = editingVisaType ? 'PUT' : 'POST';
+    const body = editingVisaType ? visaTypeForm : { ...visaTypeForm, agency_id: agencyId };
     const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...visaTypeForm, agency_id: user?.agency_id })
+      body: JSON.stringify(body)
     });
     if (res.ok) {
       setShowVisaTypeModal(false);
@@ -545,7 +628,7 @@ export default function App() {
 
   const deleteVisaType = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este tipo de visto? Isso excluirá todos os formulários vinculados.', async () => {
-      const res = await fetch(`/api/visa-types/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/visa-types/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchVisaTypes();
         notify('Tipo de visto excluído!', 'success');
@@ -554,19 +637,24 @@ export default function App() {
   };
 
   const fetchDestinations = async () => {
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`/api/destinations?agency_id=${agencyId}`);
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    const url = agencyId 
+      ? `${API_URL}/api/destinations?agency_id=${agencyId}`
+      : `${API_URL}/api/destinations`;
+    const res = await fetch(url);
     const data = await res.json();
     setDestinations(data);
   };
 
   const saveDestination = async (e: React.FormEvent) => {
     e.preventDefault();
-    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
 
-    const url = editingDestination ? `/api/destinations/${editingDestination.id}` : '/api/destinations';
+    const url = editingDestination 
+      ? `${API_URL}/api/destinations/${editingDestination.id}` 
+      : `${API_URL}/api/destinations`;
     const method = editingDestination ? 'PUT' : 'POST';
     const body = editingDestination ? destinationForm : { ...destinationForm, agency_id: agencyId };
 
@@ -585,7 +673,7 @@ export default function App() {
 
   const deleteDestination = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este destino?', async () => {
-      const res = await fetch(`/api/destinations/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/destinations/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchDestinations();
         notify('Destino excluído!', 'success');
@@ -595,7 +683,9 @@ export default function App() {
 
   const saveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingForm ? `/api/forms/${editingForm.id}` : '/api/forms';
+    const url = editingForm 
+      ? `${API_URL}/api/forms/${editingForm.id}` 
+      : `${API_URL}/api/forms`;
     const method = editingForm ? 'PUT' : 'POST';
     const res = await fetch(url, {
       method,
@@ -611,7 +701,7 @@ export default function App() {
 
   const handleDeleteForm = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este formulário?', async () => {
-      const res = await fetch(`/api/forms/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/forms/${id}`, { method: 'DELETE' });
       if (res.ok) {
         if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
         notify('Formulário excluído!', 'success');
@@ -633,7 +723,7 @@ export default function App() {
         if (res.ok) {
           notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
           // Refresh process details
-          const updatedProcessRes = await fetch(`/api/processes/${processId}`);
+          const updatedProcessRes = await fetch(`${API_URL}/api/processes/${processId}`);
           const updatedProcess = await updatedProcessRes.json();
           setSelectedProcess(updatedProcess);
           fetchProcesses();
@@ -748,7 +838,7 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    console.log('Tentando login com:', loginForm.email);
+    console.log('[LOGIN] Tentando login com:', loginForm.email);
     try {
       const res = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
@@ -756,25 +846,72 @@ export default function App() {
         body: JSON.stringify(loginForm),
       });
       if (res.ok) {
-        const userData = await res.json();
-        console.log('Login bem-sucedido:', userData);
-        setUser(userData);
+        const response = await res.json();
+        // Servidor retorna { success: true, user: {...} } ou diretamente {...}
+        const userData = response.user || response;
+        console.log('[LOGIN] Dados recebidos:', userData);
+        console.log('[LOGIN] Role:', userData?.role);
+        console.log('[LOGIN] isMaster check:', userData?.role === 'master');
+        
+        // CRITICAL: Assegurar que userData tem role e agency_id
+        const completeUser = {
+          ...userData,
+          role: userData?.role || 'unknown',
+          agency_id: userData?.agency_id || null,
+          id: userData?.id,
+          email: userData?.email,
+          name: userData?.name,
+        };
+        
+        console.log('[LOGIN] CompleteUser:', completeUser);
+        setUser(completeUser);
+        
+        // Redirecionamento automático baseado em role
+        const recommendedView = getRecommendedInitialView(completeUser);
+        console.log('[LOGIN] Recomended View:', recommendedView, ' para role:', completeUser?.role);
+        setView(recommendedView);
       } else {
         const errorData = await res.json();
-        console.error('Erro no login:', errorData);
+        console.error('[LOGIN ERROR]', errorData);
         setError('Credenciais inválidas');
       }
     } catch (err) {
-      console.error('Erro de conexão:', err);
+      console.error('[LOGIN ERROR] Conexão:', err);
       setError('Erro ao conectar com o servidor');
     }
   };
 
   const fetchProcesses = async () => {
-    if (!user) return;
-    const res = await fetch(`/api/processes?agency_id=${user.agency_id || ''}&role=${user.role}&user_id=${user.id}`);
-    const data = await res.json();
-    setProcesses(data);
+    // CRITICAL: Never call API without valid user
+    if (!user?.id || !user?.role) {
+      console.log('[FETCH] fetchProcesses blocked: user incomplete', { id: user?.id, role: user?.role });
+      return;
+    }
+
+    const agencyId = getScopedAgencyId();
+    // For non-master users, agency_id is REQUIRED
+    if (!isMaster(user) && !user?.agency_id) {
+      console.log('[FETCH] fetchProcesses blocked: non-master needs agency_id', { user_agency_id: user?.agency_id });
+      setProcesses([]);
+      return;
+    }
+
+    // Build URL safely - never include undefined values
+    let url = `${API_URL}/api/processes?role=${encodeURIComponent(String(user.role))}&user_id=${encodeURIComponent(String(user.id))}`;
+    if (agencyId !== null && agencyId !== undefined) {
+      url += `&agency_id=${encodeURIComponent(String(agencyId))}`;
+    }
+
+    console.log('[FETCH] fetchProcesses URL:', url);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { console.error('[FETCH] HTTP:', res.status); setProcesses([]); return; }
+      const data = await res.json();
+      setProcesses(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchProcesses:', err);
+      setProcesses([]);
+    }
   };
 
   const fetchAgencies = async () => {
@@ -785,17 +922,57 @@ export default function App() {
   };
 
   const fetchExpenses = async () => {
-    const url = isMaster(user) ? '/api/expenses' : `/api/expenses?agency_id=${user?.agency_id}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setExpenses(data);
+    // CRITICAL: Need valid user AND (master OR valid agency)
+    if (!user?.id) {
+      console.log('[FETCH] fetchExpenses blocked: no user.id');
+      return;
+    }
+
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !user?.agency_id) {
+      console.log('[FETCH] fetchExpenses blocked: non-master without agency_id', { user_agency_id: user?.agency_id });
+      setExpenses([]);
+      return;
+    }
+
+    try {
+      const url = agencyId ? `${API_URL}/api/expenses?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/expenses`;
+      console.log('[FETCH] fetchExpenses URL:', url);
+      const res = await fetch(url);
+      if (!res.ok) { setExpenses([]); return; }
+      const data = await res.json();
+      setExpenses(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchExpenses error:', err);
+      setExpenses([]);
+    }
   };
 
   const fetchRevenues = async () => {
-    const url = isMaster(user) ? '/api/revenues' : `/api/revenues?agency_id=${user?.agency_id}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setRevenues(data);
+    // CRITICAL: Need valid user AND (master OR valid agency)
+    if (!user?.id) {
+      console.log('[FETCH] fetchRevenues blocked: no user.id');
+      return;
+    }
+
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !user?.agency_id) {
+      console.log('[FETCH] fetchRevenues blocked: non-master without agency_id', { user_agency_id: user?.agency_id });
+      setRevenues([]);
+      return;
+    }
+
+    try {
+      const url = agencyId ? `${API_URL}/api/revenues?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/revenues`;
+      console.log('[FETCH] fetchRevenues URL:', url);
+      const res = await fetch(url);
+      if (!res.ok) { setRevenues([]); return; }
+      const data = await res.json();
+      setRevenues(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchRevenues error:', err);
+      setRevenues([]);
+    }
   };
 
   const fetchAuditLogs = async () => {
@@ -813,24 +990,46 @@ export default function App() {
   };
 
   const fetchAgencyUsers = async () => {
-    // Get effective agency ID (master can view any agency, others limited to theirs)
-    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`/api/agency-users?agency_id=${agencyId}`);
-    const data = await res.json();
-    setAgencyUsers(data);
+    if (!user || !user.id) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    try {
+      const url = agencyId ? `${API_URL}/api/agency-users?agency_id=${agencyId}` : `${API_URL}/api/agency-users`;
+      const res = await fetch(url);
+      if (!res.ok) { setAgencyUsers([]); return; }
+      const data = await res.json();
+      setAgencyUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchAgencyUsers error:', err);
+      setAgencyUsers([]);
+    }
   };
 
   const fetchAgencySettings = async () => {
     // Get effective agency ID (master can view any agency, others limited to theirs)
-    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`\\/api/agencies/\$\{agencyId\}`);
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    
+    // Skip if agencyId is null and not in agency_panel view (master global access)
+    if (agencyId === null && view !== 'agency_panel') return;
+    
+    // If master in agency_panel without selected agency, use first available
+    let url = `${API_URL}/api/agencies`;
+    if (agencyId !== null && agencyId !== undefined) {
+      url = `${API_URL}/api/agencies/${agencyId}`;
+    }
+    
+    const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
+    
+    // If it's a list, use first agency (master selecting)
+    const agencyData = Array.isArray(data) ? data[0] : data;
+    if (!agencyData) return;
+    
     let parsedModules = { finance: true, chat: true };
     try {
-      parsedModules = { ...parsedModules, ...(JSON.parse(data.modules || '{}') || {}) };
+      parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
     } catch {
       parsedModules = { finance: true, chat: true };
     }
@@ -843,38 +1042,53 @@ export default function App() {
     let destinations = [];
     let pre_form_questions = [];
     try {
-      destinations = data.destinations ? (typeof data.destinations === 'string' ? JSON.parse(data.destinations) : data.destinations) : [];
-      pre_form_questions = data.pre_form_questions ? (typeof data.pre_form_questions === 'string' ? JSON.parse(data.pre_form_questions) : data.pre_form_questions) : [];
+      destinations = agencyData.destinations ? (typeof agencyData.destinations === 'string' ? JSON.parse(agencyData.destinations) : agencyData.destinations) : [];
+      pre_form_questions = agencyData.pre_form_questions ? (typeof agencyData.pre_form_questions === 'string' ? JSON.parse(agencyData.pre_form_questions) : agencyData.pre_form_questions) : [];
     } catch (e) {
       console.error('Error parsing agency settings:', e);
     }
 
     setAgencySettings({
-      id: data.id,
-      name: data.name || '',
-      logo_url: data.logo_url || '',
-      slug: data.slug || '',
-      admin_email: data.admin_email || user?.email ||'',
+      id: agencyData.id,
+      name: agencyData.name || '',
+      logo_url: agencyData.logo_url || '',
+      slug: agencyData.slug || '',
+      admin_email: agencyData.admin_email || user?.email || '',
       destinations,
       pre_form_questions,
     });
   };
 
   const fetchTasks = async () => {
-    // Get effective agency ID (master can view any agency, others limited to theirs)
-    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
-    if (!agencyId) return;
-    const res = await fetch(`/api/tasks?agency_id=${agencyId}`);
-    const data = await res.json();
-    setTasks(data);
+    if (!user || !user.id) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    try {
+      const url = agencyId ? `${API_URL}/api/tasks?agency_id=${agencyId}` : `${API_URL}/api/tasks`;
+      const res = await fetch(url);
+      if (!res.ok) { setTasks([]); return; }
+      const data = await res.json();
+      setTasks(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchTasks error:', err);
+      setTasks([]);
+    }
   };
 
   const fetchVisaTypes = async () => {
-    // Master can view visa types globally, others limited to their agency
-    if (!isMaster(user) && !user?.agency_id) return;
-    const res = await fetch(`/api/visa-types?agency_id=${user?.agency_id || ''}`);
-    const data = await res.json();
-    setVisaTypes(data);
+    if (!user || !user.id) return;
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    try {
+      const url = agencyId ? `${API_URL}/api/visa-types?agency_id=${agencyId}` : `${API_URL}/api/visa-types`;
+      const res = await fetch(url);
+      if (!res.ok) { setVisaTypes([]); return; }
+      const data = await res.json();
+      setVisaTypes(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchVisaTypes error:', err);
+      setVisaTypes([]);
+    }
   };
 
   const handleStartProcess = async (e: React.FormEvent) => {
@@ -900,7 +1114,7 @@ export default function App() {
     if (e) e.preventDefault();
     console.log('createAgency function called');
     setIsProcessingAgency(true);
-    const url = editingAgency ? `/api/agencies/${editingAgency.id}` : '/api/agencies';
+    const url = editingAgency ? `${API_URL}/api/agencies/${editingAgency.id}` : `${API_URL}/api/agencies`;
     const method = editingAgency ? 'PUT' : 'POST';
     
     try {
@@ -936,7 +1150,7 @@ export default function App() {
 
   const deleteAgency = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir esta agência?', async () => {
-      const res = await fetch(`/api/agencies/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/agencies/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchAgencies();
         notify('Agência excluída com sucesso!', 'success');
@@ -1004,7 +1218,7 @@ export default function App() {
         return;
       }
 
-      const updateResponse = await fetch(`/api/agencies/${agency.id}/settings`, {
+      const updateResponse = await fetch(`${API_URL}/api/agencies/${agency.id}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1040,7 +1254,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/agencies/${agencyToResetPassword}/reset-password`, {
+      const res = await fetch(`${API_URL}/api/agencies/${agencyToResetPassword}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ new_password: newAdminPassword }),
@@ -1073,7 +1287,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/clients/${clientToResetPassword.id}/reset-password`, {
+      const res = await fetch(`${API_URL}/api/clients/${clientToResetPassword.id}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1110,7 +1324,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/users/${teamToResetPassword.id}/reset-password`, {
+      const res = await fetch(`${API_URL}/api/users/${teamToResetPassword.id}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1180,13 +1394,15 @@ export default function App() {
 
   const handleFinanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
 
-    if (!isFinanceModuleEnabled && !isMaster(user)) {
+    if (!isFinanceModuleEnabled && user?.role !== 'master') {
       notify('Módulo financeiro desativado para esta agência. Lançamentos estão bloqueados.', 'error');
       return;
     }
 
-    const endpoint = financeTab === 'payable' ? '/api/expenses' : '/api/revenues';
+    const endpoint = financeTab === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
     const url = editingFinance ? `${endpoint}/${editingFinance.id}` : endpoint;
     const method = editingFinance ? 'PUT' : 'POST';
 
@@ -1196,7 +1412,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...financeForm,
-          agency_id: isMaster(user) ? (financeForm.agency_id || null) : user?.agency_id
+          agency_id: agencyId
         }),
       });
 
@@ -1225,13 +1441,13 @@ export default function App() {
   };
 
   const deleteFinance = async (id: number, type: 'payable' | 'receivable') => {
-    if (!isFinanceModuleEnabled && !isMaster(user)) {
+    if (!isFinanceModuleEnabled && user?.role !== 'master') {
       notify('Módulo financeiro desativado para esta agência. Exclusão de lançamentos bloqueada.', 'error');
       return;
     }
 
     requestConfirmation('Tem certeza que deseja excluir este registro?', async () => {
-      const endpoint = type === 'payable' ? '/api/expenses' : '/api/revenues';
+      const endpoint = type === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
       const res = await fetch(`${endpoint}/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchExpenses();
@@ -1245,14 +1461,18 @@ export default function App() {
 
   const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingUser ? `/api/agency-users/${editingUser.id}` : '/api/agency-users';
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    
+    const url = editingUser ? `${API_URL}/api/agency-users/${editingUser.id}` : `${API_URL}/api/agency-users`;
     const method = editingUser ? 'PUT' : 'POST';
+    const body = editingUser ? userForm : { ...userForm, agency_id: agencyId };
 
     try {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...userForm, agency_id: user?.agency_id }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -1273,7 +1493,7 @@ export default function App() {
 
   const deleteUser = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este usuário?', async () => {
-      const res = await fetch(`/api/agency-users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/agency-users/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchAgencyUsers();
         notify('Usuário excluído com sucesso!', 'success');
@@ -1285,14 +1505,18 @@ export default function App() {
 
   const handleTaskSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingTask ? `/api/tasks/${editingTask.id}` : '/api/tasks';
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
+    
+    const url = editingTask ? `${API_URL}/api/tasks/${editingTask.id}` : `${API_URL}/api/tasks`;
     const method = editingTask ? 'PUT' : 'POST';
+    const body = editingTask ? taskForm : { ...taskForm, agency_id: agencyId };
 
     try {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...taskForm, agency_id: user?.agency_id }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -1310,7 +1534,7 @@ export default function App() {
 
   const deleteTask = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir esta tarefa?', async () => {
-      const res = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/tasks/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchTasks();
         notify('Tarefa excluída com sucesso!', 'success');
@@ -1347,7 +1571,7 @@ export default function App() {
   const toggleTask = async (taskId: number, currentStatus: string) => {
     if (!selectedProcess) return;
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    const res = await fetch(`/api/process-tasks/${taskId}/toggle`, {
+    const res = await fetch(`${API_URL}/api/process-tasks/${taskId}/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -1359,7 +1583,7 @@ export default function App() {
 
   const fetchProcessDetail = async (id: number) => {
     setLoading(true);
-    const res = await fetch(`/api/processes/${id}`);
+    const res = await fetch(`${API_URL}/api/processes/${id}`);
     const data = await res.json();
     setSelectedProcess(data);
     setView('process_detail');
@@ -1368,16 +1592,22 @@ export default function App() {
 
   const fetchLeads = async () => {
     if (!user || !hasAdminAccess(user)) return;
-    const agencyId = user.agency_id || '';
-    const res = await fetch(`/api/leads?agency_id=${agencyId}`);
+    const agencyId = getScopedAgencyId();
+    const url = agencyId 
+      ? `${API_URL}/api/leads?agency_id=${agencyId}`
+      : `${API_URL}/api/leads`;
+    const res = await fetch(url);
     const data = await res.json();
     setLeads(data);
   };
 
   const fetchClientResetHistory = async () => {
     if (!user || !hasAdminAccess(user)) return;
-    const agencyId = user.agency_id || '';
-    const res = await fetch(`/api/clients/password-resets?agency_id=${agencyId}`);
+    const agencyId = getScopedAgencyId();
+    const url = agencyId 
+      ? `${API_URL}/api/clients/password-resets?agency_id=${agencyId}`
+      : `${API_URL}/api/clients/password-resets`;
+    const res = await fetch(url);
     if (!res.ok) {
       setClientResetHistory([]);
       return;
@@ -1387,44 +1617,13 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (user) {
-      fetchProcesses();
-
-      if (isMaster(user)) {
-        fetchAgencies();
-        fetchAuditLogs();
-        fetchGlobalUsers();
-      }
-
-      if (isMaster(user)) {
-        fetchVisaTypes();  // Master needs visa types globally
-      }
-
-      if (!isMaster(user)) fetchVisaTypes();
-
-      if (isFinanceModuleEnabled) {
-        fetchExpenses();
-        fetchRevenues();
-      }
-
-      if (hasAdminAccess(user)) {
-        fetchLeads();
-        fetchClientResetHistory();
-        fetchAgencyUsers();
-        fetchTasks();
-        fetchDestinations();
-        fetchPlans();
-        fetchFormFields();
-      }
-
-      if (user.role === 'supervisor' || user.role === 'gerente_financeiro' || user.role === 'client') {
-        fetchAgencySettings();
-        fetchDestinations();
-        fetchPlans();
-        fetchFormFields();
-      }
+    if (!user?.id || !user?.role) return;
+    fetchProcesses();
+    if (view === 'finance') {
+      fetchExpenses();
+      fetchRevenues();
     }
-  }, [user, view, canAccessFinanceModule(user)]);
+  }, [user?.id, user?.role, user?.agency_id, view]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -1436,12 +1635,12 @@ export default function App() {
     const slugFromPath = pathParts[0] === 'join' && pathParts[1] ? decodeURIComponent(pathParts[1]) : null;
     const agencySlug = params.get('agency') || slugFromPath;
     if (agencySlug) {
-      fetch(`/api/agencies/by-slug/${agencySlug}`)
+      fetch(`${API_URL}/api/agencies/by-slug/${agencySlug}`)
         .then(res => res.json())
         .then(data => {
           if (!data.error) {
             setPublicAgency(data);
-            fetch(`/api/destinations?agency_id=${data.id}`)
+            fetch(`${API_URL}/api/destinations?agency_id=${data.id}`)
               .then(res => res.json())
               .then(destData => setDestinations(destData));
           }
@@ -1451,10 +1650,16 @@ export default function App() {
 
   const handleUpdateAgencySettings = async (e?: any) => {
     if (e && e.preventDefault) e.preventDefault();
-    if (!user?.agency_id) return;
+    const scopedAgencyId = getScopedAgencyId();
+    
+    // Master needs to be viewing a specific agency (agency_panel)
+    // Non-master always has their agency scope set by getScopedAgencyId
+    if (!scopedAgencyId) return;
+    
+    const targetAgencyId = scopedAgencyId;
 
     try {
-      const res = await fetch(`\\/api/agencies/\$\{agencyId\}/settings`, {
+      const res = await fetch(`${API_URL}/api/agencies/${targetAgencyId}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1478,6 +1683,8 @@ export default function App() {
 
   const saveProcess = async (e: React.FormEvent) => {
     e.preventDefault();
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !agencyId) return;
 
     if (editingProcess && editingProcess.status === 'completed') {
       notify('Somente processos abertos podem ser editados.', 'error');
@@ -1485,7 +1692,7 @@ export default function App() {
     }
 
     const method = editingProcess ? 'PUT' : 'POST';
-    const url = editingProcess ? `/api/processes/${editingProcess.id}` : '/api/processes';
+    const url = editingProcess ? `${API_URL}/api/processes/${editingProcess.id}` : `${API_URL}/api/processes`;
 
     const payload = editingProcess
       ? {
@@ -1502,7 +1709,7 @@ export default function App() {
           analyst_id: processForm.analyst_id ? Number(processForm.analyst_id) : null,
           status: processForm.status,
           internal_status: processForm.internal_status,
-          agency_id: user?.agency_id,
+          agency_id: agencyId,
         };
     
     const res = await fetch(url, {
@@ -1528,7 +1735,7 @@ export default function App() {
 
   const handleUpdateProcessStatus = async (processId: number, newStatus: Process['status']) => {
     try {
-      const res = await fetch(`/api/processes/${processId}`, {
+      const res = await fetch(`${API_URL}/api/processes/${processId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
@@ -1547,7 +1754,7 @@ export default function App() {
 
   const deleteProcess = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este processo? Todos os documentos e mensagens serão removidos.', async () => {
-      const res = await fetch(`/api/processes/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/processes/${id}`, { method: 'DELETE' });
       if (res.ok) {
         fetchProcesses();
         notify('Processo excluído com sucesso!', 'success');
@@ -2146,7 +2353,7 @@ export default function App() {
   }
 
   // New Client Journey Flow
-  if (user?.role === 'client') {
+  if (isClient(user)) {
     return (
       <ClientJourneyFlow 
         user={user} 
@@ -2386,24 +2593,29 @@ export default function App() {
               className="space-y-8"
             >
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: 'Processos Ativos', value: processes.length, icon: FileText, color: 'text-emerald-400' },
-                  { label: 'Aguardando Docs', value: processes.filter(p => p.internal_status === 'documents_requested').length, icon: Clock, color: 'text-amber-400' },
-                  { label: 'Em Análise', value: processes.filter(p => p.status === 'analyzing').length, icon: Search, color: 'text-blue-400' },
-                  { label: 'Concluídos', value: processes.filter(p => p.status === 'completed').length, icon: CheckCircle2, color: 'text-emerald-500' },
-                ].map((stat, i) => (
-                  <div key={i} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] shadow-xl">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className={`p-3 bg-[var(--bg-input)] rounded-2xl ${stat.color}`}>
-                        <stat.icon size={24} />
+              {(() => {
+                const safeProcesses = Array.isArray(processes) ? processes : [];
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {[
+                      { label: 'Processos Ativos', value: safeProcesses.length, icon: FileText, color: 'text-emerald-400' },
+                      { label: 'Aguardando Docs', value: safeProcesses.filter(p => p?.internal_status === 'documents_requested').length, icon: Clock, color: 'text-amber-400' },
+                      { label: 'Em Análise', value: safeProcesses.filter(p => p?.status === 'analyzing').length, icon: Search, color: 'text-blue-400' },
+                      { label: 'Concluídos', value: safeProcesses.filter(p => p?.status === 'completed').length, icon: CheckCircle2, color: 'text-emerald-500' },
+                    ].map((stat, i) => (
+                      <div key={`stat-${i}`} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] shadow-xl">
+                        <div className="flex justify-between items-start mb-4">
+                          <div className={`p-3 bg-[var(--bg-input)] rounded-2xl ${stat.color}`}>
+                            <stat.icon size={24} />
+                          </div>
+                        </div>
+                        <p className="text-[var(--text-muted)] font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
+                        <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
                       </div>
-                    </div>
-                    <p className="text-[var(--text-muted)] font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
-                    <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
 
               <div className="bg-[var(--bg-card)]/50 border border-[var(--border-color)] p-6 rounded-3xl">
                 <div className="flex items-center gap-4 mb-4">
@@ -2413,7 +2625,7 @@ export default function App() {
                   <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Aguardando Docs</span>
                 </div>
                 <p className="text-5xl font-black">
-                  {processes.filter(p => p.internal_status === 'documents_requested').length}
+                  {(Array.isArray(processes) ? processes : []).filter(p => p?.internal_status === 'documents_requested').length}
                 </p>
               </div>
 
@@ -2425,7 +2637,7 @@ export default function App() {
                   <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Concluídos</span>
                 </div>
                 <p className="text-5xl font-black">
-                  {processes.filter(p => p.status === 'completed').length}
+                  {(Array.isArray(processes) ? processes : []).filter(p => p?.status === 'completed').length}
                 </p>
               </div>
 
@@ -2438,10 +2650,10 @@ export default function App() {
                   </div>
                   
                   <div className="space-y-4">
-                    {processes.slice(0, 5).map(process => (
+                    {(Array.isArray(processes) ? processes : []).slice(0, 5).map((process, idx) => (
                       <div 
-                        key={process.id} 
-                        onClick={() => fetchProcessDetail(process.id)}
+                        key={process?.id ?? `process-${idx}`}
+                        onClick={() => process?.id && fetchProcessDetail(process.id)}
                         className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/30 transition-all cursor-pointer group"
                       >
                         <div className="flex items-center justify-between">
@@ -2450,24 +2662,23 @@ export default function App() {
                               <FileText size={24} />
                             </div>
                             <div>
-                              <h4 className="font-bold text-lg text-[var(--text-main)]">{process.visa_name || 'Visto em Processamento'}</h4>
-                              <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process.client_name || 'Cliente'}</p>
+                              <h4 className="font-bold text-lg text-[var(--text-main)]">{process?.visa_name || 'Visto em Processamento'}</h4>
+                              <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process?.client_name || 'Cliente'}</p>
                             </div>
                           </div>
                           <div className="text-right">
-                            <StatusBadge status={process.status} />
+                            <StatusBadge status={process?.status || 'pending'} />
                             <p className="text-[10px] text-[var(--text-muted)] font-bold mt-2 uppercase tracking-widest">
-                              Iniciado em {new Date(process.created_at).toLocaleDateString()}
+                              Iniciado em {process?.created_at ? new Date(process.created_at).toLocaleDateString() : 'N/A'}
                             </p>
                           </div>
                         </div>
                       </div>
                     ))}
-                    {processes.length === 0 && (
+                    {(Array.isArray(processes) ? processes : []).length === 0 && (
                       <div className="text-center py-20 bg-[var(--bg-card)]/30 rounded-[40px] border border-dashed border-[var(--border-color)]">
                         <FileText className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={64} />
                         <h4 className="text-[var(--text-muted)] font-bold">Nenhum processo encontrado.</h4>
-                        {/* Start modal button removed as clients are handled separately */}
                       </div>
                     )}
                   </div>
@@ -2481,7 +2692,7 @@ export default function App() {
                       { text: 'Nova mensagem do seu consultor.', time: '5h atrás', icon: MessageSquare, color: 'text-blue-400' },
                       { text: 'Pagamento confirmado com sucesso.', time: '1d atrás', icon: DollarSign, color: 'text-emerald-500' },
                     ].map((notif, i) => (
-                      <div key={i} className="flex gap-4 group cursor-pointer">
+                      <div key={`notification-${i}-${notif.time}`} className="flex gap-4 group cursor-pointer">
                         <div className={`mt-1 ${notif.color}`}>
                           <notif.icon size={18} />
                         </div>
@@ -2521,10 +2732,10 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1">
-                    ${revenues.reduce((acc, curr) => acc + curr.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${(Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
-                    {revenues.filter(r => r.status === 'pending').length} pendentes
+                    {(Array.isArray(revenues) ? revenues : []).filter(r => r?.status === 'pending').length} pendentes
                   </p>
                 </div>
                 <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)]">
@@ -2535,10 +2746,10 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-red-400">
-                    ${expenses.reduce((acc, curr) => acc + curr.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${(Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
-                    {expenses.filter(e => e.status === 'pending').length} pendentes
+                    {(Array.isArray(expenses) ? expenses : []).filter(e => e?.status === 'pending').length} pendentes
                   </p>
                 </div>
                 <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)]">
@@ -2549,7 +2760,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-cyan-400">
-                    ${(revenues.reduce((acc, curr) => acc + curr.amount, 0) - expenses.reduce((acc, curr) => acc + curr.amount, 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    ${((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                 </div>
               </div>
@@ -2572,9 +2783,9 @@ export default function App() {
                   </div>
                   <button 
                     data-testid="finance-new-entry-button"
-                    disabled={!isFinanceModuleEnabled && !isMaster(user)}
+                    disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
                     onClick={() => {
-                      if (!isFinanceModuleEnabled && !isMaster(user)) {
+                      if (!isFinanceModuleEnabled && user?.role !== 'master') {
                         notify('Módulo financeiro desativado para esta agência.', 'error');
                         return;
                       }
@@ -2591,7 +2802,7 @@ export default function App() {
                       setShowFinanceModal(true);
                     }}
                     className={`brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 ${
-                      !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-50 cursor-not-allowed' : ''
+                      !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     <Plus size={16} />
@@ -2645,9 +2856,9 @@ export default function App() {
                           <td className="px-6 py-4 text-right">
                             <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button 
-                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
+                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
                                 onClick={() => {
-                                  if (!isFinanceModuleEnabled && !isMaster(user)) {
+                                  if (!isFinanceModuleEnabled && user?.role !== 'master') {
                                     notify('Módulo financeiro desativado para esta agência.', 'error');
                                     return;
                                   }
@@ -2664,16 +2875,16 @@ export default function App() {
                                   setShowFinanceModal(true);
                                 }}
                                 className={`p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all ${
-                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
                                 <Search size={14} />
                               </button>
                               <button 
-                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
+                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
                                 onClick={() => deleteFinance(item.id, financeTab)}
                                 className={`p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all ${
-                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
                                 <Trash2 size={14} />
@@ -2704,8 +2915,8 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
             >
-              {agencies.map(agency => (
-                <div key={agency.id} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/50 transition-all group">
+              {(Array.isArray(agencies) ? agencies : []).map(agency => (
+                <div key={agency?.id ?? `agency-${agency?.name}`} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/50 transition-all group">
                   <div className="flex justify-between items-start mb-6">
                     <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl group-hover:brand-gradient group-hover:text-black transition-all w-14 h-14 flex items-center justify-center overflow-hidden">
                       {agency.logo_url ? (
@@ -2890,7 +3101,7 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-2">
-                            {(user.role === 'consultant' || hasAdminAccess(user)) && process.status !== 'completed' && (
+                            {canEditProcess(user, process.status) && (
                               <button
                                 data-testid={`process-edit-button-${process.id}`}
                                 onClick={() => openProcessEditModal(process)}
@@ -3319,7 +3530,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'agency_panel' && (isMaster(user) || user?.role === 'supervisor') && (
+          {view === 'agency_panel' && canViewAgenciesPanel(user) && (
             <motion.div 
               key="agency-panel"
               initial={{ opacity: 0 }}
@@ -3377,7 +3588,7 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
                           <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Administrador</p>
-                          <p className="text-sm font-bold text-[var(--text-main)]">{agencySettings.admin_email || user.email}</p>
+                          <p className="text-sm font-bold text-[var(--text-main)]">{agencySettings.admin_email || user?.email || ''}</p>
                         </div>
                         <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
                           <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Módulo Financeiro</p>
@@ -3786,7 +3997,7 @@ export default function App() {
                             <p className="text-xs text-[var(--text-muted)] line-clamp-2">{plan.description}</p>
                             <div className="flex flex-wrap gap-1">
                               {(Array.isArray(plan.features) ? plan.features : []).slice(0, 3).map((f, i) => (
-                                <span key={i} className="text-[9px] bg-[var(--bg-input)] text-[var(--text-muted)] px-2 py-0.5 rounded-full border border-[var(--border-color)]">
+                                <span key={`feature-${f ?? 'empty'}-${i}`} className="text-[9px] bg-[var(--bg-input)] text-[var(--text-muted)] px-2 py-0.5 rounded-full border border-[var(--border-color)]">
                                   {f}
                                 </span>
                               ))}
@@ -4615,7 +4826,7 @@ export default function App() {
                       </select>
                     </div>
 
-                    {user?.role === 'master' && (
+                    {isMaster(user) && (
                       <div>
                         <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Agência</label>
                         <select 
@@ -4815,7 +5026,7 @@ export default function App() {
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
+                      {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
                         <button
                           onClick={() => openProcessEditModal(selectedProcess)}
                           className="p-3 bg-blue-500/10 hover:bg-blue-500/20 rounded-2xl transition-all text-blue-400 border border-blue-500/20"
@@ -4862,7 +5073,7 @@ export default function App() {
                           <div key={resp.id} className="space-y-6">
                             <div className="flex justify-between items-center">
                               <h4 className="font-black uppercase tracking-widest text-xs">{resp.form_title || 'Formulário'}</h4>
-                              {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
+                              {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
                                 <button
                                   onClick={() => {
                                     setEditingFormResponse(resp);
@@ -4946,7 +5157,7 @@ export default function App() {
                   </div>
 
                   {/* Financial Section */}
-                  {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.financial && (
+                  {isConsultantSupervisorOrMaster(user) && selectedProcess.financial && (
                     <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
                       <h4 className="font-black uppercase tracking-widest text-xs mb-6">Financeiro & Pagamento</h4>
                       <div className="p-6 bg-[var(--bg-input)]/50 rounded-3xl border border-[var(--border-color)]">
@@ -5231,6 +5442,3 @@ export default function App() {
     </div>
   );
 }
-
-
-

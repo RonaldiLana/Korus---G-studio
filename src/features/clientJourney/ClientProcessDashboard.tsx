@@ -40,6 +40,7 @@ const getStepStatus = (process: Process, stepId: string) => {
 
 export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, processes }) => {
   const API_URL = import.meta.env.VITE_API_URL || '';
+  console.log('[BUILD] ClientProcessDashboard API_URL =', API_URL);
   const latestProcess = processes.length > 0 ? processes[0] : null;
   const [fullProcess, setFullProcess] = useState<any>(null);
   const [uploading, setUploading] = useState(false);

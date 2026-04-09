@@ -49,6 +49,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   visaTypes
 }) => {
   const API_URL = import.meta.env.VITE_API_URL || '';
+  console.log('[BUILD] ClientJourneyFlow API_URL =', API_URL, '| user:', user?.id, user?.email);
   const [currentStep, setCurrentStep] = useState<JourneyStep>(processes.length > 0 ? 'dashboard' : 'destination');
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);

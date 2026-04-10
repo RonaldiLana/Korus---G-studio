@@ -1234,28 +1234,51 @@ export default function App() {
       }
 
       const responseBody = await res.json().catch(() => null);
-      const responseData = responseBody && (responseBody.user || responseBody);
-      
-      if (!responseData) {
-        console.error('[LOGIN ERROR] Empty response:', responseBody);
+      const resolvedToken =
+        responseBody?.token ||
+        responseBody?.accessToken ||
+        responseBody?.access_token ||
+        responseBody?.data?.token ||
+        responseBody?.data?.accessToken ||
+        responseBody?.data?.access_token ||
+        null;
+
+      const rawUserCandidate =
+        responseBody?.user ||
+        responseBody?.data?.user ||
+        (responseBody && typeof responseBody === 'object' && 'id' in responseBody && 'role' in responseBody ? responseBody : null);
+
+      if (!responseBody) {
+        console.error('[LOGIN ERROR] Empty login response');
         setError('Resposta de login inválida');
         clearInvalidAuthData();
         return;
       }
 
-      // Extract token from response (may be in different formats)
-      const token = responseBody?.token || responseBody?.access_token || null;
-      
-      if (!token) {
-        console.error('[LOGIN ERROR] No token in response');
-        setError('Resposta de login inválida (sem token)');
+      if (!resolvedToken || !rawUserCandidate) {
+        console.error('[LOGIN ERROR] Missing token/user in login response', {
+          shape: {
+            keys: responseBody ? Object.keys(responseBody) : undefined,
+            dataKeys: responseBody?.data ? Object.keys(responseBody.data) : undefined,
+            hasToken: !!resolvedToken,
+            hasUser: !!rawUserCandidate,
+          },
+        });
+        setError('Resposta de login inválida (sem token ou usuário)');
         clearInvalidAuthData();
         return;
       }
 
+      const responseData = rawUserCandidate;
+
       // Validate user object
       if (!responseData.id || !responseData.role) {
-        console.error('[LOGIN ERROR] Invalid user object:', responseData);
+        console.error('[LOGIN ERROR] Invalid user object:', {
+          user: responseData,
+          shape: {
+            keys: Object.keys(responseData),
+          },
+        });
         setError('Dados de usuário inválidos');
         clearInvalidAuthData();
         return;
@@ -1287,7 +1310,7 @@ export default function App() {
 
       // Persist to localStorage
       try {
-        localStorage.setItem('korus-token', token);
+        localStorage.setItem('korus-token', resolvedToken);
         localStorage.setItem('korus-user', JSON.stringify(completeUser));
       } catch (storageError) {
         console.error('[LOGIN ERROR] Failed to save to localStorage:', storageError);
@@ -1297,7 +1320,7 @@ export default function App() {
       }
 
       // Update state
-      setToken(token);
+      setToken(resolvedToken);
       setUser(completeUser);
       
       // Redirect to recommended view

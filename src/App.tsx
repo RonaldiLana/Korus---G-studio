@@ -98,31 +98,38 @@ const parseAgencyModules = (modulesString?: string): { finance: boolean; chat: b
 };
 
 /**
+ * Normalize role strings for safe comparison
+ */
+const normalizeRole = (role?: string | null): string => {
+  return role?.toString().trim().toLowerCase() || '';
+};
+
+/**
  * Check if user is master
  */
 const isMaster = (user?: User | null): boolean => {
-  return user?.role === 'master';
+  return normalizeRole(user?.role) === 'master';
 };
 
 /**
  * Check if user has admin access (master or supervisor)
  */
 const hasAdminAccess = (user?: User | null): boolean => {
-  return user?.role === 'master' || user?.role === 'supervisor';
+  return isMaster(user) || normalizeRole(user?.role) === 'supervisor';
 };
 
 /**
  * Check if user can manage agencies (only master)
  */
 const canManageAgencies = (user?: User | null): boolean => {
-  return user?.role === 'master';
+  return isMaster(user);
 };
 
 /**
  * Check if user has global data access (master has access to all, others limited to their agency)
  */
 const canAccessGlobalData = (user?: User | null): boolean => {
-  return user?.role === 'master';
+  return isMaster(user);
 };
 
 /**
@@ -140,7 +147,8 @@ const getEffectiveAgencyId = (user?: User | null, viewAgencyId?: number | null):
  */
 const isSupervisorOrFinanceManager = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'supervisor' || user.role === 'gerente_financeiro';
+  const role = normalizeRole(user.role);
+  return role === 'supervisor' || role === 'gerente_financeiro';
 };
 
 /**
@@ -159,7 +167,8 @@ const canAccessFinanceModule = (user?: User | null): boolean => {
  */
 const isSupervisorConsultantOrAnalyst = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
+  const role = normalizeRole(user.role);
+  return role === 'supervisor' || role === 'consultant' || role === 'analyst';
 };
 
 /**
@@ -180,7 +189,8 @@ const canAccessPipefyModule = (user?: User | null): boolean => {
  */
 const isConsultantSupervisorOrMaster = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master';
+  const role = normalizeRole(user.role);
+  return role === 'consultant' || role === 'supervisor' || role === 'master';
 };
 
 /**
@@ -188,7 +198,7 @@ const isConsultantSupervisorOrMaster = (user?: User | null): boolean => {
  */
 const isClient = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'client';
+  return normalizeRole(user.role) === 'client';
 };
 
 /**
@@ -209,7 +219,7 @@ const canViewSettings = (user?: User | null): boolean => {
  * Check if user can view agencies panel (master or supervisor)
  */
 const canViewAgenciesPanel = (user?: User | null): boolean => {
-  return isMaster(user) || user?.role === 'supervisor';
+  return isMaster(user) || normalizeRole(user?.role) === 'supervisor';
 };
 
 /**
@@ -217,7 +227,7 @@ const canViewAgenciesPanel = (user?: User | null): boolean => {
  */
 const canEditProcess = (user?: User | null, processStatus?: string): boolean => {
   if (!user || processStatus === 'completed') return false;
-  return user.role === 'consultant' || hasAdminAccess(user);
+  return normalizeRole(user.role) === 'consultant' || hasAdminAccess(user);
 };
 
 /**
@@ -225,7 +235,7 @@ const canEditProcess = (user?: User | null, processStatus?: string): boolean => 
  */
 const canViewProcessFinancial = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'consultant' || hasAdminAccess(user);
+  return normalizeRole(user.role) === 'consultant' || hasAdminAccess(user);
 };
 
 /**
@@ -238,7 +248,8 @@ const getRecommendedInitialView = (user?: User | null): 'dashboard' | 'agencies'
     return 'agencies'; // Master starts at agencies management
   }
   
-  if (user.role === 'supervisor' || user.role === 'gerente_financeiro') {
+  const role = normalizeRole(user.role);
+  if (role === 'supervisor' || role === 'gerente_financeiro') {
     return 'clients'; // Supervisors start at client/process list
   }
   
@@ -360,11 +371,152 @@ type ConfirmDialogState = {
 };
 
 export default function App() {
-  const API_URL =
-    import.meta.env.VITE_API_URL?.trim() ||
-    'https://korus-backend-a55k.onrender.com';
+  const API_URL = import.meta.env.VITE_API_URL?.trim() || '';
+  const buildApiUrl = (path: string) => `${API_URL}${path}`;
+
+  const hasValidUser = (value?: User | null): value is User => {
+    return (
+      value != null &&
+      typeof value === 'object' &&
+      !!value.id &&
+      !!value.role
+    );
+  };
+
+  const isMasterUser = (value?: User | null): boolean => {
+    return normalizeRole(value?.role) === 'master';
+  };
+
+  const hasAgencyContext = (value?: User | null): boolean => {
+    return hasValidUser(value) && Boolean(value.agency_id);
+  };
+
+  const safeJsonFetch = async <T = unknown>(url: string, options?: RequestInit): Promise<T | null> => {
+    if (!url || url.startsWith('undefined')) {
+      console.error('[FETCH] Invalid URL:', url);
+      return null;
+    }
+
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        console.error('[FETCH] HTTP error', response.status, url);
+        return null;
+      }
+      return await response.json().catch((error) => {
+        console.error('[FETCH] JSON parse error', url, error);
+        return null;
+      });
+    } catch (error) {
+      console.error('[FETCH] request failed', url, error);
+      return null;
+    }
+  };
+
+  /**
+   * Build authentication headers with Bearer token
+   */
+  const getAuthHeaders = (authToken?: string | null): Record<string, string> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (authToken && authToken.trim().length > 0) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    return headers;
+  };
+
+  /**
+   * Validate that session exists and is complete before protected requests
+   */
+  const hasValidSession = (u?: User | null, authToken?: string | null): boolean => {
+    if (!hasValidUser(u) || !authToken || authToken.trim().length === 0) {
+      return false;
+    }
+
+    // Non-master users require agency context
+    if (!isMasterUser(u) && !u?.agency_id) {
+      return false;
+    }
+
+    return true;
+  };
+
+  /**
+   * Handle 401/403 responses by clearing invalid session
+   */
+  const handleAuthError = (statusCode: number) => {
+    if (statusCode === 401 || statusCode === 403) {
+      console.error('[AUTH] Session invalid or expired (HTTP', statusCode + ')');
+      clearInvalidAuthData();
+      return true;
+    }
+    return false;
+  };
+
   console.log('[BUILD] API_URL =', API_URL, '| VITE_API_URL env:', import.meta.env.VITE_API_URL);
+
+  /**
+   * Clear invalid auth data from localStorage
+   */
+  const clearInvalidAuthData = () => {
+    localStorage.removeItem('korus-token');
+    localStorage.removeItem('korus-user');
+    setToken(null);
+    setUser(null);
+  };
+
+  /**
+   * Restore session from localStorage on app start
+   */
+  const restoreSession = () => {
+    try {
+      const storedToken = localStorage.getItem('korus-token');
+      const storedUserRaw = localStorage.getItem('korus-user');
+
+      if (!storedToken || !storedUserRaw) {
+        console.log('[AUTH] No stored session found');
+        clearInvalidAuthData();
+        return;
+      }
+
+      const parsedUser = JSON.parse(storedUserRaw);
+
+      if (!hasValidUser(parsedUser)) {
+        console.error('[AUTH] Stored user is invalid:', parsedUser);
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Normalize role
+      const normalizedUser: User = {
+        ...parsedUser,
+        role: normalizeRole(parsedUser.role),
+      } as User;
+
+      // Validate agency_id for non-master users
+      if (!isMasterUser(normalizedUser) && !normalizedUser.agency_id) {
+        console.error('[AUTH] Non-master user missing agency_id:', normalizedUser);
+        clearInvalidAuthData();
+        return;
+      }
+
+      console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role, 'token:', storedToken.substring(0, 10) + '...');
+      setToken(storedToken);
+      setUser(normalizedUser);
+      // Redirect to recommended view
+      const recommendedView = getRecommendedInitialView(normalizedUser);
+      setView(recommendedView);
+    } catch (error) {
+      console.error('[AUTH] Error restoring session:', error);
+      clearInvalidAuthData();
+    }
+  };
+
   const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
@@ -380,6 +532,13 @@ export default function App() {
       setTheme(savedTheme);
       document.documentElement.classList.toggle('light', savedTheme === 'light');
     }
+  }, []);
+
+  /**
+   * Restore session on app initialization
+   */
+  useEffect(() => {
+    restoreSession();
   }, []);
 
   const toggleTheme = () => {
@@ -447,91 +606,180 @@ export default function App() {
   };
 
   const fetchPlans = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    const url = agencyId 
-      ? `${API_URL}/api/plans?agency_id=${agencyId}`
-      : `${API_URL}/api/plans`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setPlans(data);
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
+
+    try {
+      const url = agencyId
+        ? buildApiUrl(`/api/plans?agency_id=${agencyId}`)
+        : buildApiUrl('/api/plans');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setPlans(data);
+    } catch (error) {
+      console.error('[FETCH] fetchPlans error:', error);
+    }
   };
 
   const savePlan = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
-    const url = editingPlan 
-      ? `${API_URL}/api/plans/${editingPlan.id}` 
-      : `${API_URL}/api/plans`;
-    const method = editingPlan ? 'PUT' : 'POST';
-    const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
+    try {
+      const url = editingPlan
+        ? buildApiUrl(`/api/plans/${editingPlan.id}`)
+        : buildApiUrl('/api/plans');
+      const method = editingPlan ? 'PUT' : 'POST';
+      const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
 
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (res.ok) {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowPlanModal(false);
       fetchPlans();
       notify('Plano salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('[AUTH] savePlan error:', error);
     }
   };
 
   const deletePlan = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este plano?', async () => {
-      const res = await fetch(`${API_URL}/api/plans/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchPlans();
-        notify('Plano excluído!', 'success');
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/plans/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchPlans();
+          notify('Plano excluído!', 'success');
+        }
+      } catch (error) {
+        console.error('[AUTH] deletePlan error:', error);
       }
     });
   };
 
   const fetchFormFields = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    const url = agencyId 
-      ? `${API_URL}/api/form-fields?agency_id=${agencyId}`
-      : `${API_URL}/api/form-fields`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setFormFields(data);
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
+
+    try {
+      const url = agencyId
+        ? buildApiUrl(`/api/form-fields?agency_id=${agencyId}`)
+        : buildApiUrl('/api/form-fields');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setFormFields(data);
+    } catch (error) {
+      console.error('[AUTH] fetchFormFields error:', error);
+    }
   };
 
   const saveFormField = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
-    const url = editingFormField 
-      ? `${API_URL}/api/form-fields/${editingFormField.id}` 
-      : `${API_URL}/api/form-fields`;
-    const method = editingFormField ? 'PUT' : 'POST';
-    const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
-
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (res.ok) {
+    try {
+      const url = editingFormField
+        ? buildApiUrl(`/api/form-fields/${editingFormField.id}`)
+        : buildApiUrl('/api/form-fields');
+      const method = editingFormField ? 'PUT' : 'POST';
+      const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowFormFieldModal(false);
       fetchFormFields();
       notify('Campo de formulário salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('[AUTH] saveFormField error:', error);
     }
   };
 
   const deleteFormField = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este campo de formulário?', async () => {
-      const res = await fetch(`${API_URL}/api/form-fields/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchFormFields();
-        notify('Campo excluído!', 'success');
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/form-fields/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchFormFields();
+          notify('Campo excluído!', 'success');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteFormField error:', error);
       }
     });
   };
@@ -599,134 +847,264 @@ export default function App() {
   const [formForm, setFormForm] = useState({ visa_type_id: 0, title: '', fields: [] as any[] });
 
   const fetchForms = async (visaTypeId: number) => {
-    const res = await fetch(`${API_URL}/api/forms/${visaTypeId}`);
-    const data = await res.json();
-    setForms(data);
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/forms/${visaTypeId}`), {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setForms(data);
+    } catch (error) {
+      console.error('[AUTH] fetchForms error:', error);
+    }
   };
 
   const saveVisaType = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    
-    const url = editingVisaType 
-      ? `${API_URL}/api/visa-types/${editingVisaType.id}` 
-      : `${API_URL}/api/visa-types`;
-    const method = editingVisaType ? 'PUT' : 'POST';
-    const body = editingVisaType ? visaTypeForm : { ...visaTypeForm, agency_id: agencyId };
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) {
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
+
+    try {
+      const url = editingVisaType
+        ? buildApiUrl(`/api/visa-types/${editingVisaType.id}`)
+        : buildApiUrl('/api/visa-types');
+      const method = editingVisaType ? 'PUT' : 'POST';
+      const body = editingVisaType ? visaTypeForm : { ...visaTypeForm, agency_id: agencyId };
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowVisaTypeModal(false);
       fetchVisaTypes();
       notify('Tipo de visto salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('[AUTH] saveVisaType error:', error);
     }
   };
 
   const deleteVisaType = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este tipo de visto? Isso excluirá todos os formulários vinculados.', async () => {
-      const res = await fetch(`${API_URL}/api/visa-types/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchVisaTypes();
-        notify('Tipo de visto excluído!', 'success');
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/visa-types/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchVisaTypes();
+          notify('Tipo de visto excluído!', 'success');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteVisaType error:', error);
       }
     });
   };
 
   const fetchDestinations = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    const url = agencyId 
-      ? `${API_URL}/api/destinations?agency_id=${agencyId}`
-      : `${API_URL}/api/destinations`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setDestinations(data);
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
+
+    try {
+      const url = agencyId
+        ? buildApiUrl(`/api/destinations?agency_id=${agencyId}`)
+        : buildApiUrl('/api/destinations');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setDestinations(data);
+    } catch (error) {
+      console.error('[AUTH] fetchDestinations error:', error);
+    }
   };
 
   const saveDestination = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
-    const url = editingDestination 
-      ? `${API_URL}/api/destinations/${editingDestination.id}` 
-      : `${API_URL}/api/destinations`;
-    const method = editingDestination ? 'PUT' : 'POST';
-    const body = editingDestination ? destinationForm : { ...destinationForm, agency_id: agencyId };
-
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (res.ok) {
+    try {
+      const url = editingDestination
+        ? buildApiUrl(`/api/destinations/${editingDestination.id}`)
+        : buildApiUrl('/api/destinations');
+      const method = editingDestination ? 'PUT' : 'POST';
+      const body = editingDestination ? destinationForm : { ...destinationForm, agency_id: agencyId };
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowDestinationModal(false);
       fetchDestinations();
       notify('Destino salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('[AUTH] saveDestination error:', error);
     }
   };
 
   const deleteDestination = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este destino?', async () => {
-      const res = await fetch(`${API_URL}/api/destinations/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchDestinations();
-        notify('Destino excluído!', 'success');
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/destinations/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchDestinations();
+          notify('Destino excluído!', 'success');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteDestination error:', error);
       }
     });
   };
 
   const saveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    const url = editingForm 
-      ? `${API_URL}/api/forms/${editingForm.id}` 
-      : `${API_URL}/api/forms`;
-    const method = editingForm ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formForm)
-    });
-    if (res.ok) {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
+    try {
+      const url = editingForm
+        ? buildApiUrl(`/api/forms/${editingForm.id}`)
+        : buildApiUrl('/api/forms');
+      const method = editingForm ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formForm),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowFormModal(false);
       if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
       notify('Formulário salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('[AUTH] saveForm error:', error);
     }
   };
 
   const handleDeleteForm = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este formulário?', async () => {
-      const res = await fetch(`${API_URL}/api/forms/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
-        notify('Formulário excluído!', 'success');
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/forms/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
+          notify('Formulário excluído!', 'success');
+        }
+      } catch (error) {
+        console.error('[AUTH] handleDeleteForm error:', error);
       }
     });
   };
 
   const validateFinancial = async (processId: number, status: 'confirmed' | 'pending') => {
     requestConfirmation(
-      status === 'confirmed' 
-        ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.' 
+      status === 'confirmed'
+        ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.'
         : 'Deseja recusar este comprovante? O cliente precisará enviar um novo.',
       async () => {
-        const res = await fetch(`${API_URL}/api/financials/validate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ process_id: processId, status })
-        });
-        if (res.ok) {
-          notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
-          // Refresh process details
-          const updatedProcessRes = await fetch(`${API_URL}/api/processes/${processId}`);
-          const updatedProcess = await updatedProcessRes.json();
-          setSelectedProcess(updatedProcess);
-          fetchProcesses();
+        if (!hasValidSession(user, token)) {
+          console.warn('[AUTH] Blocked protected request: invalid session');
+          return;
+        }
+
+        try {
+          const validateUrl = buildApiUrl('/api/financials/validate');
+          const res = await fetch(validateUrl, {
+            method: 'POST',
+            headers: {
+              ...getAuthHeaders(token),
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ process_id: processId, status }),
+          });
+          if (handleAuthError(res.status)) return;
+          if (res.ok) {
+            notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
+            const updatedProcessUrl = buildApiUrl(`/api/processes/${processId}`);
+            const updatedProcessRes = await fetch(updatedProcessUrl, {
+              method: 'GET',
+              headers: getAuthHeaders(token),
+            });
+            if (handleAuthError(updatedProcessRes.status)) return;
+            if (!updatedProcessRes.ok) return;
+            const updatedProcess = await updatedProcessRes.json();
+            setSelectedProcess(updatedProcess);
+            fetchProcesses();
+          }
+        } catch (error) {
+          console.error('[AUTH] validateFinancial error:', error);
         }
       }
     );
@@ -838,109 +1216,189 @@ export default function App() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    console.log('[LOGIN] Tentando login com:', loginForm.email);
+    console.log('[LOGIN] Attempting login with:', loginForm.email);
+
     try {
-      const res = await fetch(`${API_URL}/api/login`, {
+      const res = await fetch(buildApiUrl('/api/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm),
       });
-      if (res.ok) {
-        const response = await res.json();
-        // Servidor retorna { success: true, user: {...} } ou diretamente {...}
-        const userData = response.user || response;
-        console.log('[LOGIN] Dados recebidos:', userData);
-        console.log('[LOGIN] Role:', userData?.role);
-        console.log('[LOGIN] isMaster check:', userData?.role === 'master');
-        
-        // CRITICAL: Assegurar que userData tem role e agency_id
-        const completeUser = {
-          ...userData,
-          role: userData?.role || 'unknown',
-          agency_id: userData?.agency_id || null,
-          id: userData?.id,
-          email: userData?.email,
-          name: userData?.name,
-        };
-        
-        console.log('[LOGIN] CompleteUser:', completeUser);
-        setUser(completeUser);
-        
-        // Redirecionamento automático baseado em role
-        const recommendedView = getRecommendedInitialView(completeUser);
-        console.log('[LOGIN] Recomended View:', recommendedView, ' para role:', completeUser?.role);
-        setView(recommendedView);
-      } else {
-        const errorData = await res.json();
-        console.error('[LOGIN ERROR]', errorData);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        console.error('[LOGIN ERROR] HTTP:', res.status, errorData);
         setError('Credenciais inválidas');
+        clearInvalidAuthData();
+        return;
       }
+
+      const responseBody = await res.json().catch(() => null);
+      const responseData = responseBody && (responseBody.user || responseBody);
+      
+      if (!responseData) {
+        console.error('[LOGIN ERROR] Empty response:', responseBody);
+        setError('Resposta de login inválida');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Extract token from response (may be in different formats)
+      const token = responseBody?.token || responseBody?.access_token || null;
+      
+      if (!token) {
+        console.error('[LOGIN ERROR] No token in response');
+        setError('Resposta de login inválida (sem token)');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Validate user object
+      if (!responseData.id || !responseData.role) {
+        console.error('[LOGIN ERROR] Invalid user object:', responseData);
+        setError('Dados de usuário inválidos');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Normalize role and create user object
+      const normalizedRole = normalizeRole(responseData.role);
+      const completeUser: User = {
+        ...responseData,
+        role: normalizedRole,
+        agency_id: responseData.agency_id ?? null,
+      } as User;
+
+      // Validate constructed user
+      if (!hasValidUser(completeUser)) {
+        console.error('[LOGIN ERROR] Constructed user is invalid:', completeUser);
+        setError('Dados de usuário inválidos');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // For non-master users, agency_id is REQUIRED
+      if (!isMasterUser(completeUser) && !completeUser.agency_id) {
+        console.error('[LOGIN ERROR] Non-master user without agency_id:', completeUser);
+        setError('Usuário sem agência válida');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Persist to localStorage
+      try {
+        localStorage.setItem('korus-token', token);
+        localStorage.setItem('korus-user', JSON.stringify(completeUser));
+      } catch (storageError) {
+        console.error('[LOGIN ERROR] Failed to save to localStorage:', storageError);
+        setError('Erro ao salvar sessão');
+        clearInvalidAuthData();
+        return;
+      }
+
+      // Update state
+      setToken(token);
+      setUser(completeUser);
+      
+      // Redirect to recommended view
+      const recommendedView = getRecommendedInitialView(completeUser);
+      console.log('[LOGIN] Success, redirecting to:', recommendedView);
+      setView(recommendedView);
     } catch (err) {
-      console.error('[LOGIN ERROR] Conexão:', err);
+      console.error('[LOGIN ERROR] Connection:', err);
       setError('Erro ao conectar com o servidor');
+      clearInvalidAuthData();
     }
   };
 
   const fetchProcesses = async () => {
-    // CRITICAL: Never call API without valid user
-    if (!user?.id || !user?.role) {
-      console.log('[FETCH] fetchProcesses blocked: user incomplete', { id: user?.id, role: user?.role });
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    // For non-master users, agency_id is REQUIRED
-    if (!isMaster(user) && !user?.agency_id) {
-      console.log('[FETCH] fetchProcesses blocked: non-master needs agency_id', { user_agency_id: user?.agency_id });
+    if (!hasValidSession(user, token)) {
+      console.warn('[FETCH] fetchProcesses blocked: invalid session');
       setProcesses([]);
       return;
     }
 
-    // Build URL safely - never include undefined values
-    let url = `${API_URL}/api/processes?role=${encodeURIComponent(String(user.role))}&user_id=${encodeURIComponent(String(user.id))}`;
+    // Explicit check to satisfy TypeScript (redundant with hasValidSession but ensures type safety)
+    if (!user) {
+      console.error('[FETCH] fetchProcesses: user is null after hasValidSession check');
+      setProcesses([]);
+      return;
+    }
+
+    const agencyId = getScopedAgencyId();
+    if (!isMaster(user) && !user?.agency_id) {
+      console.log('[FETCH] fetchProcesses blocked: non-master needs agency_id');
+      setProcesses([]);
+      return;
+    }
+
+    let url = buildApiUrl(`/api/processes?role=${encodeURIComponent(String(user.role))}&user_id=${encodeURIComponent(String(user.id))}`);
     if (agencyId !== null && agencyId !== undefined) {
       url += `&agency_id=${encodeURIComponent(String(agencyId))}`;
     }
 
     console.log('[FETCH] fetchProcesses URL:', url);
     try {
-      const res = await fetch(url);
-      if (!res.ok) { console.error('[FETCH] HTTP:', res.status); setProcesses([]); return; }
-      const data = await res.json();
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) {
+        setProcesses([]);
+        return;
+      }
+      const data = await response.json();
       setProcesses(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error('[FETCH] fetchProcesses:', err);
+      console.error('[FETCH] fetchProcesses error:', err);
       setProcesses([]);
     }
   };
 
   const fetchAgencies = async () => {
-    if (!canManageAgencies(user)) return;
-    const res = await fetch(`${API_URL}/api/agencies`);
-    const data = await res.json();
-    setAgencies(data);
+    if (!hasValidSession(user, token) || !canManageAgencies(user)) return;
+    try {
+      const response = await fetch(buildApiUrl('/api/agencies'), {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setAgencies(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchAgencies error:', err);
+    }
   };
 
   const fetchExpenses = async () => {
-    // CRITICAL: Need valid user AND (master OR valid agency)
-    if (!user?.id) {
-      console.log('[FETCH] fetchExpenses blocked: no user.id');
+    if (!hasValidSession(user, token)) {
+      console.warn('[FETCH] fetchExpenses blocked: invalid session');
+      setExpenses([]);
       return;
     }
 
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !user?.agency_id) {
-      console.log('[FETCH] fetchExpenses blocked: non-master without agency_id', { user_agency_id: user?.agency_id });
+      console.log('[FETCH] fetchExpenses blocked: non-master without agency_id');
       setExpenses([]);
       return;
     }
 
     try {
-      const url = agencyId ? `${API_URL}/api/expenses?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/expenses`;
+      const url = agencyId ? buildApiUrl(`/api/expenses?agency_id=${encodeURIComponent(String(agencyId))}`) : buildApiUrl('/api/expenses');
       console.log('[FETCH] fetchExpenses URL:', url);
-      const res = await fetch(url);
-      if (!res.ok) { setExpenses([]); return; }
-      const data = await res.json();
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) {
+        setExpenses([]);
+        return;
+      }
+      const data = await response.json();
       setExpenses(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[FETCH] fetchExpenses error:', err);
@@ -949,25 +1407,32 @@ export default function App() {
   };
 
   const fetchRevenues = async () => {
-    // CRITICAL: Need valid user AND (master OR valid agency)
-    if (!user?.id) {
-      console.log('[FETCH] fetchRevenues blocked: no user.id');
+    if (!hasValidSession(user, token)) {
+      console.warn('[FETCH] fetchRevenues blocked: invalid session');
+      setRevenues([]);
       return;
     }
 
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !user?.agency_id) {
-      console.log('[FETCH] fetchRevenues blocked: non-master without agency_id', { user_agency_id: user?.agency_id });
+      console.log('[FETCH] fetchRevenues blocked: non-master without agency_id');
       setRevenues([]);
       return;
     }
 
     try {
-      const url = agencyId ? `${API_URL}/api/revenues?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/revenues`;
+      const url = agencyId ? buildApiUrl(`/api/revenues?agency_id=${encodeURIComponent(String(agencyId))}`) : buildApiUrl('/api/revenues');
       console.log('[FETCH] fetchRevenues URL:', url);
-      const res = await fetch(url);
-      if (!res.ok) { setRevenues([]); return; }
-      const data = await res.json();
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) {
+        setRevenues([]);
+        return;
+      }
+      const data = await response.json();
       setRevenues(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[FETCH] fetchRevenues error:', err);
@@ -976,28 +1441,56 @@ export default function App() {
   };
 
   const fetchAuditLogs = async () => {
-    if (!canViewAudit(user)) return;
-    const res = await fetch(`${API_URL}/api/audit-logs`);
-    const data = await res.json();
-    setAuditLogs(data);
+    if (!canViewAudit(user) || !hasValidSession(user, token)) return;
+    try {
+      const response = await fetch(buildApiUrl('/api/audit-logs'), {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setAuditLogs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchAuditLogs error:', err);
+    }
   };
 
   const fetchGlobalUsers = async () => {
-    if (!canManageAgencies(user)) return;
-    const res = await fetch(`${API_URL}/api/global-users`);
-    const data = await res.json();
-    setGlobalUsers(data);
+    if (!canManageAgencies(user) || !hasValidSession(user, token)) return;
+    try {
+      const response = await fetch(buildApiUrl('/api/global-users'), {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      setGlobalUsers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchGlobalUsers error:', err);
+    }
   };
 
   const fetchAgencyUsers = async () => {
-    if (!user || !user.id) return;
+    if (!hasValidSession(user, token)) return;
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !agencyId) return;
     try {
-      const url = agencyId ? `${API_URL}/api/agency-users?agency_id=${agencyId}` : `${API_URL}/api/agency-users`;
-      const res = await fetch(url);
-      if (!res.ok) { setAgencyUsers([]); return; }
-      const data = await res.json();
+      const url = agencyId ? buildApiUrl(`/api/agency-users?agency_id=${agencyId}`) : buildApiUrl('/api/agency-users');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setAgencyUsers([]);
+        return;
+      }
+      if (!response.ok) {
+        setAgencyUsers([]);
+        return;
+      }
+      const data = await response.json();
       setAgencyUsers(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[FETCH] fetchAgencyUsers error:', err);
@@ -1006,68 +1499,84 @@ export default function App() {
   };
 
   const fetchAgencySettings = async () => {
-    // Get effective agency ID (master can view any agency, others limited to theirs)
+    if (!hasValidSession(user, token)) return;
+    
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !agencyId) return;
     
-    // Skip if agencyId is null and not in agency_panel view (master global access)
     if (agencyId === null && view !== 'agency_panel') return;
     
-    // If master in agency_panel without selected agency, use first available
-    let url = `${API_URL}/api/agencies`;
+    let url = buildApiUrl('/api/agencies');
     if (agencyId !== null && agencyId !== undefined) {
-      url = `${API_URL}/api/agencies/${agencyId}`;
+      url = buildApiUrl(`/api/agencies/${agencyId}`);
     }
     
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const data = await res.json();
-    
-    // If it's a list, use first agency (master selecting)
-    const agencyData = Array.isArray(data) ? data[0] : data;
-    if (!agencyData) return;
-    
-    let parsedModules = { finance: true, chat: true };
     try {
-      parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
-    } catch {
-      parsedModules = { finance: true, chat: true };
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
+      const data = await response.json();
+      
+      const agencyData = Array.isArray(data) ? data[0] : data;
+      if (!agencyData) return;
+      
+      let parsedModules = { finance: true, chat: true };
+      try {
+        parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
+      } catch {
+        parsedModules = { finance: true, chat: true };
+      }
+
+      setAgencyModules({
+        finance: Boolean(parsedModules.finance),
+        chat: parsedModules.chat !== false,
+      });
+
+      let destinations = [];
+      let pre_form_questions = [];
+      try {
+        destinations = agencyData.destinations ? (typeof agencyData.destinations === 'string' ? JSON.parse(agencyData.destinations) : agencyData.destinations) : [];
+        pre_form_questions = agencyData.pre_form_questions ? (typeof agencyData.pre_form_questions === 'string' ? JSON.parse(agencyData.pre_form_questions) : agencyData.pre_form_questions) : [];
+      } catch (e) {
+        console.error('Error parsing agency settings:', e);
+      }
+
+      setAgencySettings({
+        id: agencyData.id,
+        name: agencyData.name || '',
+        logo_url: agencyData.logo_url || '',
+        slug: agencyData.slug || '',
+        admin_email: agencyData.admin_email || user?.email || '',
+        destinations,
+        pre_form_questions,
+      });
+    } catch (err) {
+      console.error('[FETCH] fetchAgencySettings error:', err);
     }
-
-    setAgencyModules({
-      finance: Boolean(parsedModules.finance),
-      chat: parsedModules.chat !== false,
-    });
-
-    let destinations = [];
-    let pre_form_questions = [];
-    try {
-      destinations = agencyData.destinations ? (typeof agencyData.destinations === 'string' ? JSON.parse(agencyData.destinations) : agencyData.destinations) : [];
-      pre_form_questions = agencyData.pre_form_questions ? (typeof agencyData.pre_form_questions === 'string' ? JSON.parse(agencyData.pre_form_questions) : agencyData.pre_form_questions) : [];
-    } catch (e) {
-      console.error('Error parsing agency settings:', e);
-    }
-
-    setAgencySettings({
-      id: agencyData.id,
-      name: agencyData.name || '',
-      logo_url: agencyData.logo_url || '',
-      slug: agencyData.slug || '',
-      admin_email: agencyData.admin_email || user?.email || '',
-      destinations,
-      pre_form_questions,
-    });
   };
 
   const fetchTasks = async () => {
-    if (!user || !user.id) return;
+    if (!hasValidSession(user, token)) return;
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !agencyId) return;
     try {
-      const url = agencyId ? `${API_URL}/api/tasks?agency_id=${agencyId}` : `${API_URL}/api/tasks`;
-      const res = await fetch(url);
-      if (!res.ok) { setTasks([]); return; }
-      const data = await res.json();
+      const url = agencyId ? buildApiUrl(`/api/tasks?agency_id=${agencyId}`) : buildApiUrl('/api/tasks');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setTasks([]);
+        return;
+      }
+      if (!response.ok) {
+        setTasks([]);
+        return;
+      }
+      const data = await response.json();
       setTasks(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[FETCH] fetchTasks error:', err);
@@ -1076,14 +1585,24 @@ export default function App() {
   };
 
   const fetchVisaTypes = async () => {
-    if (!user || !user.id) return;
+    if (!hasValidSession(user, token)) return;
     const agencyId = getScopedAgencyId();
     if (!isMaster(user) && !agencyId) return;
     try {
-      const url = agencyId ? `${API_URL}/api/visa-types?agency_id=${agencyId}` : `${API_URL}/api/visa-types`;
-      const res = await fetch(url);
-      if (!res.ok) { setVisaTypes([]); return; }
-      const data = await res.json();
+      const url = agencyId ? buildApiUrl(`/api/visa-types?agency_id=${agencyId}`) : buildApiUrl('/api/visa-types');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setVisaTypes([]);
+        return;
+      }
+      if (!response.ok) {
+        setVisaTypes([]);
+        return;
+      }
+      const data = await response.json();
       setVisaTypes(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('[FETCH] fetchVisaTypes error:', err);
@@ -1093,55 +1612,83 @@ export default function App() {
 
   const handleStartProcess = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
-    const res = await fetch(`${API_URL}/api/processes/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: user.id,
-        agency_id: user.agency_id,
-        visa_type_id: startProcessData.visa_type_id,
-        is_dependent: startProcessData.is_dependent
-      })
-    });
-    if (res.ok) {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
+    const currentUser = user;
+    if (!currentUser) {
+      console.warn('[AUTH] Blocked protected request: missing user');
+      return;
+    }
+
+    try {
+      const response = await fetch(buildApiUrl('/api/processes/start'), {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: currentUser.id,
+          agency_id: currentUser.agency_id,
+          visa_type_id: startProcessData.visa_type_id,
+          is_dependent: startProcessData.is_dependent,
+        }),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) return;
       setShowStartModal(false);
       fetchProcesses();
+    } catch (error) {
+      console.error('[AUTH] handleStartProcess error:', error);
     }
   };
 
   const createAgency = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     console.log('createAgency function called');
     setIsProcessingAgency(true);
-    const url = editingAgency ? `${API_URL}/api/agencies/${editingAgency.id}` : `${API_URL}/api/agencies`;
-    const method = editingAgency ? 'PUT' : 'POST';
-    
     try {
-      const res = await fetch(url, {
+      const url = editingAgency
+        ? buildApiUrl(`/api/agencies/${editingAgency.id}`)
+        : buildApiUrl('/api/agencies');
+      const method = editingAgency ? 'PUT' : 'POST';
+      const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(newAgency),
       });
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         fetchAgencies();
         setShowAgencyModal(false);
         setEditingAgency(null);
-        setNewAgency({ 
-          name: '', 
-          slug: '', 
-          has_finance: true, 
+        setNewAgency({
+          name: '',
+          slug: '',
+          has_finance: true,
           has_pipefy: true,
-          admin_name: '', 
-          admin_email: '', 
-          admin_password: '' 
+          admin_name: '',
+          admin_email: '',
+          admin_password: '',
         });
         notify(editingAgency ? 'Agência atualizada com sucesso!' : 'Agência criada com sucesso!', 'success');
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao processar agência', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao processar agência', 'error');
       }
-    } catch (err) {
+    } catch (error) {
+      console.error('[AUTH] createAgency error:', error);
       notify('Erro de conexão ao processar agência', 'error');
     } finally {
       setIsProcessingAgency(false);
@@ -1150,11 +1697,26 @@ export default function App() {
 
   const deleteAgency = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir esta agência?', async () => {
-      const res = await fetch(`${API_URL}/api/agencies/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchAgencies();
-        notify('Agência excluída com sucesso!', 'success');
-      } else {
+      if (!hasValidSession(user, token)) {
+        console.warn('[AUTH] Blocked protected request: invalid session');
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl(`/api/agencies/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchAgencies();
+          notify('Agência excluída com sucesso!', 'success');
+        } else {
+          const data = await response.json().catch(() => null);
+          notify(data?.error || 'Não foi possível excluir a agência.', 'error');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteAgency error:', error);
         notify('Não foi possível excluir a agência.', 'error');
       }
     });
@@ -1202,39 +1764,51 @@ export default function App() {
   const handleMasterAgencyLogoUpload = async (agency: Agency, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      event.target.value = '';
+      return;
+    }
 
     try {
       const formData = new FormData();
       formData.append('logo', file);
 
-      const uploadResponse = await fetch(`${API_URL}/api/upload-logo`, {
+      const uploadResponse = await fetch(buildApiUrl('/api/upload-logo'), {
         method: 'POST',
+        headers: getAuthHeaders(token),
         body: formData,
       });
 
       const uploadData = await uploadResponse.json();
+      if (handleAuthError(uploadResponse.status)) return;
       if (!uploadResponse.ok || !uploadData.url) {
         notify(uploadData.error || 'Falha no upload da logo.', 'error');
         return;
       }
 
-      const updateResponse = await fetch(`${API_URL}/api/agencies/${agency.id}/settings`, {
+      const updateResponse = await fetch(buildApiUrl(`/api/agencies/${agency.id}/settings`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           name: agency.name,
           logo_url: uploadData.url,
         }),
       });
 
+      if (handleAuthError(updateResponse.status)) return;
       if (updateResponse.ok) {
         notify('Logo da agência atualizada com sucesso!', 'success');
         fetchAgencies();
       } else {
-        const updateData = await updateResponse.json();
-        notify(updateData.error || 'Falha ao salvar logo da agência.', 'error');
+        const updateData = await updateResponse.json().catch(() => null);
+        notify(updateData?.error || 'Falha ao salvar logo da agência.', 'error');
       }
     } catch (error) {
+      console.error('[AUTH] handleMasterAgencyLogoUpload error:', error);
       notify('Erro de conexão ao atualizar a logo da agência.', 'error');
     } finally {
       event.target.value = '';
@@ -1248,28 +1822,36 @@ export default function App() {
   };
 
   const submitAgencyPasswordReset = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     if (!agencyToResetPassword || !newAdminPassword.trim()) {
       notify('Digite a nova senha para continuar.', 'error');
       return;
     }
 
     try {
-      const res = await fetch(`${API_URL}/api/agencies/${agencyToResetPassword}/reset-password`, {
+      const response = await fetch(buildApiUrl(`/api/agencies/${agencyToResetPassword}/reset-password`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ new_password: newAdminPassword }),
       });
-      
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         notify('Senha resetada com sucesso!', 'success');
         setShowResetPasswordModal(false);
         setNewAdminPassword('');
         setAgencyToResetPassword(null);
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao resetar senha', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao resetar senha', 'error');
       }
-    } catch (err) {
+    } catch (error) {
+      console.error('[AUTH] submitAgencyPasswordReset error:', error);
       notify('Erro de conexão ao resetar senha', 'error');
     }
   };
@@ -1281,32 +1863,40 @@ export default function App() {
   };
 
   const submitClientPasswordReset = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     if (!clientToResetPassword || newClientPassword.trim().length < 6) {
       notify('A nova senha do cliente deve ter no mínimo 6 caracteres.', 'error');
       return;
     }
 
     try {
-      const res = await fetch(`${API_URL}/api/clients/${clientToResetPassword.id}/reset-password`, {
+      const response = await fetch(buildApiUrl(`/api/clients/${clientToResetPassword.id}/reset-password`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           new_password: newClientPassword.trim(),
           reset_by_user_id: user?.id,
         }),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         notify('Senha do cliente resetada com sucesso!', 'success');
         setShowClientResetPasswordModal(false);
         setClientToResetPassword(null);
         setNewClientPassword('');
         fetchClientResetHistory();
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao resetar senha do cliente.', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao resetar senha do cliente.', 'error');
       }
     } catch (error) {
+      console.error('[AUTH] submitClientPasswordReset error:', error);
       notify('Erro de conexão ao resetar senha do cliente.', 'error');
     }
   };
@@ -1318,30 +1908,38 @@ export default function App() {
   };
 
   const submitTeamPasswordReset = async () => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     if (!teamToResetPassword || newTeamPassword.trim().length < 6) {
       notify('A nova senha deve ter no mínimo 6 caracteres.', 'error');
       return;
     }
 
     try {
-      const res = await fetch(`${API_URL}/api/users/${teamToResetPassword.id}/reset-password`, {
+      const response = await fetch(buildApiUrl(`/api/users/${teamToResetPassword.id}/reset-password`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           new_password: newTeamPassword.trim(),
         }),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         notify('Senha da equipe resetada com sucesso!', 'success');
         setShowTeamResetPasswordModal(false);
         setTeamToResetPassword(null);
         setNewTeamPassword('');
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao resetar senha da equipe.', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao resetar senha da equipe.', 'error');
       }
     } catch (error) {
+      console.error('[AUTH] submitTeamPasswordReset error:', error);
       notify('Erro de conexão ao resetar senha da equipe.', 'error');
     }
   };
@@ -1349,27 +1947,35 @@ export default function App() {
   const handleFormEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingFormResponse || !selectedProcess) return;
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
 
     try {
-      const res = await fetch(`${API_URL}/api/form-responses`, {
+      const response = await fetch(buildApiUrl('/api/form-responses'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           process_id: selectedProcess.id,
           form_id: editingFormResponse.form_id,
-          data: formEditData
-        })
+          data: formEditData,
+        }),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         notify('Formulário atualizado com sucesso!', 'success');
         setShowFormEditModal(false);
         fetchProcessDetail(selectedProcess.id);
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao atualizar formulário', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao atualizar formulário', 'error');
       }
-    } catch (err) {
+    } catch (error) {
+      console.error('[AUTH] handleFormEditSubmit error:', error);
       notify('Erro de conexão ao atualizar formulário', 'error');
     }
   };
@@ -1394,29 +2000,40 @@ export default function App() {
 
   const handleFinanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
     if (!isFinanceModuleEnabled && user?.role !== 'master') {
       notify('Módulo financeiro desativado para esta agência. Lançamentos estão bloqueados.', 'error');
       return;
     }
 
-    const endpoint = financeTab === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
+    const endpoint = financeTab === 'payable' ? buildApiUrl('/api/expenses') : buildApiUrl('/api/revenues');
     const url = editingFinance ? `${endpoint}/${editingFinance.id}` : endpoint;
     const method = editingFinance ? 'PUT' : 'POST';
 
     try {
-      const res = await fetch(url, {
+      const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           ...financeForm,
-          agency_id: agencyId
+          agency_id: agencyId,
         }),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         setShowFinanceModal(false);
         setEditingFinance(null);
         setFinanceForm({
@@ -1425,35 +2042,49 @@ export default function App() {
           due_date: new Date().toISOString().split('T')[0],
           status: 'pending',
           category: '',
-          agency_id: ''
+          agency_id: '',
         });
         fetchExpenses();
         fetchRevenues();
         notify(editingFinance ? 'Lançamento atualizado com sucesso!' : 'Lançamento criado com sucesso!', 'success');
       } else {
-        const data = await res.json();
-        notify(data.error || 'Falha ao salvar lançamento financeiro.', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Falha ao salvar lançamento financeiro.', 'error');
       }
-    } catch (err) {
-      console.error('Erro ao salvar transação financeira:', err);
+    } catch (error) {
+      console.error('[AUTH] handleFinanceSubmit error:', error);
       notify('Erro de conexão ao salvar lançamento financeiro.', 'error');
     }
   };
 
   const deleteFinance = async (id: number, type: 'payable' | 'receivable') => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     if (!isFinanceModuleEnabled && user?.role !== 'master') {
       notify('Módulo financeiro desativado para esta agência. Exclusão de lançamentos bloqueada.', 'error');
       return;
     }
 
     requestConfirmation('Tem certeza que deseja excluir este registro?', async () => {
-      const endpoint = type === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
-      const res = await fetch(`${endpoint}/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchExpenses();
-        fetchRevenues();
-        notify('Registro excluído com sucesso!', 'success');
-      } else {
+      try {
+        const endpoint = type === 'payable' ? buildApiUrl('/api/expenses') : buildApiUrl('/api/revenues');
+        const response = await fetch(`${endpoint}/${id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchExpenses();
+          fetchRevenues();
+          notify('Registro excluído com sucesso!', 'success');
+        } else {
+          const data = await response.json().catch(() => null);
+          notify(data?.error || 'Não foi possível excluir o registro.', 'error');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteFinance error:', error);
         notify('Não foi possível excluir o registro.', 'error');
       }
     });
@@ -1461,43 +2092,70 @@ export default function App() {
 
   const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    
-    const url = editingUser ? `${API_URL}/api/agency-users/${editingUser.id}` : `${API_URL}/api/agency-users`;
-    const method = editingUser ? 'PUT' : 'POST';
-    const body = editingUser ? userForm : { ...userForm, agency_id: agencyId };
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
     try {
-      const res = await fetch(url, {
+      const url = editingUser
+        ? buildApiUrl(`/api/agency-users/${editingUser.id}`)
+        : buildApiUrl('/api/agency-users');
+      const method = editingUser ? 'PUT' : 'POST';
+      const body = editingUser ? userForm : { ...userForm, agency_id: agencyId };
+      const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(body),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         setShowUserModal(false);
         setEditingUser(null);
         setUserForm({ name: '', email: '', password: '', role: 'consultant' });
         fetchAgencyUsers();
         notify(editingUser ? 'Usuário atualizado com sucesso!' : 'Usuário criado com sucesso!', 'success');
       } else {
-        const data = await res.json();
-        notify(data.error || 'Erro ao salvar usuário', 'error');
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao salvar usuário', 'error');
       }
-    } catch (err) {
-      console.error('Erro ao salvar usuário:', err);
+    } catch (error) {
+      console.error('[AUTH] handleUserSubmit error:', error);
       notify('Erro de conexão ao salvar usuário.', 'error');
     }
   };
 
   const deleteUser = async (id: number) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     requestConfirmation('Tem certeza que deseja excluir este usuário?', async () => {
-      const res = await fetch(`${API_URL}/api/agency-users/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchAgencyUsers();
-        notify('Usuário excluído com sucesso!', 'success');
-      } else {
+      try {
+        const response = await fetch(buildApiUrl(`/api/agency-users/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchAgencyUsers();
+          notify('Usuário excluído com sucesso!', 'success');
+        } else {
+          const data = await response.json().catch(() => null);
+          notify(data?.error || 'Não foi possível excluir o usuário.', 'error');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteUser error:', error);
         notify('Não foi possível excluir o usuário.', 'error');
       }
     });
@@ -1505,40 +2163,70 @@ export default function App() {
 
   const handleTaskSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const agencyId = getScopedAgencyId();
-    if (!isMaster(user) && !agencyId) return;
-    
-    const url = editingTask ? `${API_URL}/api/tasks/${editingTask.id}` : `${API_URL}/api/tasks`;
-    const method = editingTask ? 'PUT' : 'POST';
-    const body = editingTask ? taskForm : { ...taskForm, agency_id: agencyId };
+    if (!isMaster(user) && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
 
     try {
-      const res = await fetch(url, {
+      const url = editingTask
+        ? buildApiUrl(`/api/tasks/${editingTask.id}`)
+        : buildApiUrl('/api/tasks');
+      const method = editingTask ? 'PUT' : 'POST';
+      const body = editingTask ? taskForm : { ...taskForm, agency_id: agencyId };
+      const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(body),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         setShowTaskModal(false);
         setEditingTask(null);
         setTaskForm({ title: '', description: '', is_active: true });
         fetchTasks();
         notify(editingTask ? 'Tarefa atualizada com sucesso!' : 'Tarefa criada com sucesso!', 'success');
+      } else {
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao salvar tarefa', 'error');
       }
-    } catch (err) {
-      console.error('Erro ao salvar task:', err);
+    } catch (error) {
+      console.error('[AUTH] handleTaskSubmit error:', error);
       notify('Erro de conexão ao salvar tarefa.', 'error');
     }
   };
 
   const deleteTask = async (id: number) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     requestConfirmation('Tem certeza que deseja excluir esta tarefa?', async () => {
-      const res = await fetch(`${API_URL}/api/tasks/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        fetchTasks();
-        notify('Tarefa excluída com sucesso!', 'success');
-      } else {
+      try {
+        const response = await fetch(buildApiUrl(`/api/tasks/${id}`), {
+          method: 'DELETE',
+          headers: getAuthHeaders(token),
+        });
+        if (handleAuthError(response.status)) return;
+        if (response.ok) {
+          fetchTasks();
+          notify('Tarefa excluída com sucesso!', 'success');
+        } else {
+          const data = await response.json().catch(() => null);
+          notify(data?.error || 'Não foi possível excluir a tarefa.', 'error');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteTask error:', error);
         notify('Não foi possível excluir a tarefa.', 'error');
       }
     });
@@ -1546,84 +2234,154 @@ export default function App() {
 
   const sendMessage = async () => {
     if (!chatMessage.trim() || !selectedProcess) return;
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
 
     try {
-      const res = await fetch(`${API_URL}/api/messages`, {
+      const response = await fetch(buildApiUrl('/api/messages'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           process_id: selectedProcess.id,
           sender_id: user?.id,
           content: chatMessage,
-          is_proof: false
+          is_proof: false,
         }),
       });
-
-      if (res.ok) {
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
         setChatMessage('');
         fetchProcessDetail(selectedProcess.id);
       }
-    } catch (err) {
-      console.error('Erro ao enviar mensagem:', err);
+    } catch (error) {
+      console.error('[AUTH] sendMessage error:', error);
     }
   };
 
   const toggleTask = async (taskId: number, currentStatus: string) => {
     if (!selectedProcess) return;
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    const res = await fetch(`${API_URL}/api/process-tasks/${taskId}/toggle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (res.ok) {
-      fetchProcessDetail(selectedProcess.id);
+    try {
+      const response = await fetch(buildApiUrl(`/api/process-tasks/${taskId}/toggle`), {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (handleAuthError(response.status)) return;
+      if (response.ok) {
+        fetchProcessDetail(selectedProcess.id);
+      }
+    } catch (error) {
+      console.error('[AUTH] toggleTask error:', error);
     }
   };
 
   const fetchProcessDetail = async (id: number) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     setLoading(true);
-    const res = await fetch(`${API_URL}/api/processes/${id}`);
-    const data = await res.json();
-    setSelectedProcess(data);
-    setView('process_detail');
-    setLoading(false);
+    try {
+      const url = buildApiUrl(`/api/processes/${id}`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) return;
+      if (!response.ok) {
+        setLoading(false);
+        return;
+      }
+      const data = await response.json();
+      if (data) {
+        setSelectedProcess(data);
+        setView('process_detail');
+      }
+    } catch (error) {
+      console.error('[AUTH] fetchProcessDetail error:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchLeads = async () => {
-    if (!user || !hasAdminAccess(user)) return;
+    if (!hasValidUser(user) || !hasAdminAccess(user) || !hasValidSession(user, token)) return;
     const agencyId = getScopedAgencyId();
-    const url = agencyId 
-      ? `${API_URL}/api/leads?agency_id=${agencyId}`
-      : `${API_URL}/api/leads`;
-    const res = await fetch(url);
-    const data = await res.json();
-    setLeads(data);
+    const url = agencyId
+      ? buildApiUrl(`/api/leads?agency_id=${agencyId}`)
+      : buildApiUrl('/api/leads');
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setLeads([]);
+        return;
+      }
+      if (!response.ok) {
+        setLeads([]);
+        return;
+      }
+      const data = await response.json();
+      setLeads(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchLeads error:', err);
+      setLeads([]);
+    }
   };
 
   const fetchClientResetHistory = async () => {
-    if (!user || !hasAdminAccess(user)) return;
+    if (!hasValidUser(user) || !hasAdminAccess(user) || !hasValidSession(user, token)) return;
     const agencyId = getScopedAgencyId();
-    const url = agencyId 
-      ? `${API_URL}/api/clients/password-resets?agency_id=${agencyId}`
-      : `${API_URL}/api/clients/password-resets`;
-    const res = await fetch(url);
-    if (!res.ok) {
+    const url = agencyId
+      ? buildApiUrl(`/api/clients/password-resets?agency_id=${agencyId}`)
+      : buildApiUrl('/api/clients/password-resets');
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setClientResetHistory([]);
+        return;
+      }
+      if (!response.ok) {
+        setClientResetHistory([]);
+        return;
+      }
+      const data = await response.json();
+      setClientResetHistory(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('[FETCH] fetchClientResetHistory error:', err);
       setClientResetHistory([]);
-      return;
     }
-    const data = await res.json();
-    setClientResetHistory(data);
   };
 
   useEffect(() => {
-    if (!user?.id || !user?.role) return;
+    if (!hasValidUser(user)) return;
+    if (!isMasterUser(user) && !hasAgencyContext(user)) return;
+
     fetchProcesses();
     if (view === 'finance') {
       fetchExpenses();
       fetchRevenues();
     }
-  }, [user?.id, user?.role, user?.agency_id, view]);
+  }, [user, view]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -1634,18 +2392,18 @@ export default function App() {
     const pathParts = window.location.pathname.split('/').filter(Boolean);
     const slugFromPath = pathParts[0] === 'join' && pathParts[1] ? decodeURIComponent(pathParts[1]) : null;
     const agencySlug = params.get('agency') || slugFromPath;
-    if (agencySlug) {
-      fetch(`${API_URL}/api/agencies/by-slug/${agencySlug}`)
-        .then(res => res.json())
-        .then(data => {
-          if (!data.error) {
-            setPublicAgency(data);
-            fetch(`${API_URL}/api/destinations?agency_id=${data.id}`)
-              .then(res => res.json())
-              .then(destData => setDestinations(destData));
-          }
-        });
-    }
+
+    const loadPublicAgency = async () => {
+      if (!agencySlug) return;
+      const agencyData = await safeJsonFetch<any>(buildApiUrl(`/api/agencies/by-slug/${agencySlug}`));
+      if (!agencyData || agencyData.error) return;
+      setPublicAgency(agencyData);
+
+      const destData = await safeJsonFetch<Destination[]>(buildApiUrl(`/api/destinations?agency_id=${agencyData.id}`));
+      setDestinations(Array.isArray(destData) ? destData : []);
+    };
+
+    loadPublicAgency();
   }, []);
 
   const handleUpdateAgencySettings = async (e?: any) => {
@@ -1654,20 +2412,27 @@ export default function App() {
     
     // Master needs to be viewing a specific agency (agency_panel)
     // Non-master always has their agency scope set by getScopedAgencyId
-    if (!scopedAgencyId) return;
+    if (!scopedAgencyId || !hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     
     const targetAgencyId = scopedAgencyId;
 
     try {
-      const res = await fetch(`${API_URL}/api/agencies/${targetAgencyId}/settings`, {
+      const res = await fetch(buildApiUrl(`/api/agencies/${targetAgencyId}/settings`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           name: agencySettings.name || '',
           logo_url: agencySettings.logo_url || '',
-          pre_form_questions: agencySettings.pre_form_questions || []
+          pre_form_questions: agencySettings.pre_form_questions || [],
         }),
       });
+      if (handleAuthError(res.status)) return;
       if (res.ok) {
         notify('Configurações atualizadas com sucesso!', 'success');
         fetchAgencySettings();
@@ -1676,7 +2441,7 @@ export default function App() {
         notify(errorData.error || 'Falha ao atualizar configurações.', 'error');
       }
     } catch (error) {
-      console.error('Error updating agency settings:', error);
+      console.error('[AUTH] handleUpdateAgencySettings error:', error);
       notify('Erro de conexão ao atualizar configurações.', 'error');
     }
   };
@@ -1684,6 +2449,10 @@ export default function App() {
   const saveProcess = async (e: React.FormEvent) => {
     e.preventDefault();
     const agencyId = getScopedAgencyId();
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
     if (!isMaster(user) && !agencyId) return;
 
     if (editingProcess && editingProcess.status === 'completed') {
@@ -1692,7 +2461,9 @@ export default function App() {
     }
 
     const method = editingProcess ? 'PUT' : 'POST';
-    const url = editingProcess ? `${API_URL}/api/processes/${editingProcess.id}` : `${API_URL}/api/processes`;
+    const url = editingProcess
+      ? buildApiUrl(`/api/processes/${editingProcess.id}`)
+      : buildApiUrl('/api/processes');
 
     const payload = editingProcess
       ? {
@@ -1714,10 +2485,14 @@ export default function App() {
     
     const res = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        ...getAuthHeaders(token),
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify(payload),
     });
 
+    if (handleAuthError(res.status)) return;
     if (res.ok) {
       const data = await res.json();
       if (!editingProcess && data.tasks) {
@@ -1734,13 +2509,22 @@ export default function App() {
   };
 
   const handleUpdateProcessStatus = async (processId: number, newStatus: Process['status']) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_URL}/api/processes/${processId}`, {
+      const res = await fetch(buildApiUrl(`/api/processes/${processId}`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          ...getAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ status: newStatus }),
       });
 
+      if (handleAuthError(res.status)) return;
       if (res.ok) {
         fetchProcesses();
         notify('Status do processo atualizado!', 'success');
@@ -1748,13 +2532,23 @@ export default function App() {
         notify('Falha ao atualizar o status.', 'error');
       }
     } catch (error) {
+      console.error('[AUTH] handleUpdateProcessStatus error:', error);
       notify('Erro de conexão.', 'error');
     }
   };
 
   const deleteProcess = async (id: number) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     requestConfirmation('Tem certeza que deseja excluir este processo? Todos os documentos e mensagens serão removidos.', async () => {
-      const res = await fetch(`${API_URL}/api/processes/${id}`, { method: 'DELETE' });
+      const res = await fetch(buildApiUrl(`/api/processes/${id}`), {
+        method: 'DELETE',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(res.status)) return;
       if (res.ok) {
         fetchProcesses();
         notify('Processo excluído com sucesso!', 'success');
@@ -1765,6 +2559,11 @@ export default function App() {
   };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!hasValidSession(user, token)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1772,10 +2571,12 @@ export default function App() {
     formData.append('logo', file);
 
     try {
-      const res = await fetch(`${API_URL}/api/upload-logo`, {
+      const res = await fetch(buildApiUrl('/api/upload-logo'), {
         method: 'POST',
+        headers: getAuthHeaders(token),
         body: formData,
       });
+      if (handleAuthError(res.status)) return;
       const data = await res.json();
       if (data.url) {
         setAgencySettings(prev => ({ ...prev, logo_url: data.url }));
@@ -1784,7 +2585,7 @@ export default function App() {
         notify(data.error || 'Falha ao enviar logo.', 'error');
       }
     } catch (err) {
-      console.error('Erro no upload:', err);
+      console.error('[AUTH] handleLogoUpload error:', err);
       notify('Erro de conexão durante o upload da logo.', 'error');
     }
   };
@@ -2357,7 +3158,7 @@ export default function App() {
     return (
       <ClientJourneyFlow 
         user={user} 
-        onLogout={() => setUser(null)} 
+        onLogout={() => clearInvalidAuthData()} 
         processes={processes}
         onRefreshProcesses={fetchProcesses}
         agencyName={agencySettings.name}
@@ -2506,7 +3307,7 @@ export default function App() {
             </div>
           </div>
           <button 
-            onClick={() => setUser(null)}
+            onClick={() => clearInvalidAuthData()}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10 transition-all"
           >
             <LogOut size={20} />

@@ -432,7 +432,7 @@ export default function App() {
    * Validate that session exists and is complete before protected requests
    */
   const hasValidSession = (u?: User | null, authToken?: string | null): boolean => {
-    if (!hasValidUser(u) || !authToken || authToken.trim().length === 0) {
+    if (!hasValidUser(u)) {
       return false;
     }
 
@@ -476,7 +476,7 @@ export default function App() {
       const storedToken = localStorage.getItem('korus-token');
       const storedUserRaw = localStorage.getItem('korus-user');
 
-      if (!storedToken || !storedUserRaw) {
+      if (!storedUserRaw) {
         console.log('[AUTH] No stored session found');
         clearInvalidAuthData();
         return;
@@ -490,23 +490,24 @@ export default function App() {
         return;
       }
 
-      // Normalize role
       const normalizedUser: User = {
         ...parsedUser,
         role: normalizeRole(parsedUser.role),
       } as User;
 
-      // Validate agency_id for non-master users
       if (!isMasterUser(normalizedUser) && !normalizedUser.agency_id) {
         console.error('[AUTH] Non-master user missing agency_id:', normalizedUser);
         clearInvalidAuthData();
         return;
       }
 
-      console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role, 'token:', storedToken.substring(0, 10) + '...');
-      setToken(storedToken);
+      if (storedToken && storedToken.trim().length > 0) {
+        console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role, 'token:', storedToken.substring(0, 10) + '...');
+      } else {
+        console.log('[AUTH] Session restored without token:', normalizedUser.email, normalizedUser.role);
+      }
+      setToken(storedToken || null);
       setUser(normalizedUser);
-      // Redirect to recommended view
       const recommendedView = getRecommendedInitialView(normalizedUser);
       setView(recommendedView);
     } catch (error) {
@@ -1225,58 +1226,90 @@ export default function App() {
         body: JSON.stringify(loginForm),
       });
 
+      const status = res.status;
+      const contentType = res.headers.get('content-type') || '';
+      const rawText = await res.text();
+
+      console.log('[LOGIN] status:', status);
+      console.log('[LOGIN] content-type:', contentType);
+      console.log('[LOGIN] raw body:', rawText);
+
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          `[LOGIN ERROR] Non-JSON login response. status=${status} contentType=${contentType} bodySnippet=${rawText.slice(0, 500)}`
+        );
+      }
+
+      let parsedResponse: any = null;
+      try {
+        parsedResponse = JSON.parse(rawText);
+      } catch (jsonError) {
+        throw new Error(
+          `[LOGIN ERROR] Failed to parse login response JSON. status=${status} bodySnippet=${rawText.slice(0, 500)} error=${(jsonError as Error).message}`
+        );
+      }
+
+      console.log('[LOGIN] parsed response:', parsedResponse);
+
       if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        console.error('[LOGIN ERROR] HTTP:', res.status, errorData);
+        console.error('[LOGIN ERROR] HTTP:', status, parsedResponse);
         setError('Credenciais inválidas');
         clearInvalidAuthData();
         return;
       }
 
-      const responseBody = await res.json().catch(() => null);
       const resolvedToken =
-        responseBody?.token ||
-        responseBody?.accessToken ||
-        responseBody?.access_token ||
-        responseBody?.data?.token ||
-        responseBody?.data?.accessToken ||
-        responseBody?.data?.access_token ||
+        parsedResponse?.token ||
+        parsedResponse?.accessToken ||
+        parsedResponse?.access_token ||
+        parsedResponse?.data?.token ||
+        parsedResponse?.data?.accessToken ||
+        parsedResponse?.data?.access_token ||
+        parsedResponse?.session?.token ||
+        parsedResponse?.session?.accessToken ||
+        parsedResponse?.session?.access_token ||
+        parsedResponse?.result?.token ||
+        parsedResponse?.result?.accessToken ||
+        parsedResponse?.result?.access_token ||
         null;
 
-      const rawUserCandidate =
-        responseBody?.user ||
-        responseBody?.data?.user ||
-        (responseBody && typeof responseBody === 'object' && 'id' in responseBody && 'role' in responseBody ? responseBody : null);
+      const tryUserCandidate = (candidate: any) => {
+        if (!candidate || typeof candidate !== 'object') return null;
+        if ('id' in candidate && 'role' in candidate) return candidate;
+        return null;
+      };
 
-      if (!responseBody) {
-        console.error('[LOGIN ERROR] Empty login response');
-        setError('Resposta de login inválida');
-        clearInvalidAuthData();
-        return;
+      const resolvedUser =
+        parsedResponse?.user ||
+        parsedResponse?.data?.user ||
+        parsedResponse?.session?.user ||
+        parsedResponse?.result?.user ||
+        parsedResponse?.profile ||
+        parsedResponse?.data?.profile ||
+        parsedResponse?.session?.profile ||
+        parsedResponse?.result?.profile ||
+        tryUserCandidate(parsedResponse) ||
+        tryUserCandidate(parsedResponse?.data) ||
+        tryUserCandidate(parsedResponse?.result) ||
+        null;
+
+      console.log('[LOGIN] resolvedToken:', resolvedToken);
+      console.log('[LOGIN] resolvedUser:', resolvedUser);
+
+      if (!resolvedUser) {
+        const parsedKeys = parsedResponse && typeof parsedResponse === 'object' ? Object.keys(parsedResponse) : [];
+        throw new Error(
+          `[LOGIN ERROR] Login response missing user. status=${status} parsedKeys=${JSON.stringify(parsedKeys)}`
+        );
       }
 
-      if (!resolvedToken || !rawUserCandidate) {
-        console.error('[LOGIN ERROR] Missing token/user in login response', {
-          shape: {
-            keys: responseBody ? Object.keys(responseBody) : undefined,
-            dataKeys: responseBody?.data ? Object.keys(responseBody.data) : undefined,
-            hasToken: !!resolvedToken,
-            hasUser: !!rawUserCandidate,
-          },
-        });
-        setError('Resposta de login inválida (sem token ou usuário)');
-        clearInvalidAuthData();
-        return;
-      }
+      const responseData = resolvedUser;
 
-      const responseData = rawUserCandidate;
-
-      // Validate user object
       if (!responseData.id || !responseData.role) {
         console.error('[LOGIN ERROR] Invalid user object:', {
           user: responseData,
           shape: {
-            keys: Object.keys(responseData),
+            keys: responseData ? Object.keys(responseData) : undefined,
           },
         });
         setError('Dados de usuário inválidos');
@@ -1284,7 +1317,6 @@ export default function App() {
         return;
       }
 
-      // Normalize role and create user object
       const normalizedRole = normalizeRole(responseData.role);
       const completeUser: User = {
         ...responseData,
@@ -1292,7 +1324,6 @@ export default function App() {
         agency_id: responseData.agency_id ?? null,
       } as User;
 
-      // Validate constructed user
       if (!hasValidUser(completeUser)) {
         console.error('[LOGIN ERROR] Constructed user is invalid:', completeUser);
         setError('Dados de usuário inválidos');
@@ -1300,7 +1331,6 @@ export default function App() {
         return;
       }
 
-      // For non-master users, agency_id is REQUIRED
       if (!isMasterUser(completeUser) && !completeUser.agency_id) {
         console.error('[LOGIN ERROR] Non-master user without agency_id:', completeUser);
         setError('Usuário sem agência válida');
@@ -1308,9 +1338,12 @@ export default function App() {
         return;
       }
 
-      // Persist to localStorage
       try {
-        localStorage.setItem('korus-token', resolvedToken);
+        if (resolvedToken) {
+          localStorage.setItem('korus-token', resolvedToken);
+        } else {
+          localStorage.removeItem('korus-token');
+        }
         localStorage.setItem('korus-user', JSON.stringify(completeUser));
       } catch (storageError) {
         console.error('[LOGIN ERROR] Failed to save to localStorage:', storageError);
@@ -1319,17 +1352,21 @@ export default function App() {
         return;
       }
 
-      // Update state
-      setToken(resolvedToken);
+      setToken(resolvedToken || null);
       setUser(completeUser);
-      
-      // Redirect to recommended view
+
       const recommendedView = getRecommendedInitialView(completeUser);
       console.log('[LOGIN] Success, redirecting to:', recommendedView);
       setView(recommendedView);
     } catch (err) {
-      console.error('[LOGIN ERROR] Connection:', err);
-      setError('Erro ao conectar com o servidor');
+      const loginError = err as Error;
+      if (loginError.message?.startsWith('[LOGIN ERROR]')) {
+        console.error(loginError.message);
+        setError('Resposta de login inválida (sem token ou usuário)');
+      } else {
+        console.error('[LOGIN ERROR] Connection:', err);
+        setError('Erro ao conectar com o servidor');
+      }
       clearInvalidAuthData();
     }
   };

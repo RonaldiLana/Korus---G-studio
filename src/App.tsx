@@ -1417,7 +1417,7 @@ export default function App() {
   };
 
   const fetchAgencies = async () => {
-    if (!hasValidSession(user, token) || !canManageAgencies(user)) return;
+    if (!hasValidSession(user, token) || !isMasterUser(user)) return;
     try {
       const response = await fetch(buildApiUrl('/api/agencies'), {
         method: 'GET',
@@ -2436,6 +2436,9 @@ export default function App() {
     if (!hasValidUser(user)) return;
     if (!isMasterUser(user) && !hasAgencyContext(user)) return;
 
+    if (isMasterUser(user)) {
+      fetchAgencies();
+    }
     fetchProcesses();
     if (view === 'finance') {
       fetchExpenses();

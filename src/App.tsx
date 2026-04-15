@@ -1417,7 +1417,7 @@ export default function App() {
   };
 
   const fetchAgencies = async () => {
-    if (!hasValidSession(user, token) || !isMasterUser(user)) return;
+    if (!hasValidSession(user, token) || !canManageAgencies(user)) return;
     try {
       const response = await fetch(buildApiUrl('/api/agencies'), {
         method: 'GET',
@@ -1847,6 +1847,13 @@ export default function App() {
         return;
       }
 
+
+      // Buscar as pre_form_questions atuais para não sobrescrever
+      let preFormQuestions: any[] = [];
+      if (agencySettings && agencySettings.id === agency.id) {
+        preFormQuestions = agencySettings.pre_form_questions || [];
+      }
+
       const updateResponse = await fetch(buildApiUrl(`/api/agencies/${agency.id}/settings`), {
         method: 'PUT',
         headers: {
@@ -1856,6 +1863,7 @@ export default function App() {
         body: JSON.stringify({
           name: agency.name,
           logo_url: uploadData.url,
+          pre_form_questions: preFormQuestions,
         }),
       });
 
@@ -2436,9 +2444,6 @@ export default function App() {
     if (!hasValidUser(user)) return;
     if (!isMasterUser(user) && !hasAgencyContext(user)) return;
 
-    if (isMasterUser(user)) {
-      fetchAgencies();
-    }
     fetchProcesses();
     if (view === 'finance') {
       fetchExpenses();

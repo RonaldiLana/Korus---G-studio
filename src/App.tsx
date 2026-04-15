@@ -1,5 +1,49 @@
 
-// ...imports e código utilitário...
+import { useState, useEffect } from 'react';
+import { 
+  Users, 
+  Contact,
+  FileText, 
+  MessageSquare, 
+  LayoutDashboard, 
+  LogOut, 
+  Plus, 
+  Search, 
+  ChevronRight, 
+  Upload, 
+  Building2,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Link as LinkIcon,
+  Copy,
+  Trash2,
+  MapPin,
+  Globe,
+  Check,
+  DollarSign,
+  ShieldCheck,
+  ClipboardList,
+  UserPlus,
+  Sun,
+  Moon,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Filter,
+  Calendar,
+  CreditCard,
+  Pencil,
+  Settings,
+  Target,
+  Key,
+  Trello
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
+import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
+import { PipefyPanel } from './features/PipefyPanel';
+
+// ...outros imports e utilitários...
 
 export default function App() {
   // ...outros estados...

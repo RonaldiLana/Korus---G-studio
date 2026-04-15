@@ -4517,12 +4517,10 @@ export default function App() {
                               <span className="text-xs font-bold text-[var(--text-muted)] group-hover:text-[var(--text-main)]">Upload Logo</span>
                               <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
                             </label>
-                            {agencySettings.logo_url && (
-                              {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
-                                <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
-                                  <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
-                                </div>
-                              )}
+                            {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
+                              <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
+                                <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                              </div>
                             )}
                           </div>
                         </div>

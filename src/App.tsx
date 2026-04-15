@@ -43,7 +43,7 @@ import { User, Process, Agency, Message, Document, VisaType, Financial, FormResp
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
 
-// ...outros imports e utilitários...
+// (Removido bloco duplicado de imports e código executável antes dos imports)
 
 export default function App() {
   // ...outros estados...

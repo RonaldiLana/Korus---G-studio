@@ -3212,7 +3212,7 @@ export default function App() {
           
           <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
             <p className="text-[10px] text-[var(--text-muted)] text-center uppercase tracking-widest font-bold">
-              Korus Visa Consulting • 2024
+              Korus Visa Consulting • 2026
             </p>
           </div>
         </motion.div>

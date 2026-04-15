@@ -1,4 +1,4 @@
-﻿  // Listar todos os clientes de uma agência
+﻿// Listar todos os clientes de uma agência
   app.get("/api/clients", async (req, res) => {
     const { agency_id } = req.query;
     if (!agency_id) {
@@ -14,6 +14,7 @@
       res.status(500).json({ error: err.message });
     }
   });
+
 import "dotenv/config";
 import express from "express";
 import cors from "cors";

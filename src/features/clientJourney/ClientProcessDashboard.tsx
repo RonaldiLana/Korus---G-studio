@@ -352,8 +352,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                     </div>
                                     
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      {fields.map((field: any) => (
-                                        <div key={field.id} className="space-y-1">
+                                      {fields.map((field: any, idx: number) => (
+                                        <div key={field.id || `field-${idx}`} className="space-y-1">
                                           <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">{field.label}</p>
                                           <p className="text-sm font-bold text-white">{String(data[field.id] || '-')}</p>
                                         </div>
@@ -375,10 +375,10 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                           
                           <div className="space-y-4">
                             {/* Required Docs from Visa Type */}
-                            {fullProcess.required_docs && JSON.parse(fullProcess.required_docs).map((docName: string) => {
+                            {fullProcess.required_docs && JSON.parse(fullProcess.required_docs).map((docName: string, idx: number) => {
                               const uploadedDoc = fullProcess.documents?.find((d: any) => d.name === docName);
                               return (
-                                <div key={docName} className="flex items-center justify-between p-6 bg-zinc-800/30 rounded-3xl border border-white/5">
+                                <div key={docName || `doc-${idx}`} className="flex items-center justify-between p-6 bg-zinc-800/30 rounded-3xl border border-white/5">
                                   <div className="flex items-center gap-4">
                                     <div className={`p-3 rounded-2xl ${uploadedDoc ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500'}`}>
                                       <FileText size={20} />
@@ -444,8 +444,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                 <div className="space-y-6">
                   <h3 className="text-xl font-black tracking-tighter">Outros Processos</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {processes.slice(1).map(p => (
-                      <div key={p.id} className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 hover:border-white/10 transition-all cursor-pointer group">
+                    {processes.slice(1).map((p, idx) => (
+                      <div key={p.id || `process-${idx}`} className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 hover:border-white/10 transition-all cursor-pointer group">
                         <div className="flex items-center justify-between mb-4">
                           <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black transition-all">
                             <FileText size={20} />
@@ -600,8 +600,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
                 <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
                   {messages.length > 0 ? (
-                    messages.map((msg: any) => (
-                      <div key={msg.id} className={`flex flex-col ${msg.sender_id === latestProcess?.client_id ? 'items-end' : 'items-start'}`}>
+                    messages.map((msg: any, idx: number) => (
+                      <div key={msg.id || `msg-${idx}`} className={`flex flex-col ${msg.sender_id === latestProcess?.client_id ? 'items-end' : 'items-start'}`}>
                         <div className={`max-w-[85%] p-4 rounded-3xl text-sm font-medium leading-relaxed ${
                           msg.sender_id === latestProcess?.client_id 
                             ? 'bg-emerald-500 text-black rounded-tr-none font-bold' 
@@ -673,8 +673,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
                 <form onSubmit={handleFormResponseSubmit} className="p-8 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    {(typeof editingForm.form_fields === 'string' ? JSON.parse(editingForm.form_fields) : editingForm.form_fields).map((field: any) => (
-                      <div key={field.id} className="space-y-2">
+                    {(typeof editingForm.form_fields === 'string' ? JSON.parse(editingForm.form_fields) : editingForm.form_fields).map((field: any, idx: number) => (
+                      <div key={field.id || `editfield-${idx}`} className="space-y-2">
                         <label className="text-[10px] text-zinc-500 uppercase font-black tracking-widest ml-1">
                           {field.label} {field.required && <span className="text-red-500">*</span>}
                         </label>
@@ -686,8 +686,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                             onChange={(e) => setFormData({ ...formData, [field.id]: e.target.value })}
                           >
                             <option value="">Selecione...</option>
-                            {field.options.map((opt: string) => (
-                              <option key={opt} value={opt}>{opt}</option>
+                            {field.options.map((opt: string, idx: number) => (
+                              <option key={opt || `opt-${idx}`} value={opt}>{opt}</option>
                             ))}
                           </select>
                         ) : field.type === 'date' ? (

@@ -89,34 +89,47 @@ export const ClientJourneyFlow: React.FC<Props> = ({
 
   const handlePaymentComplete = async () => {
     try {
-      // Create process in backend
-      await axios.post(`${API_URL}/api/processes/start`, {
-        client_id: user.id,
-        agency_id: user.agency_id,
-        destination_id: selectedDestination?.id,
-        plan_id: selectedPlan?.id,
-        visa_type_id: formData?.visaTypeId || null,
-        travel_date: formData?.travelDate,
-        dependents: formData?.dependents || [],
-        form_responses: {
-          ...formData?.dynamicResponses,
-          fullName: formData?.fullName,
-          phone: formData?.phone,
-          email: formData?.email,
-          city: formData?.city,
-          hasPassport: formData?.hasPassport,
-          hasVisaDenied: formData?.hasVisaDenied,
-          travelParty: formData?.travelParty,
-          travelGoal: formData?.travelGoal,
-          dependentLevel: formData?.dependentLevel
-        }
+      if (!user?.id || !user?.agency_id) {
+        console.error('Dados inválidos:', user);
+        return;
+      }
+      const payload: any = {
+        user_id: Number(user.id),
+        agency_id: Number(user.agency_id)
+      };
+      if (selectedDestination?.id) payload.destination_id = selectedDestination.id;
+      if (selectedPlan?.id) payload.plan_id = selectedPlan.id;
+      if (formData?.visaTypeId) payload.visa_type_id = formData.visaTypeId;
+      if (formData?.travelDate) payload.travel_date = formData.travelDate;
+      if (formData?.dependents) payload.dependents = formData.dependents;
+      payload.form_responses = {
+        ...formData?.dynamicResponses,
+        fullName: formData?.fullName,
+        phone: formData?.phone,
+        email: formData?.email,
+        city: formData?.city,
+        hasPassport: formData?.hasPassport,
+        hasVisaDenied: formData?.hasVisaDenied,
+        travelParty: formData?.travelParty,
+        travelGoal: formData?.travelGoal,
+        dependentLevel: formData?.dependentLevel
+      };
+      console.log('PAYLOAD:', payload);
+      const response = await fetch(`${API_URL}/api/processes/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-      
-      toast.success('Processo iniciado com sucesso!');
-      onRefreshProcesses();
-      setCurrentStep('dashboard');
+      console.log('STATUS:', response.status);
+      if (response.ok) {
+        toast.success('Processo iniciado com sucesso!');
+        onRefreshProcesses();
+        setCurrentStep('dashboard');
+      } else {
+        toast.error('Erro ao iniciar processo. Tente novamente.');
+      }
     } catch (error) {
-      console.error('Error starting process:', error);
+      console.error('Erro ao iniciar processo:', error);
       toast.error('Erro ao iniciar processo. Tente novamente.');
     }
   };

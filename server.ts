@@ -100,6 +100,16 @@ async function startServer() {
   }
 
   const app = express();
+
+  // CORS: permitir frontend em produção e localhost
+  app.use(cors({
+    origin: [
+      'https://korus-frontend.onrender.com',
+      'http://localhost:5173',
+      'http://localhost:3000',
+    ],
+    credentials: true,
+  }));
   const PORT = Number(process.env.PORT);
   if (!PORT) {
     console.error('[BOOT] PORT não definida');
@@ -548,13 +558,18 @@ async function startServer() {
 
   app.post("/api/visa-types", async (req, res) => {
     const { agency_id, name, description, base_price, required_docs } = req.body;
+    console.log('[POST /api/visa-types] Dados recebidos:', req.body);
     try {
+      if (!agency_id || !name || !description || base_price === undefined) {
+        return res.status(400).json({ error: 'Campos obrigatórios faltando.' });
+      }
       const result = await query(
         "INSERT INTO visa_types (agency_id, name, description, base_price, required_docs) VALUES ($1, $2, $3, $4, $5) RETURNING id",
         [agency_id, name, description, base_price, JSON.stringify(required_docs || [])]
       );
       res.json({ id: result.rows[0].id });
     } catch (err: any) {
+      console.error('[POST /api/visa-types] Erro:', err);
       res.status(500).json({ error: err.message });
     }
   });

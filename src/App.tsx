@@ -1,3 +1,8 @@
+
+// ...imports e código utilitário...
+
+export default function App() {
+  // ...outros estados...
   // Estado para todos os clientes da agência
   const [clients, setClients] = useState<any[]>([]);
 
@@ -26,6 +31,7 @@
       setClients([]);
     }
   };
+  // ...restante do componente...
 import { useState, useEffect } from 'react';
 import { 
   Users, 

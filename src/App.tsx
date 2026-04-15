@@ -3007,7 +3007,7 @@ export default function App() {
           className="w-full max-w-md bg-[var(--bg-card)]/50 p-10 rounded-[40px] border border-[var(--border-color)] shadow-2xl backdrop-blur-xl relative z-10"
         >
           <div className="flex justify-center mb-10">
-            {publicAgency.logo_url ? (
+            {publicAgency.logo_url && publicAgency.logo_url.trim() !== '' ? (
               <img 
                 src={publicAgency.logo_url} 
                 alt={publicAgency.name} 
@@ -3246,7 +3246,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-72 bg-[var(--bg-card)]/50 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col">
         <div className="flex items-center gap-3 mb-10 px-2">
-          {!isMaster(user) && agencySettings.logo_url ? (
+          {!isMaster(user) && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' ? (
             <img 
               src={agencySettings.logo_url} 
               alt={agencySettings.name} 
@@ -4438,7 +4438,7 @@ export default function App() {
                     <div className="p-6 space-y-5">
                       <div className="flex items-center gap-4">
                         <div className="w-16 h-16 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex items-center justify-center overflow-hidden">
-                          {agencySettings.logo_url ? (
+                          {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' ? (
                             <img
                               src={agencySettings.logo_url}
                               alt={agencySettings.name}
@@ -4528,9 +4528,11 @@ export default function App() {
                               <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
                             </label>
                             {agencySettings.logo_url && (
-                              <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
-                                <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
-                              </div>
+                              {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
+                                <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
+                                  <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                                </div>
+                              )}
                             )}
                           </div>
                         </div>

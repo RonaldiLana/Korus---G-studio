@@ -218,53 +218,19 @@ async function startServer() {
   // PATCH: Compatibilidade client_id/user_id + query dinâmica segura
   // ---
   app.post("/api/processes/start", async (req, res) => {
-    /*
-    ### 🎯 CORREÇÃO CRÍTICA — COMPATIBILIDADE `user_id` vs `client_id`
-    Estou enfrentando erro 500 no endpoint `POST /api/processes/start` devido a inconsistência entre frontend e backend.
-    ---
-    ## 🧠 CONTEXTO
-    * O frontend atualmente envia:
-    { "user_id": number, "agency_id": number }
-    * O backend espera:
-    { "client_id": number, "agency_id": number }
-    Isso faz com que `client_id` chegue como `undefined`, causando erro no banco.
-    ---
-    ## 🎯 OBJETIVO
-    Corrigir o endpoint para:
-    1. Aceitar `user_id` temporariamente (compatibilidade)
-    2. Priorizar `client_id` quando existir
-    3. Mapear corretamente para `client_id` no banco
-    4. Evitar erro 500
-    5. Preparar o sistema para futura padronização
-    ---
-    ## ⚠️ REGRAS IMPORTANTES
-    * NÃO quebrar o frontend atual
-    * NÃO alterar o schema do banco
-    * NÃO remover campos existentes
-    * Manter compatibilidade com outras rotas
-    * Código deve ser seguro para produção
-    ---
-    ## ✅ IMPLEMENTAÇÃO ESPERADA
-    Refatore o endpoint `/api/processes/start` para:
-    ...ver prompt acima...
-    */
+    // 🎯 CORREÇÃO CRÍTICA — ALINHAMENTO COM BANCO (user_id vs client_id)
+    // Agora só aceita user_id, removendo client_id do fluxo
     console.log("BODY RECEBIDO:", req.body);
     try {
-      // Compatibilidade entre frontend e backend
-      const rawClientId = req.body.client_id ?? req.body.user_id;
-      if (!req.body.client_id && req.body.user_id) {
-        console.warn("[DEPRECATED] user_id usado — migrar para client_id");
-      }
-      const clientId = Number(rawClientId);
+      const userId = Number(req.body.user_id);
       const agencyId = Number(req.body.agency_id);
-      if (!clientId || !agencyId || isNaN(clientId) || isNaN(agencyId)) {
+      if (!userId || !agencyId || isNaN(userId) || isNaN(agencyId)) {
         return res.status(400).json({
-          error: "client_id/user_id e agency_id são obrigatórios e válidos"
+          error: "user_id e agency_id são obrigatórios"
         });
       }
-      // Construção dinâmica segura (sem undefined)
       const data: Record<string, any> = {
-        client_id: clientId,
+        user_id: userId,
         agency_id: agencyId,
         status: "started"
       };
@@ -286,7 +252,6 @@ async function startServer() {
           data[field] = Number(value);
         }
       }
-      // Query dinâmica segura (PostgreSQL)
       const keys = Object.keys(data);
       const values = Object.values(data);
       const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");

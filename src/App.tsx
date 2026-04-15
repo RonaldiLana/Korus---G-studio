@@ -1,3 +1,31 @@
+  // Estado para todos os clientes da agência
+  const [clients, setClients] = useState<any[]>([]);
+
+  // Buscar todos os clientes da agência
+  const fetchClients = async () => {
+    if (!hasValidSession(user, token)) return;
+    const agencyId = getScopedAgencyId();
+    if (!agencyId) return;
+    try {
+      const url = buildApiUrl(`/api/clients?agency_id=${agencyId}`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(token),
+      });
+      if (handleAuthError(response.status)) {
+        setClients([]);
+        return;
+      }
+      if (!response.ok) {
+        setClients([]);
+        return;
+      }
+      const data = await response.json();
+      setClients(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setClients([]);
+    }
+  };
 import { useState, useEffect } from 'react';
 import { 
   Users, 
@@ -2446,6 +2474,7 @@ export default function App() {
     if (!isMasterUser(user) && !hasAgencyContext(user)) return;
 
     fetchProcesses();
+    fetchClients();
     if (view === 'finance') {
       fetchExpenses();
       fetchRevenues();
@@ -3319,7 +3348,7 @@ export default function App() {
             />
           )}
 
-          {hasAdminAccess(user) && (
+          {hasAdminAccess(user) && agencyModules && agencyModules.chat !== false && (
             <SidebarItem 
               icon={Contact} 
               label="Clientes" 
@@ -3943,64 +3972,25 @@ export default function App() {
                   <thead>
                     <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
                       <th className="px-6 py-4">Cliente</th>
-                      <th className="px-6 py-4">Visto</th>
-                      <th className="px-6 py-4">Consultor</th>
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4">Etapa</th>
-                      <th className="px-6 py-4 text-right">Ação</th>
+                      <th className="px-6 py-4">E-mail</th>
+                      <th className="px-6 py-4">Telefone</th>
+                      <th className="px-6 py-4">Data Cadastro</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
-                    {processes.map(process => (
-                      <tr key={process.id} className="hover:bg-[var(--bg-input)] transition-all">
+                    {clients.map(client => (
+                      <tr key={client.id} className="hover:bg-[var(--bg-input)] transition-all">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
-                              {process.client_name?.charAt(0) || '?'}
+                              {client.name?.charAt(0) || '?'}
                             </div>
-                            <span className="font-bold text-sm">{process.client_name || 'Desconhecido'}</span>
+                            <span className="font-bold text-sm">{client.name || 'Desconhecido'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process.visa_name || process.type}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process.consultant_name || 'Não atribuído'}</td>
-                        <td className="px-6 py-4">
-                          <StatusBadge status={process.status} />
-                        </td>
-                        <td className="px-6 py-4 text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest">
-                          {STATUS_LABELS[process.internal_status] || process.internal_status}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end gap-2">
-                            {canEditProcess(user, process.status) && (
-                              <button
-                                data-testid={`process-edit-button-${process.id}`}
-                                onClick={() => openProcessEditModal(process)}
-                                className="p-2 hover:bg-blue-500/20 rounded-lg transition-all text-blue-400"
-                                title="Editar processo aberto"
-                              >
-                                <Pencil size={18} />
-                              </button>
-                            )}
-                            <button 
-                              data-testid={`process-details-button-${process.id}`}
-                              onClick={() => fetchProcessDetail(process.id)}
-                              className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
-                              title="Ver detalhes"
-                            >
-                              <ChevronRight size={20} />
-                            </button>
-                            {hasAdminAccess(user) && (
-                              <button 
-                                data-testid={`process-delete-button-${process.id}`}
-                                onClick={() => deleteProcess(process.id)}
-                                className="p-2 hover:bg-red-500/20 rounded-lg transition-all text-red-400"
-                                title="Excluir processo"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            )}
-                          </div>
-                        </td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.email}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.phone || '-'}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.created_at ? new Date(client.created_at).toLocaleDateString() : '-'}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -1,39 +1,86 @@
 
+import { useState, useEffect } from 'react';
+import { 
+  Users, 
+  Contact,
+  FileText, 
+  MessageSquare, 
+  LayoutDashboard, 
+  LogOut, 
+  Plus, 
+  Search, 
+  ChevronRight, 
+  Upload, 
+  Building2,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Link as LinkIcon,
+  Copy,
+  Trash2,
+  MapPin,
+  Globe,
+  Check,
+  DollarSign,
+  ShieldCheck,
+  ClipboardList,
+  UserPlus,
+  Sun,
+  Moon,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Filter,
+  Calendar,
+  CreditCard,
+  Pencil,
+  Settings,
+  Target,
+  Key,
+  Trello
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
+import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
+import { PipefyPanel } from './features/PipefyPanel';
 
-
-// (Removido bloco duplicado de imports e código executável antes dos imports)
-
-export default function App() {
-  // ...outros estados...
-  // Estado para todos os clientes da agência
-  const [clients, setClients] = useState<any[]>([]);
-
-  // Buscar todos os clientes da agência
-  const fetchClients = async () => {
-    if (!hasValidSession(user, token)) return;
-    const agencyId = getScopedAgencyId();
-    if (!agencyId) return;
-    try {
-      const url = buildApiUrl(`/api/clients?agency_id=${agencyId}`);
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: getAuthHeaders(token),
-      });
-      if (handleAuthError(response.status)) {
-        setClients([]);
-        return;
-      }
-      if (!response.ok) {
-        setClients([]);
-        return;
-      }
-      const data = await response.json();
-      setClients(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setClients([]);
-    }
-  };
-  // ...restante do componente...
+// Korus Logo Component
+const KorusLogo = ({ size = 40, className = "" }: { size?: number, className?: string }) => (
+  <div className={`relative flex items-center justify-center ${className}`} style={{ width: size, height: size }}>
+    <svg viewBox="0 0 100 100" className="w-full h-full">
+      <defs>
+        <linearGradient id="korusGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#00ff88" />
+          <stop offset="100%" stopColor="#00d4ff" />
+        </linearGradient>
+      </defs>
+      <path 
+        d="M50 5 L15 20 V45 C15 70 50 95 50 95 C50 95 85 70 85 45 V20 L50 5Z" 
+        fill="none" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="4"
+      />
+      <ellipse 
+        cx="50" cy="55" rx="45" ry="15" 
+        fill="none" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="2" 
+        transform="rotate(-15 50 55)"
+        strokeDasharray="4 2"
+      />
+      <path 
+        d="M40 30 V70 M40 50 L60 30 M40 50 L60 70" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="6" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <path 
+        d="M75 50 C75 45 80 40 85 40 C90 40 95 45 95 50 C95 55 85 65 85 65 C85 65 75 55 75 50Z" 
+        fill="url(#korusGradient)"
+      />
+    </svg>
+  </div>
+);
 import { useState, useEffect } from 'react';
 import { 
   Users, 
@@ -405,99 +452,6 @@ type ConfirmDialogState = {
   message: string;
   onConfirm: (() => Promise<void> | void) | null;
 };
-
-export default function App() {
-  const API_URL = import.meta.env.VITE_API_URL?.trim() || '';
-  const buildApiUrl = (path: string) => `${API_URL}${path}`;
-
-  const hasValidUser = (value?: User | null): value is User => {
-    return (
-      value != null &&
-      typeof value === 'object' &&
-      !!value.id &&
-      !!value.role
-    );
-  };
-
-  const isMasterUser = (value?: User | null): boolean => {
-    return normalizeRole(value?.role) === 'master';
-  };
-
-  const hasAgencyContext = (value?: User | null): boolean => {
-    return hasValidUser(value) && Boolean(value.agency_id);
-  };
-
-  const safeJsonFetch = async <T = unknown>(url: string, options?: RequestInit): Promise<T | null> => {
-    if (!url || url.startsWith('undefined')) {
-      console.error('[FETCH] Invalid URL:', url);
-      return null;
-    }
-
-    try {
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        console.error('[FETCH] HTTP error', response.status, url);
-        return null;
-      }
-      return await response.json().catch((error) => {
-        console.error('[FETCH] JSON parse error', url, error);
-        return null;
-      });
-    } catch (error) {
-      console.error('[FETCH] request failed', url, error);
-      return null;
-    }
-  };
-
-  /**
-   * Build authentication headers with Bearer token
-   */
-  const getAuthHeaders = (authToken?: string | null): Record<string, string> => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (authToken && authToken.trim().length > 0) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-
-    return headers;
-  };
-
-  /**
-   * Validate that session exists and is complete before protected requests
-   */
-  const hasValidSession = (u?: User | null, authToken?: string | null): boolean => {
-    if (!hasValidUser(u)) {
-      return false;
-    }
-
-    // Non-master users require agency context
-    if (!isMasterUser(u) && !u?.agency_id) {
-      return false;
-    }
-
-    return true;
-  };
-
-  /**
-   * Handle 401/403 responses by clearing invalid session
-   */
-  const handleAuthError = (statusCode: number) => {
-    if (statusCode === 401 || statusCode === 403) {
-      console.error('[AUTH] Session invalid or expired (HTTP', statusCode + ')');
-      clearInvalidAuthData();
-      return true;
-    }
-    return false;
-  };
-
-  console.log('[BUILD] API_URL =', API_URL, '| VITE_API_URL env:', import.meta.env.VITE_API_URL);
-
-  /**
-   * Clear invalid auth data from localStorage
-   */
-  const clearInvalidAuthData = () => {
     localStorage.removeItem('korus-token');
     localStorage.removeItem('korus-user');
     setToken(null);

@@ -1871,6 +1871,7 @@ export default function App() {
       if (updateResponse.ok) {
         notify('Logo da agência atualizada com sucesso!', 'success');
         fetchAgencies();
+        fetchAgencySettings();
       } else {
         const updateData = await updateResponse.json().catch(() => null);
         notify(updateData?.error || 'Falha ao salvar logo da agência.', 'error');

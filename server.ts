@@ -1,21 +1,4 @@
-﻿// Listar todos os clientes de uma agência
-  app.get("/api/clients", async (req, res) => {
-    const { agency_id } = req.query;
-    if (!agency_id) {
-      return res.status(400).json({ error: "agency_id é obrigatório" });
-    }
-    try {
-      const clientsResult = await query(
-        "SELECT id, name, email, phone, created_at FROM users WHERE role = 'client' AND agency_id = $1 ORDER BY created_at DESC",
-        [agency_id]
-      );
-      res.json(clientsResult.rows);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { testConnection, query } from "./src/lib/db.js";

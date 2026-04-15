@@ -222,15 +222,16 @@ async function startServer() {
     // Agora só aceita user_id, removendo client_id do fluxo
     console.log("BODY RECEBIDO:", req.body);
     try {
-      const userId = Number(req.body.user_id);
+      // Aceita user_id do frontend, mas insere como client_id no banco
+      const clientId = Number(req.body.user_id ?? req.body.client_id);
       const agencyId = Number(req.body.agency_id);
-      if (!userId || !agencyId || isNaN(userId) || isNaN(agencyId)) {
+      if (!clientId || !agencyId || isNaN(clientId) || isNaN(agencyId)) {
         return res.status(400).json({
-          error: "user_id e agency_id são obrigatórios"
+          error: "user_id/client_id e agency_id são obrigatórios"
         });
       }
       const data: Record<string, any> = {
-        user_id: userId,
+        client_id: clientId,
         agency_id: agencyId,
         status: "started"
       };

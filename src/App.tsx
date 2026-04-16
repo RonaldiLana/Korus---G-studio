@@ -1014,6 +1014,8 @@ export default function App() {
         return;
       }
 
+      localStorage.setItem('korus-user', JSON.stringify(loggedUser));
+      localStorage.setItem('korus-token', responseData?.token || '');
       setUser(loggedUser);
       setToken(responseData?.token || null);
       const recommendedView = getRecommendedInitialView(loggedUser);
@@ -1983,9 +1985,26 @@ export default function App() {
 
   useEffect(() => {
     if (!user?.id || !user?.role) return;
+
+    // Core data
     fetchProcesses();
+    fetchAgencyUsers();
+    fetchAgencySettings();
+    fetchVisaTypes();
+    fetchTasks();
+    fetchDestinations();
+    fetchPlans();
+    fetchFormFields();
     fetchExpenses();
     fetchRevenues();
+    fetchLeads();
+
+    // Master-only data
+    if (user.role === 'master') {
+      fetchAgencies();
+      fetchAuditLogs();
+      fetchGlobalUsers();
+    }
   }, [user]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);

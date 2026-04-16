@@ -1036,6 +1036,7 @@ export default function App() {
     }
     try {
       const data = await apiRequest(url, { headers: { 'Authorization': token ? `Bearer ${token}` : '' } });
+      console.log('[DEBUG] PROCESS DATA:', data);
       setProcesses(Array.isArray(data) ? data : []);
     } catch (err) {
       setProcesses([]);
@@ -3492,28 +3493,35 @@ export default function App() {
                 <table className="w-full text-left">
                   <thead>
                     <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
+                      <th className="px-6 py-4">Tipo de Visto</th>
                       <th className="px-6 py-4">Cliente</th>
-                      <th className="px-6 py-4">E-mail</th>
-                      <th className="px-6 py-4">Telefone</th>
-                      <th className="px-6 py-4">Data Cadastro</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4">Status Interno</th>
+                      <th className="px-6 py-4">Data Início</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
-                    {agencyUsers.map((client: any) => (
-                      <tr key={client.id} className="hover:bg-[var(--bg-input)] transition-all">
+                    {(Array.isArray(processes) ? processes : []).map((process: any, idx: number) => (
+                      <tr key={process?.id ?? `proc-${idx}`} onClick={() => process?.id && fetchProcessDetail(process.id)} className="hover:bg-[var(--bg-input)] transition-all cursor-pointer">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
-                              {client.name?.charAt(0) || '?'}
+                              <FileText size={16} />
                             </div>
-                            <span className="font-bold text-sm">{client.name || 'Desconhecido'}</span>
+                            <span className="font-bold text-sm">{process?.visa_name || 'Visto'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.email}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.phone || '-'}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{client.created_at ? new Date(client.created_at).toLocaleDateString() : '-'}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.client_name || '-'}</td>
+                        <td className="px-6 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.internal_status || '-'}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
                       </tr>
                     ))}
+                    {(Array.isArray(processes) ? processes : []).length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

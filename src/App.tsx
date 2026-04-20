@@ -1340,7 +1340,7 @@ export default function App() {
         body: JSON.stringify(newAgency),
       });
       if (response.ok) {
-        fetchAgencies();
+        await fetchAgencies();
         setShowAgencyModal(false);
         setEditingAgency(null);
         setNewAgency({
@@ -2917,7 +2917,7 @@ export default function App() {
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor') && agencyModules && agencyModules.leads !== false && (
+          {(user?.role === 'master' || user?.role === 'supervisor') && (user?.role === 'master' || (agencyModules && agencyModules.leads !== false)) && (
             <SidebarItem 
               icon={Contact} 
               label="Clientes" 

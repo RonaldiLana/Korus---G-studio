@@ -256,6 +256,14 @@ type ConfirmDialogState = {
   onConfirm: (() => Promise<void> | void) | null;
 };
 
+// Helper para formatação de valores em BRL
+const formatCurrency = (value: number): string => {
+  return (value || 0).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  });
+};
+
 export default function App() {
   const clearInvalidAuthData = () => {
     localStorage.removeItem('korus-token');
@@ -1939,7 +1947,8 @@ export default function App() {
   };
 
   const fetchLeads = async () => {
-    if (!(user?.id && user?.role) || !(user?.role === 'master' || user?.role === 'supervisor') || !(user?.id && user?.role)) return;
+    if (!(user?.id && user?.role)) return;
+    if (!(user?.role === 'master' || user?.role === 'supervisor')) return;
     const agencyId = getScopedAgencyId();
     const url = agencyId
       ? `${API_URL}/api/leads?agency_id=${agencyId}`
@@ -3153,7 +3162,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1">
-                    ${(Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
                     {(Array.isArray(revenues) ? revenues : []).filter(r => r?.status === 'pending').length} pendentes
@@ -3167,7 +3176,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-red-400">
-                    ${(Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {formatCurrency((Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
                     {(Array.isArray(expenses) ? expenses : []).filter(e => e?.status === 'pending').length} pendentes
@@ -3181,7 +3190,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-cyan-400">
-                    ${((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
                   </h3>
                 </div>
               </div>
@@ -3262,7 +3271,7 @@ export default function App() {
                           </td>
                           <td className="px-6 py-4">
                             <p className={`font-black ${financeTab === 'receivable' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              {formatCurrency(item.amount)}
                             </p>
                           </td>
                           <td className="px-6 py-4">
@@ -3298,8 +3307,9 @@ export default function App() {
                                 className={`p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all ${
                                   !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
+                                title="Editar lançamento"
                               >
-                                <Search size={14} />
+                                <Pencil size={14} />
                               </button>
                               <button 
                                 disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
@@ -3570,6 +3580,14 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
+                      {leads.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-20 text-center">
+                            <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
+                            <p className="text-[var(--text-muted)] font-bold">Nenhum lead encontrado.</p>
+                          </td>
+                        </tr>
+                      )}
                       {leads.map((lead, idx) => (
                         <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">

@@ -359,7 +359,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -491,7 +491,8 @@ async function startServer() {
   app.put("/api/agencies/:id", async (req, res) => {
     console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
     const { name, slug, has_finance, has_pipefy } = req.body;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy });
+    const has_leads = req.body.has_leads !== undefined ? req.body.has_leads : true;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });

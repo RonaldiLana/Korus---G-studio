@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS agencies (
   name TEXT NOT NULL,
   slug TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'active',
-  modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true}',
+  modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true, "leads": true}',
   logo_url TEXT,
   pre_form_questions TEXT,
   destinations TEXT,

@@ -623,6 +623,7 @@ export default function App() {
     slug: '', 
     has_finance: true, 
     has_pipefy: true,
+    has_leads: true,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -931,7 +932,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean }>({ finance: true, chat: true, pipefy: true });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean }>({ finance: true, chat: true, pipefy: true, leads: true });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -1200,17 +1201,18 @@ export default function App() {
       const agencyData = Array.isArray(data) ? data[0] : data;
       if (!agencyData) return;
       
-      let parsedModules = { finance: true, chat: true, pipefy: true };
+      let parsedModules = { finance: true, chat: true, pipefy: true, leads: true };
       try {
         parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
       } catch {
-        parsedModules = { finance: true, chat: true, pipefy: true };
+        parsedModules = { finance: true, chat: true, pipefy: true, leads: true };
       }
 
       setAgencyModules({
         finance: Boolean(parsedModules.finance),
         chat: parsedModules.chat !== false,
         pipefy: parsedModules.pipefy !== false,
+        leads: parsedModules.leads !== undefined ? parsedModules.leads !== false : parsedModules.chat !== false,
       });
 
       let destinations = [];
@@ -1346,6 +1348,7 @@ export default function App() {
           slug: '',
           has_finance: true,
           has_pipefy: true,
+          has_leads: true,
           admin_name: '',
           admin_email: '',
           admin_password: '',
@@ -2914,7 +2917,7 @@ export default function App() {
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor') && agencyModules && agencyModules.chat !== false && (
+          {(user?.role === 'master' || user?.role === 'supervisor') && agencyModules && agencyModules.leads !== false && (
             <SidebarItem 
               icon={Contact} 
               label="Clientes" 
@@ -3408,6 +3411,7 @@ export default function App() {
                             slug: agency.slug,
                             has_finance: modules.finance,
                             has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
+                            has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
@@ -3463,6 +3467,9 @@ export default function App() {
                       )}
                       {JSON.parse(agency.modules || '{}').pipefy && (
                         <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">Pipefy</span>
+                      )}
+                      {(JSON.parse(agency.modules || '{}').leads !== undefined ? JSON.parse(agency.modules || '{}').leads : JSON.parse(agency.modules || '{}').chat) !== false && (
+                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">Leads</span>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -5375,6 +5382,18 @@ export default function App() {
                               />
                               <label htmlFor="has_pipefy" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 Pipefy teste Habilitado
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_leads"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={newAgency.has_leads}
+                                onChange={e => setNewAgency({ ...newAgency, has_leads: e.target.checked })}
+                              />
+                              <label htmlFor="has_leads" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                Módulo Leads Habilitado
                               </label>
                             </div>
                           </div>

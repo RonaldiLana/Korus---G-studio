@@ -257,11 +257,19 @@ type ConfirmDialogState = {
 };
 
 // Helper para formatação de valores em BRL
-const formatCurrency = (value: number): string => {
-  return (value || 0).toLocaleString('pt-BR', {
+const formatCurrency = (value: number | string): string => {
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  return (isNaN(num) ? 0 : num).toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL'
   });
+};
+
+// Helper para resolver URLs de logo (relativas -> absolutas)
+const resolveLogoUrl = (url: string | null | undefined): string => {
+  if (!url || !url.trim()) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return `${API_URL}${url}`;
 };
 
 export default function App() {
@@ -2806,16 +2814,18 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-72 bg-[var(--bg-card)]/50 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col">
         <div className="flex items-center gap-3 mb-10 px-2">
-          {!(user?.role === 'master') && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' ? (
-            <img 
-              src={agencySettings.logo_url} 
-              alt={agencySettings.name} 
-              className="h-8 object-contain"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
+          <div className="relative flex-shrink-0" style={{ width: 32, height: 32 }}>
             <KorusLogo size={32} />
-          )}
+            {!(user?.role === 'master') && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
+              <img 
+                src={resolveLogoUrl(agencySettings.logo_url)} 
+                alt={agencySettings.name} 
+                className="absolute inset-0 h-8 w-8 object-contain"
+                referrerPolicy="no-referrer"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            )}
+          </div>
           <span className="font-black text-2xl tracking-tighter brand-text-gradient">
             {!(user?.role === 'master') && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
           </span>
@@ -3162,7 +3172,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1">
-                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
+                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
                     {(Array.isArray(revenues) ? revenues : []).filter(r => r?.status === 'pending').length} pendentes
@@ -3176,7 +3186,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-red-400">
-                    {formatCurrency((Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
+                    {formatCurrency((Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
                     {(Array.isArray(expenses) ? expenses : []).filter(e => e?.status === 'pending').length} pendentes
@@ -3190,7 +3200,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-cyan-400">
-                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (curr?.amount || 0), 0))}
+                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
                   </h3>
                 </div>
               </div>
@@ -3977,10 +3987,11 @@ export default function App() {
                         <div className="w-16 h-16 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex items-center justify-center overflow-hidden">
                           {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' ? (
                             <img
-                              src={agencySettings.logo_url}
+                              src={resolveLogoUrl(agencySettings.logo_url)}
                               alt={agencySettings.name}
                               className="w-full h-full object-contain"
                               referrerPolicy="no-referrer"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                           ) : (
                             <Building2 size={28} className="text-[var(--text-muted)]" />
@@ -4066,7 +4077,7 @@ export default function App() {
                             </label>
                             {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
                               <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
-                                <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                                <img src={resolveLogoUrl(agencySettings.logo_url)} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                               </div>
                             )}
                           </div>

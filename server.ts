@@ -539,16 +539,17 @@ async function startServer() {
       await query("DELETE FROM revenues WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM client_password_resets WHERE agency_id = $1", [agencyId]);
 
-      await query("DELETE FROM audit_logs WHERE agency_id = $1 OR user_id IN (SELECT id FROM users WHERE agency_id = $1)", [agencyId, agencyId]);
+      await query("DELETE FROM audit_logs WHERE agency_id = $1 OR user_id IN (SELECT id FROM users WHERE agency_id = $1)", [agencyId]);
 
       await query("DELETE FROM users WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM agencies WHERE id = $1", [agencyId]);
 
       await query('COMMIT', []);
       return res.json({ success: true, deleted_agency_id: agencyId, deleted_agency_name: agency.name });
-    } catch (error) {
+    } catch (error: any) {
       await query('ROLLBACK', []);
-      return res.status(500).json({ error: "Erro ao excluir agência e dados vinculados" });
+      console.error('[DELETE AGENCY ERROR]', error.message || error);
+      return res.status(500).json({ error: error.message || "Erro ao excluir agência e dados vinculados" });
     }
   });
 

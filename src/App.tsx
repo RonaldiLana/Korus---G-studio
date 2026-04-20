@@ -907,7 +907,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean }>({ finance: true, chat: true });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean }>({ finance: true, chat: true, pipefy: true });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -945,8 +945,8 @@ export default function App() {
   const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
   const [formEditData, setFormEditData] = useState<any>({});
 
-  // Finance access check - now uses centralized function instead of local variable
-  const isFinanceModuleEnabled = (user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro') || agencyModules.finance;
+  // Finance access check - master always has access; others depend on agencyModules.finance
+  const isFinanceModuleEnabled = user?.role === 'master' || agencyModules.finance;
 
   const notify = (message: string, type: ToastType = 'info') => {
     const id = Date.now() + Math.floor(Math.random() * 10000);
@@ -1176,16 +1176,17 @@ export default function App() {
       const agencyData = Array.isArray(data) ? data[0] : data;
       if (!agencyData) return;
       
-      let parsedModules = { finance: true, chat: true };
+      let parsedModules = { finance: true, chat: true, pipefy: true };
       try {
         parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
       } catch {
-        parsedModules = { finance: true, chat: true };
+        parsedModules = { finance: true, chat: true, pipefy: true };
       }
 
       setAgencyModules({
         finance: Boolean(parsedModules.finance),
         chat: parsedModules.chat !== false,
+        pipefy: parsedModules.pipefy !== false,
       });
 
       let destinations = [];
@@ -2852,7 +2853,7 @@ export default function App() {
             onClick={() => setView('dashboard')} 
           />
           
-          {canAccessPipefyModule(user) && (
+          {canAccessPipefyModule(user) && (user?.role === 'master' || agencyModules.pipefy) && (
             <SidebarItem 
               icon={Trello} 
               label="Pipefy teste" 
@@ -2898,7 +2899,7 @@ export default function App() {
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro') && (
+          {(user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro') && (user?.role === 'master' || agencyModules.finance) && (
             <SidebarItem 
               icon={DollarSign} 
               label="Financeiro" 

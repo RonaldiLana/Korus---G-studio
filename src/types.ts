@@ -6,7 +6,7 @@ export interface User {
   name: string;
   role: UserRole;
   agency_id: number | null;
-  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean }
+  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean, leads: boolean }
   created_at: string;
 }
 

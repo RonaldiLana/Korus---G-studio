@@ -344,6 +344,20 @@ export default function App() {
       }
       setToken(storedToken || null);
       setUser(normalizedUser);
+      // Inicializa agencyModules imediatamente da sessão salva (evita flash com defaults)
+      if (normalizedUser.agency_modules && normalizedUser.role !== 'master') {
+        try {
+          const m = typeof normalizedUser.agency_modules === 'string'
+            ? JSON.parse(normalizedUser.agency_modules)
+            : normalizedUser.agency_modules;
+          setAgencyModules({
+            finance: m.finance !== false,
+            chat: m.chat !== false,
+            pipefy: m.pipefy !== false,
+            leads: m.leads !== false,
+          });
+        } catch {}
+      }
       const recommendedView = getRecommendedInitialView(normalizedUser);
       setView(recommendedView);
     } catch (error) {
@@ -1058,6 +1072,20 @@ export default function App() {
       localStorage.setItem('korus-user', JSON.stringify(loggedUser));
       localStorage.setItem('korus-token', responseData?.token || '');
       setUser(loggedUser);
+      // Inicializa agencyModules imediatamente do login (evita flash com defaults)
+      if (loggedUser.agency_modules && loggedUser.role !== 'master') {
+        try {
+          const m = typeof loggedUser.agency_modules === 'string'
+            ? JSON.parse(loggedUser.agency_modules)
+            : loggedUser.agency_modules;
+          setAgencyModules({
+            finance: m.finance !== false,
+            chat: m.chat !== false,
+            pipefy: m.pipefy !== false,
+            leads: m.leads !== false,
+          });
+        } catch {}
+      }
       setToken(responseData?.token || null);
       const recommendedView = getRecommendedInitialView(loggedUser);
       setView(recommendedView);
@@ -1212,7 +1240,7 @@ export default function App() {
         finance: Boolean(parsedModules.finance),
         chat: parsedModules.chat !== false,
         pipefy: parsedModules.pipefy !== false,
-        leads: parsedModules.leads !== undefined ? parsedModules.leads !== false : parsedModules.chat !== false,
+        leads: parsedModules.leads !== false,
       });
 
       let destinations = [];

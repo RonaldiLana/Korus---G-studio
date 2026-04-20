@@ -136,8 +136,32 @@ const getRecommendedInitialView = (user?: User | null): 'dashboard' | 'agencies'
 // ============================================================================
 
 const KorusLogo = ({ size = 32 }: { size?: number }) => (
-  <div style={{ width: size, height: size }} className="flex items-center justify-center rounded-xl brand-gradient font-black text-black text-xs">
-    K
+  <div style={{ width: size, height: size }} className="flex items-center justify-center">
+    <svg viewBox="0 0 200 220" fill="none" xmlns="http://www.w3.org/2000/svg" width={size} height={size}>
+      <defs>
+        <linearGradient id="korusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#10b981" />
+          <stop offset="50%" stopColor="#06b6d4" />
+          <stop offset="100%" stopColor="#22d3ee" />
+        </linearGradient>
+        <linearGradient id="korusGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#22c55e" />
+          <stop offset="100%" stopColor="#10b981" />
+        </linearGradient>
+      </defs>
+      {/* Shield outer */}
+      <path d="M100 10 L175 45 C175 45 180 130 100 195 C20 130 25 45 25 45 Z" stroke="url(#korusGrad)" strokeWidth="6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* Shield inner accent */}
+      <path d="M100 30 L158 58 C158 58 162 125 100 178 C38 125 42 58 42 58 Z" stroke="url(#korusGrad2)" strokeWidth="3" fill="none" opacity="0.5" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* Letter K */}
+      <path d="M78 75 L78 145 M78 110 L122 75 M78 110 L122 145" stroke="url(#korusGrad)" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+      {/* Location pin */}
+      <circle cx="152" cy="158" r="8" stroke="url(#korusGrad2)" strokeWidth="3" fill="none"/>
+      <circle cx="152" cy="158" r="3" fill="url(#korusGrad2)"/>
+      <path d="M152 166 L152 180" stroke="url(#korusGrad2)" strokeWidth="3" strokeLinecap="round"/>
+      {/* Orbit arc */}
+      <path d="M60 185 Q100 205 152 175" stroke="url(#korusGrad2)" strokeWidth="3" fill="none" strokeLinecap="round"/>
+    </svg>
   </div>
 );
 

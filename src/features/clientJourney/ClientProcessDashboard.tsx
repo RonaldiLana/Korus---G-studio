@@ -130,8 +130,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
     try {
       await axios.post(`${API_URL}/api/financials/confirm-proof`, formData);
       toast.success('Comprovante enviado com sucesso! Aguarde a confirmação do consultor.');
-      // In a real app, we'd refresh the process data here
-      setTimeout(() => window.location.reload(), 1500);
+      setTimeout(() => fetchFullProcess(), 1500);
     } catch (error) {
       console.error('Error uploading proof:', error);
       toast.error('Erro ao enviar comprovante. Tente novamente.');
@@ -529,6 +528,70 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                   </button>
                 )}
               </div>
+
+              {/* Consultor Responsável */}
+              {(fullProcess?.consultant_name) && (
+                <div className="bg-zinc-900/40 border border-white/5 rounded-[40px] p-8 backdrop-blur-xl">
+                  <h3 className="text-xl font-black tracking-tighter mb-4 flex items-center gap-2">
+                    <UserIcon className="text-emerald-400" size={18} />
+                    Seu Consultor
+                  </h3>
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-lg">
+                      {fullProcess.consultant_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="font-black text-sm">{fullProcess.consultant_name}</p>
+                      <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Consultor Responsável</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Formulários Vinculados com Progresso */}
+              {isPaymentConfirmed && fullProcess?.process_forms && fullProcess.process_forms.length > 0 && (
+                <div className="bg-zinc-900/40 border border-white/5 rounded-[40px] p-8 backdrop-blur-xl">
+                  <h3 className="text-xl font-black tracking-tighter mb-6 flex items-center gap-2">
+                    <FileText className="text-emerald-400" size={18} />
+                    Formulários
+                  </h3>
+                  <div className="space-y-4">
+                    {fullProcess.process_forms.map((pf: any) => (
+                      <div key={pf.id} className="p-4 bg-zinc-800/30 rounded-2xl border border-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="font-bold text-sm truncate">{pf.form_title}</p>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ml-2 shrink-0 ${
+                            pf.response_status === 'submitted'
+                              ? 'bg-emerald-500/10 text-emerald-400'
+                              : pf.response_status === 'in_progress'
+                              ? 'bg-yellow-500/10 text-yellow-400'
+                              : 'bg-white/5 text-zinc-500'
+                          }`}>
+                            {pf.response_status === 'submitted' ? '✓' : pf.response_status === 'in_progress' ? '…' : '○'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pf.progress || 0}%` }} />
+                          </div>
+                          <span className="text-[10px] font-black text-zinc-500">{pf.progress || 0}%</span>
+                        </div>
+                        {pf.response_status !== 'submitted' && (
+                          <button
+                            onClick={() => {
+                              setEditingForm(pf);
+                              setFormData(pf.response_data || {});
+                            }}
+                            className="mt-3 w-full text-center text-[10px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300 transition-colors"
+                          >
+                            Preencher Agora →
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Support Card */}
               <div className="bg-zinc-900/40 border border-white/5 rounded-[40px] p-8 backdrop-blur-xl">

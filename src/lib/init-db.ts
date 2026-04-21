@@ -69,8 +69,48 @@ export async function initializeDatabase() {
   }
 
   await ensureMasterUser();
+  await applyMigrations();
 
   console.log("✅ Banco inicializado com sucesso");
+}
+
+/**
+ * Migrações incrementais para bancos já existentes.
+ * Cada ALTER é idempotente (ADD COLUMN IF NOT EXISTS).
+ */
+async function applyMigrations() {
+  const migrations = [
+    // forms: adicionar agency_id e destination_id
+    `ALTER TABLE forms ADD COLUMN IF NOT EXISTS agency_id INTEGER REFERENCES agencies(id)`,
+    `ALTER TABLE forms ADD COLUMN IF NOT EXISTS destination_id INTEGER REFERENCES destinations(id)`,
+    `ALTER TABLE forms ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
+    // forms: visa_type_id passar a ser nullable
+    `ALTER TABLE forms ALTER COLUMN visa_type_id DROP NOT NULL`,
+    `ALTER TABLE forms ALTER COLUMN fields SET DEFAULT '[]'`,
+    // process_forms: tabela de vinculação formulário ↔ processo
+    `CREATE TABLE IF NOT EXISTS process_forms (
+      id SERIAL PRIMARY KEY,
+      process_id INTEGER NOT NULL REFERENCES processes(id),
+      form_id INTEGER NOT NULL REFERENCES forms(id),
+      assigned_by INTEGER REFERENCES users(id),
+      assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(process_id, form_id)
+    )`,
+    // form_responses: garantir coluna status com valor padrão correto
+    `ALTER TABLE form_responses ALTER COLUMN status SET DEFAULT 'open'`,
+  ];
+
+  for (const sql of migrations) {
+    try {
+      await query(sql);
+    } catch (err: any) {
+      // Ignorar erros de "already exists" para garantir idempotência
+      if (!err.message?.includes('already exists') && !err.message?.includes('duplicate')) {
+        console.warn('⚠️ Migration warning:', err.message);
+      }
+    }
+  }
+  console.log("🔧 Migrações aplicadas");
 }
 
 async function seedInitialData() {

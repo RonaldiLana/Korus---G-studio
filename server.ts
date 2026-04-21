@@ -373,7 +373,7 @@ async function startServer() {
       const data: Record<string, any> = {
         client_id: clientId,
         agency_id: agencyId,
-        status: "started"
+        status: "waiting_payment"
       };
 
       // Valida destination_id: precisa existir e pertencer à agência
@@ -439,6 +439,58 @@ async function startServer() {
       if (!processId) {
         throw new Error("Falha ao criar processo");
       }
+
+      // Salvar travel_date
+      if (req.body.travel_date) {
+        try {
+          await query("UPDATE processes SET travel_date = $1 WHERE id = $2", [req.body.travel_date, processId]);
+        } catch (_) { /* coluna pode não existir ainda */ }
+      }
+
+      // Salvar dependentes
+      const dependents: any[] = req.body.dependents || [];
+      for (const dep of dependents) {
+        try {
+          await query(
+            "INSERT INTO dependents (process_id, name, birth_date, relationship) VALUES ($1, $2, $3, $4)",
+            [processId, dep.name || '', dep.birth_date || null, dep.relationship || null]
+          );
+        } catch (_) { /* ignorar se tabela não existir */ }
+      }
+
+      // Salvar form_responses iniciais (preenchimento feito antes do processo)
+      const formResponses: Record<string, any> = req.body.form_responses || {};
+      for (const [formId, responseData] of Object.entries(formResponses)) {
+        try {
+          if (responseData && Object.keys(responseData).length > 0) {
+            await query(
+              "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, $3, 'in_progress') ON CONFLICT DO NOTHING",
+              [processId, Number(formId), JSON.stringify(responseData)]
+            );
+          }
+        } catch (_) { /* ignorar erros */ }
+      }
+
+      // Criar registro financeiro pendente
+      try {
+        const planRow = data.plan_id
+          ? (await query("SELECT price FROM plans WHERE id = $1", [data.plan_id])).rows[0]
+          : null;
+        const amount = planRow?.price || 0;
+        await query(
+          "INSERT INTO financials (process_id, amount, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
+          [processId, amount]
+        );
+      } catch (_) { /* financials pode já ter constraint */ }
+
+      // Audit log
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [agencyId, clientId, "process_started", `Process ID: ${processId}`]
+        );
+      } catch (_) {}
+
       return res.json({ processId });
     } catch (error: any) {
       console.error("[PROCESS START ERROR]", error);
@@ -788,23 +840,53 @@ async function startServer() {
     }
   });
 
+  // ─── FORMS (listagem geral + por visto/destino/agência) ────────────────────
+
+  app.get("/api/forms", async (req, res) => {
+    const { agency_id, visa_type_id, destination_id } = req.query;
+    try {
+      let sql = `
+        SELECT f.*, vt.name as visa_type_name, d.name as destination_name
+        FROM forms f
+        LEFT JOIN visa_types vt ON f.visa_type_id = vt.id
+        LEFT JOIN destinations d ON f.destination_id = d.id
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+      if (agency_id) { params.push(agency_id); sql += ` AND f.agency_id = $${params.length}`; }
+      if (visa_type_id) { params.push(visa_type_id); sql += ` AND f.visa_type_id = $${params.length}`; }
+      if (destination_id) { params.push(destination_id); sql += ` AND f.destination_id = $${params.length}`; }
+      sql += ' ORDER BY f.created_at DESC';
+      const forms = await query(sql, params);
+      res.json(forms.rows.map((f: any) => ({ ...f, fields: JSON.parse(f.fields || '[]') })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/forms/:visa_type_id", async (req, res) => {
     try {
-      const forms = await query("SELECT * FROM forms WHERE visa_type_id = $1", [req.params.visa_type_id]);
-      const result = forms.rows.map((f: any) => ({
-        ...f,
-        fields: JSON.parse(f.fields || '[]')
-      }));
-      res.json(result);
+      const forms = await query(
+        `SELECT f.*, vt.name as visa_type_name, d.name as destination_name
+         FROM forms f
+         LEFT JOIN visa_types vt ON f.visa_type_id = vt.id
+         LEFT JOIN destinations d ON f.destination_id = d.id
+         WHERE f.visa_type_id = $1 ORDER BY f.created_at DESC`,
+        [req.params.visa_type_id]
+      );
+      res.json(forms.rows.map((f: any) => ({ ...f, fields: JSON.parse(f.fields || '[]') })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/forms", async (req, res) => {
-    const { visa_type_id, title, fields } = req.body;
+    const { agency_id, visa_type_id, destination_id, title, fields } = req.body;
     try {
-      const result = await query("INSERT INTO forms (visa_type_id, title, fields) VALUES ($1, $2, $3) RETURNING id", [visa_type_id, title, JSON.stringify(fields || [])]);
+      const result = await query(
+        "INSERT INTO forms (agency_id, visa_type_id, destination_id, title, fields) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        [agency_id || null, visa_type_id || null, destination_id || null, title, JSON.stringify(fields || [])]
+      );
       res.json({ id: result.rows[0].id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -812,9 +894,12 @@ async function startServer() {
   });
 
   app.put("/api/forms/:id", async (req, res) => {
-    const { title, fields } = req.body;
+    const { agency_id, visa_type_id, destination_id, title, fields } = req.body;
     try {
-      await query("UPDATE forms SET title = $1, fields = $2 WHERE id = $3", [title, JSON.stringify(fields || []), req.params.id]);
+      await query(
+        "UPDATE forms SET agency_id = $1, visa_type_id = $2, destination_id = $3, title = $4, fields = $5 WHERE id = $6",
+        [agency_id || null, visa_type_id || null, destination_id || null, title, JSON.stringify(fields || []), req.params.id]
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -823,12 +908,101 @@ async function startServer() {
 
   app.delete("/api/forms/:id", async (req, res) => {
     try {
+      await query("DELETE FROM process_forms WHERE form_id = $1", [req.params.id]);
+      await query("DELETE FROM form_responses WHERE form_id = $1", [req.params.id]);
       await query("DELETE FROM forms WHERE id = $1", [req.params.id]);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ─── PROCESS FORMS (vinculação formulário ↔ processo) ──────────────────────
+
+  app.get("/api/process-forms/:process_id", async (req, res) => {
+    try {
+      const result = await query(`
+        SELECT
+          pf.*,
+          f.title as form_title,
+          f.fields as form_fields,
+          f.agency_id,
+          f.visa_type_id,
+          f.destination_id,
+          ab.name as assigned_by_name,
+          fr.id as response_id,
+          fr.data as response_data,
+          fr.status as response_status,
+          fr.updated_at as response_updated_at
+        FROM process_forms pf
+        JOIN forms f ON pf.form_id = f.id
+        LEFT JOIN users ab ON pf.assigned_by = ab.id
+        LEFT JOIN form_responses fr ON fr.process_id = pf.process_id AND fr.form_id = pf.form_id
+        WHERE pf.process_id = $1
+        ORDER BY pf.assigned_at ASC
+      `, [req.params.process_id]);
+
+      const rows = result.rows.map((row: any) => {
+        const fields: any[] = JSON.parse(row.form_fields || '[]');
+        const data: Record<string, any> = JSON.parse(row.response_data || '{}');
+        const requiredFields = fields.filter((f: any) => f.required);
+        const filledRequired = requiredFields.filter((f: any) => {
+          const val = data[f.id !== undefined ? f.id : f.label];
+          return val !== undefined && val !== null && String(val).trim() !== '';
+        });
+        const progress = requiredFields.length > 0
+          ? Math.round((filledRequired.length / requiredFields.length) * 100)
+          : (Object.keys(data).length > 0 ? 100 : 0);
+
+        return {
+          ...row,
+          form_fields: fields,
+          response_data: data,
+          progress,
+          required_count: requiredFields.length,
+          filled_required_count: filledRequired.length,
+        };
+      });
+
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/process-forms", async (req, res) => {
+    const { process_id, form_id, assigned_by } = req.body;
+    try {
+      const result = await query(
+        "INSERT INTO process_forms (process_id, form_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT (process_id, form_id) DO NOTHING RETURNING id",
+        [process_id, form_id, assigned_by || null]
+      );
+      // Criar form_response inicial se ainda não existir
+      await query(
+        "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, '{}', 'open') ON CONFLICT DO NOTHING",
+        [process_id, form_id]
+      );
+      res.json({ id: result.rows[0]?.id || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/process-forms/:id", async (req, res) => {
+    try {
+      // Buscar process_id e form_id antes de deletar para limpar form_responses
+      const pf = await query("SELECT process_id, form_id FROM process_forms WHERE id = $1", [req.params.id]);
+      if (pf.rows[0]) {
+        await query("DELETE FROM form_responses WHERE process_id = $1 AND form_id = $2", [pf.rows[0].process_id, pf.rows[0].form_id]);
+      }
+      await query("DELETE FROM process_forms WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── FORM RESPONSES ─────────────────────────────────────────────────────────
 
   app.get("/api/form-responses/:process_id", async (req, res) => {
     try {
@@ -846,15 +1020,67 @@ async function startServer() {
   app.post("/api/form-responses", async (req, res) => {
     const { process_id, form_id, data } = req.body;
     try {
-      const existingResult = await query("SELECT id FROM form_responses WHERE process_id = $1 AND form_id = $2", [process_id, form_id]);
+      // Calcular status automaticamente baseado no progresso
+      const formResult = await query("SELECT fields FROM forms WHERE id = $1", [form_id]);
+      const fields: any[] = JSON.parse(formResult.rows[0]?.fields || '[]');
+      const requiredFields = fields.filter((f: any) => f.required);
+      const filledRequired = requiredFields.filter((f: any) => {
+        const val = data[f.id !== undefined ? f.id : f.label];
+        return val !== undefined && val !== null && String(val).trim() !== '';
+      });
+      const allRequiredFilled = requiredFields.length === 0 || filledRequired.length >= requiredFields.length;
+      const hasAnyData = Object.keys(data || {}).length > 0;
+      const newStatus = allRequiredFilled && hasAnyData ? 'submitted' : hasAnyData ? 'in_progress' : 'open';
 
+      const existingResult = await query("SELECT id, status FROM form_responses WHERE process_id = $1 AND form_id = $2", [process_id, form_id]);
+
+      let responseId: number;
       if (existingResult.rows.length > 0) {
-        await query("UPDATE form_responses SET data = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", [JSON.stringify(data), existingResult.rows[0].id]);
-        res.json({ id: existingResult.rows[0].id });
+        // Não retroagir de submitted para in_progress pela equipe
+        const currentStatus = existingResult.rows[0].status;
+        const finalStatus = currentStatus === 'locked' ? 'locked' : newStatus;
+        await query(
+          "UPDATE form_responses SET data = $1, status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+          [JSON.stringify(data), finalStatus, existingResult.rows[0].id]
+        );
+        responseId = existingResult.rows[0].id;
       } else {
-        const result = await query("INSERT INTO form_responses (process_id, form_id, data) VALUES ($1, $2, $3) RETURNING id", [process_id, form_id, JSON.stringify(data)]);
-        res.json({ id: result.rows[0].id });
+        const result = await query(
+          "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, $3, $4) RETURNING id",
+          [process_id, form_id, JSON.stringify(data), newStatus]
+        );
+        responseId = result.rows[0].id;
       }
+      res.json({ id: responseId, status: newStatus, progress: requiredFields.length > 0 ? Math.round((filledRequired.length / requiredFields.length) * 100) : 100 });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Edição de respostas pela equipe (master, supervisor, consultor, analista, financeiro)
+  app.put("/api/form-responses/:id", async (req, res) => {
+    const { data } = req.body;
+    try {
+      const existing = await query("SELECT id, form_id, status FROM form_responses WHERE id = $1", [req.params.id]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: "Resposta não encontrada" });
+
+      const formId = existing.rows[0].form_id;
+      const formResult = await query("SELECT fields FROM forms WHERE id = $1", [formId]);
+      const fields: any[] = JSON.parse(formResult.rows[0]?.fields || '[]');
+      const requiredFields = fields.filter((f: any) => f.required);
+      const filledRequired = requiredFields.filter((f: any) => {
+        const val = data[f.id !== undefined ? f.id : f.label];
+        return val !== undefined && val !== null && String(val).trim() !== '';
+      });
+      const allRequiredFilled = requiredFields.length === 0 || filledRequired.length >= requiredFields.length;
+      const hasAnyData = Object.keys(data || {}).length > 0;
+      const newStatus = allRequiredFilled && hasAnyData ? 'submitted' : hasAnyData ? 'in_progress' : 'open';
+
+      await query(
+        "UPDATE form_responses SET data = $1, status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [JSON.stringify(data), newStatus, req.params.id]
+      );
+      res.json({ success: true, status: newStatus });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1164,9 +1390,11 @@ async function startServer() {
       await query('BEGIN', []);
       await query("DELETE FROM process_tasks WHERE process_id = $1", [req.params.id]);
       await query("DELETE FROM form_responses WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM process_forms WHERE process_id = $1", [req.params.id]);
       await query("DELETE FROM documents WHERE process_id = $1", [req.params.id]);
       await query("DELETE FROM messages WHERE process_id = $1", [req.params.id]);
       await query("DELETE FROM financials WHERE process_id = $1", [req.params.id]);
+      await query("DELETE FROM dependents WHERE process_id = $1", [req.params.id]);
       await query("DELETE FROM processes WHERE id = $1", [req.params.id]);
       await query('COMMIT', []);
       res.json({ success: true });
@@ -1186,12 +1414,17 @@ async function startServer() {
           v.required_docs,
           d.name as destination_name,
           d.image as destination_image,
-          pl.name as plan_name
+          pl.name as plan_name,
+          cu.name as consultant_name,
+          cu.email as consultant_email,
+          an.name as analyst_name
         FROM processes p
         JOIN users u ON p.client_id = u.id
         LEFT JOIN visa_types v ON p.visa_type_id = v.id
         LEFT JOIN destinations d ON p.destination_id = d.id
         LEFT JOIN plans pl ON p.plan_id = pl.id
+        LEFT JOIN users cu ON p.consultant_id = cu.id
+        LEFT JOIN users an ON p.analyst_id = an.id
         WHERE p.id = $1
       `, [req.params.id]);
 
@@ -1218,6 +1451,39 @@ async function startServer() {
         WHERE pt.process_id = $1
       `, [req.params.id]);
 
+      // Buscar process_forms com progresso calculado
+      const processFormsResult = await query(`
+        SELECT
+          pf.*,
+          f.title as form_title,
+          f.fields as form_fields,
+          ab.name as assigned_by_name,
+          fr.id as response_id,
+          fr.data as response_data,
+          fr.status as response_status,
+          fr.updated_at as response_updated_at
+        FROM process_forms pf
+        JOIN forms f ON pf.form_id = f.id
+        LEFT JOIN users ab ON pf.assigned_by = ab.id
+        LEFT JOIN form_responses fr ON fr.process_id = pf.process_id AND fr.form_id = pf.form_id
+        WHERE pf.process_id = $1
+        ORDER BY pf.assigned_at ASC
+      `, [req.params.id]);
+
+      const processFormsWithProgress = processFormsResult.rows.map((row: any) => {
+        const fields: any[] = JSON.parse(row.form_fields || '[]');
+        const data: Record<string, any> = JSON.parse(row.response_data || '{}');
+        const requiredFields = fields.filter((f: any) => f.required);
+        const filledRequired = requiredFields.filter((f: any) => {
+          const val = data[f.id !== undefined ? f.id : f.label];
+          return val !== undefined && val !== null && String(val).trim() !== '';
+        });
+        const progress = requiredFields.length > 0
+          ? Math.round((filledRequired.length / requiredFields.length) * 100)
+          : (Object.keys(data).length > 0 ? 100 : 0);
+        return { ...row, form_fields: fields, response_data: data, progress, required_count: requiredFields.length, filled_required_count: filledRequired.length };
+      });
+
       res.json({
         ...process,
         documents: documentsResult.rows,
@@ -1225,7 +1491,8 @@ async function startServer() {
         financial: financialResult.rows[0] || null,
         responses: responsesResult.rows,
         dependents: dependentsResult.rows,
-        tasks: tasksResult.rows
+        tasks: tasksResult.rows,
+        process_forms: processFormsWithProgress,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

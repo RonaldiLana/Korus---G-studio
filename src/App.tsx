@@ -58,6 +58,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
+import { FormsPanel } from './features/FormsPanel';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -369,7 +370,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
@@ -983,6 +984,15 @@ export default function App() {
   const [showFormEditModal, setShowFormEditModal] = useState(false);
   const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
   const [formEditData, setFormEditData] = useState<any>({});
+
+  // Process forms (assignment + staff editing)
+  const [availableFormsForProcess, setAvailableFormsForProcess] = useState<any[]>([]);
+  const [loadingProcessForms, setLoadingProcessForms] = useState(false);
+  const [showAssignFormModal, setShowAssignFormModal] = useState(false);
+  const [selectedFormToAssign, setSelectedFormToAssign] = useState<number | null>(null);
+  const [showProcessFormResponseModal, setShowProcessFormResponseModal] = useState(false);
+  const [editingProcessFormResponse, setEditingProcessFormResponse] = useState<any>(null);
+  const [processFormResponseData, setProcessFormResponseData] = useState<Record<string, any>>({});
 
   // Finance access check - master always has access; others depend on agencyModules.finance
   const isFinanceModuleEnabled = user?.role === 'master' || agencyModules.finance;
@@ -1982,6 +1992,90 @@ export default function App() {
     }
   };
 
+  const fetchAvailableFormsForProcess = async (processId: number) => {
+    if (!user?.id) return;
+    const agencyId = getScopedAgencyId();
+    if (!agencyId) return;
+    setLoadingProcessForms(true);
+    try {
+      const res = await fetch(`${API_URL}/api/forms?agency_id=${agencyId}`, {
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableFormsForProcess(Array.isArray(data) ? data : []);
+      }
+    } catch (e) {
+      console.error('fetchAvailableFormsForProcess error:', e);
+    } finally {
+      setLoadingProcessForms(false);
+    }
+  };
+
+  const assignFormToProcess = async () => {
+    if (!selectedProcess || !selectedFormToAssign) return;
+    try {
+      const res = await fetch(`${API_URL}/api/process-forms`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ process_id: selectedProcess.id, form_id: selectedFormToAssign, assigned_by: user?.id }),
+      });
+      if (res.ok) {
+        setShowAssignFormModal(false);
+        setSelectedFormToAssign(null);
+        fetchProcessDetail(selectedProcess.id);
+        notify('Formulário vinculado ao processo!', 'success');
+      }
+    } catch (e) {
+      notify('Erro ao vincular formulário', 'error');
+    }
+  };
+
+  const removeFormFromProcess = async (processFrormId: number) => {
+    if (!selectedProcess) return;
+    try {
+      const res = await fetch(`${API_URL}/api/process-forms/${processFrormId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        fetchProcessDetail(selectedProcess.id);
+        notify('Formulário removido do processo', 'info');
+      }
+    } catch (e) {
+      notify('Erro ao remover formulário', 'error');
+    }
+  };
+
+  const saveProcessFormResponse = async () => {
+    if (!editingProcessFormResponse) return;
+    try {
+      const method = editingProcessFormResponse.response_id ? 'PUT' : 'POST';
+      const url = editingProcessFormResponse.response_id
+        ? `${API_URL}/api/form-responses/${editingProcessFormResponse.response_id}`
+        : `${API_URL}/api/form-responses`;
+      const body = editingProcessFormResponse.response_id
+        ? { data: processFormResponseData }
+        : { process_id: selectedProcess?.id, form_id: editingProcessFormResponse.form_id, data: processFormResponseData };
+      const res = await fetch(url, {
+        method,
+        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setShowProcessFormResponseModal(false);
+        setEditingProcessFormResponse(null);
+        fetchProcessDetail(selectedProcess!.id);
+        notify('Respostas salvas com sucesso!', 'success');
+      }
+    } catch (e) {
+      notify('Erro ao salvar respostas', 'error');
+    }
+  };
+
   const fetchProcessDetail = async (id: number) => {
     if (!(user?.id && user?.role)) {
       console.warn('[AUTH] Blocked protected request: invalid session');
@@ -2945,6 +3039,15 @@ export default function App() {
             />
           )}
 
+          {(user?.role === 'master' || user?.role === 'supervisor') && (
+            <SidebarItem
+              icon={ClipboardList}
+              label="Formulários"
+              active={view === 'forms'}
+              onClick={() => setView('forms')}
+            />
+          )}
+
           {(user?.role === 'master' || user?.role === 'supervisor') && (user?.role === 'master' || (agencyModules && agencyModules.leads !== false)) && (
             <SidebarItem 
               icon={Contact} 
@@ -3575,6 +3678,7 @@ export default function App() {
                     <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
                       <th className="px-6 py-4">Tipo de Visto</th>
                       <th className="px-6 py-4">Cliente</th>
+                      <th className="px-6 py-4">Consultor</th>
                       <th className="px-6 py-4">Status</th>
                       <th className="px-6 py-4">Status Interno</th>
                       <th className="px-6 py-4">Data Início</th>
@@ -3592,6 +3696,7 @@ export default function App() {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.client_name || '-'}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.consultant_name || <span className="opacity-40">Não atribuído</span>}</td>
                         <td className="px-6 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.internal_status || '-'}</td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
@@ -3599,7 +3704,7 @@ export default function App() {
                     ))}
                     {(Array.isArray(processes) ? processes : []).length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
+                        <td colSpan={6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
                       </tr>
                     )}
                   </tbody>
@@ -3620,6 +3725,19 @@ export default function App() {
                 clients={agencyUsers}
                 onUpdateStatus={handleUpdateProcessStatus}
                 onSelectProcess={(process) => fetchProcessDetail(process.id)}
+              />
+            </motion.div>
+          )}
+
+          {view === 'forms' && (user?.role === 'master' || user?.role === 'supervisor') && (
+            <motion.div
+              key="forms"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <FormsPanel
+                agencyId={getScopedAgencyId()}
+                userRole={user?.role || ''}
               />
             </motion.div>
           )}
@@ -5708,6 +5826,75 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Process Forms Section - vinculação de formulários pela equipe */}
+                  {isConsultantSupervisorOrMaster(user) && (
+                    <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                      <div className="flex items-center justify-between mb-6">
+                        <h4 className="font-black uppercase tracking-widest text-xs">Formulários do Processo</h4>
+                        <button
+                          onClick={() => { fetchAvailableFormsForProcess(selectedProcess.id); setShowAssignFormModal(true); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all"
+                        >
+                          <Plus size={12} /> Vincular Formulário
+                        </button>
+                      </div>
+
+                      {selectedProcess.process_forms && selectedProcess.process_forms.length > 0 ? (
+                        <div className="space-y-3">
+                          {selectedProcess.process_forms.map((pf: any) => (
+                            <div key={pf.id} className="flex items-center gap-4 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-sm truncate">{pf.form_title}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <div className="flex-1 max-w-[180px] h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-emerald-500 rounded-full transition-all"
+                                      style={{ width: `${pf.progress || 0}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] text-[var(--text-muted)] font-bold">{pf.progress || 0}%</span>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                    pf.response_status === 'submitted'
+                                      ? 'bg-emerald-500/10 text-emerald-400'
+                                      : pf.response_status === 'in_progress'
+                                      ? 'bg-yellow-500/10 text-yellow-400'
+                                      : 'bg-white/5 text-[var(--text-muted)]'
+                                  }`}>
+                                    {pf.response_status === 'submitted' ? 'Concluído' : pf.response_status === 'in_progress' ? 'Em preenchimento' : 'Pendente'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingProcessFormResponse(pf);
+                                    setProcessFormResponseData(pf.response_data || {});
+                                    setShowProcessFormResponseModal(true);
+                                  }}
+                                  className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all"
+                                  title="Ver / Editar respostas"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                                {(user?.role === 'master' || user?.role === 'supervisor') && (
+                                  <button
+                                    onClick={() => removeFormFromProcess(pf.id)}
+                                    className="p-2 rounded-lg hover:bg-red-500/10 text-[var(--text-muted)] hover:text-red-400 transition-all"
+                                    title="Remover formulário"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)] font-bold py-3">Nenhum formulário vinculado a este processo.</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Tasks Checklist */}
                   <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
                     <h4 className="font-black uppercase tracking-widest text-xs mb-6">Checklist do Processo</h4>
@@ -5803,6 +5990,121 @@ export default function App() {
               </div>
             </motion.div>
           )}
+
+          {/* Assign Form to Process Modal */}
+          <AnimatePresence>
+            {showAssignFormModal && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-black">Vincular Formulário</h3>
+                    <button onClick={() => setShowAssignFormModal(false)} className="p-2 hover:bg-white/5 rounded-xl text-[var(--text-muted)]"><X size={18} /></button>
+                  </div>
+                  {loadingProcessForms ? (
+                    <p className="text-center text-[var(--text-muted)] py-4">Carregando...</p>
+                  ) : availableFormsForProcess.length === 0 ? (
+                    <p className="text-center text-[var(--text-muted)] py-4 text-sm">Nenhum formulário disponível. Crie formulários na aba "Formulários".</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <select
+                        value={selectedFormToAssign || ''}
+                        onChange={e => setSelectedFormToAssign(e.target.value ? Number(e.target.value) : null)}
+                        className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">Selecione um formulário...</option>
+                        {availableFormsForProcess.map((f: any) => (
+                          <option key={f.id} value={f.id}>
+                            {f.title} {f.destination_name ? `(${f.destination_name})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex gap-3 pt-2">
+                        <button
+                          onClick={assignFormToProcess}
+                          disabled={!selectedFormToAssign}
+                          className="flex-1 py-2.5 brand-gradient text-black font-black text-sm rounded-xl hover:opacity-90 disabled:opacity-40 transition-all"
+                        >
+                          Vincular
+                        </button>
+                        <button
+                          onClick={() => setShowAssignFormModal(false)}
+                          className="flex-1 py-2.5 bg-white/5 border border-[var(--border-color)] text-[var(--text-muted)] font-bold text-sm rounded-xl hover:bg-white/10 transition-all"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* Process Form Response Edit Modal */}
+          <AnimatePresence>
+            {showProcessFormResponseModal && editingProcessFormResponse && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-black">{editingProcessFormResponse.form_title}</h3>
+                    <button onClick={() => { setShowProcessFormResponseModal(false); setEditingProcessFormResponse(null); }} className="p-2 hover:bg-white/5 rounded-xl text-[var(--text-muted)]"><X size={18} /></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
+                    {(editingProcessFormResponse.form_fields || []).map((field: any) => (
+                      <div key={field.id}>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">
+                          {field.label} {field.required && <span className="text-red-400">*</span>}
+                        </label>
+                        {field.type === 'textarea' ? (
+                          <textarea
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 min-h-[80px] text-sm"
+                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
+                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
+                          />
+                        ) : field.type === 'select' ? (
+                          <select
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
+                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
+                          >
+                            <option value="">Selecione...</option>
+                            {field.options?.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            type={field.type || 'text'}
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
+                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={saveProcessFormResponse}
+                      className="flex-1 py-3 brand-gradient text-black font-black text-sm rounded-xl hover:opacity-90 transition-all"
+                    >
+                      Salvar Respostas
+                    </button>
+                    <button
+                      onClick={() => { setShowProcessFormResponseModal(false); setEditingProcessFormResponse(null); }}
+                      className="flex-1 py-3 bg-white/5 border border-[var(--border-color)] text-[var(--text-muted)] font-bold text-sm rounded-xl hover:bg-white/10 transition-all"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
 
           {/* Start Process Modal */}
           <AnimatePresence>

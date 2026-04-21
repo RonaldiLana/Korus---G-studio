@@ -36,10 +36,15 @@ CREATE TABLE IF NOT EXISTS visa_types (
 
 CREATE TABLE IF NOT EXISTS forms (
   id SERIAL PRIMARY KEY,
-  visa_type_id INTEGER NOT NULL,
+  agency_id INTEGER,
+  visa_type_id INTEGER,
+  destination_id INTEGER,
   title TEXT NOT NULL,
-  fields TEXT NOT NULL,
-  FOREIGN KEY (visa_type_id) REFERENCES visa_types(id)
+  fields TEXT NOT NULL DEFAULT '[]',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id),
+  FOREIGN KEY (visa_type_id) REFERENCES visa_types(id),
+  FOREIGN KEY (destination_id) REFERENCES destinations(id)
 );
 
 CREATE TABLE IF NOT EXISTS destinations (
@@ -237,4 +242,16 @@ CREATE TABLE IF NOT EXISTS client_password_resets (
   FOREIGN KEY (client_id) REFERENCES users(id),
   FOREIGN KEY (agency_id) REFERENCES agencies(id),
   FOREIGN KEY (reset_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS process_forms (
+  id SERIAL PRIMARY KEY,
+  process_id INTEGER NOT NULL,
+  form_id INTEGER NOT NULL,
+  assigned_by INTEGER,
+  assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (process_id) REFERENCES processes(id),
+  FOREIGN KEY (form_id) REFERENCES forms(id),
+  FOREIGN KEY (assigned_by) REFERENCES users(id),
+  UNIQUE(process_id, form_id)
 );

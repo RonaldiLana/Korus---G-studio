@@ -84,9 +84,32 @@ export interface VisaType {
 
 export interface Form {
   id: number;
-  visa_type_id: number;
+  agency_id?: number | null;
+  visa_type_id?: number | null;
+  destination_id?: number | null;
   title: string;
-  fields: string[];
+  fields: FormField[];
+  visa_type_name?: string;
+  destination_name?: string;
+  created_at?: string;
+}
+
+export interface ProcessForm {
+  id: number;
+  process_id: number;
+  form_id: number;
+  assigned_by?: number | null;
+  assigned_by_name?: string;
+  assigned_at?: string;
+  form_title?: string;
+  form_fields?: FormField[];
+  response_id?: number | null;
+  response_data?: Record<string, any>;
+  response_status?: 'open' | 'in_progress' | 'submitted' | 'locked';
+  response_updated_at?: string;
+  progress?: number;
+  required_count?: number;
+  filled_required_count?: number;
 }
 
 export interface Process {
@@ -103,16 +126,19 @@ export interface Process {
   plan_name?: string;
   type?: string;
   consultant_name?: string;
+  consultant_email?: string;
   analyst_name?: string;
   consultant_id: number | null;
   analyst_id: number | null;
   status: 'started' | 'waiting_payment' | 'payment_confirmed' | 'analyzing' | 'final_phase' | 'completed';
   internal_status: 'pending' | 'documents_requested' | 'reviewing' | 'submitted' | 'completed';
   payment_status?: string;
+  travel_date?: string | null;
   is_dependent: boolean;
   parent_process_id: number | null;
   created_at: string;
   finished_at: string | null;
+  process_forms?: ProcessForm[];
 }
 
 export interface Financial {
@@ -132,7 +158,7 @@ export interface FormResponse {
   process_id: number;
   form_id: number;
   data: string; // JSON object
-  status: 'open' | 'submitted' | 'locked';
+  status: 'open' | 'in_progress' | 'submitted' | 'locked';
   updated_at: string;
 }
 

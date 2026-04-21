@@ -85,6 +85,138 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
   }
 }
 
+/**
+ * Insere dados padrão para uma agência (destinos, tipos de visto, formulários,
+ * tarefas, planos e campos de formulário). Idempotente: ignora tabelas que já
+ * possuem registros para a agência.
+ */
+async function seedAgencyDefaults(agencyId: number) {
+  // 1. Destinos padrão
+  const existingDestinations = await query(
+    "SELECT id FROM destinations WHERE agency_id = $1 LIMIT 1",
+    [agencyId]
+  );
+  const destinationIds: number[] = [];
+  const defaultDestinations = [
+    { name: 'Estados Unidos', code: 'US', flag: '🇺🇸', description: 'Visto americano para turismo, trabalho e estudos', order: 1 },
+    { name: 'Canadá',         code: 'CA', flag: '🇨🇦', description: 'Visto canadense para imigração, turismo e estudos', order: 2 },
+    { name: 'Reino Unido',    code: 'GB', flag: '🇬🇧', description: 'Visto britânico para turismo e trabalho',           order: 3 },
+    { name: 'Portugal',       code: 'PT', flag: '🇵🇹', description: 'Visto português para residência e trabalho',        order: 4 },
+    { name: 'Austrália',      code: 'AU', flag: '🇦🇺', description: 'Visto australiano para turismo, estudos e trabalho', order: 5 },
+  ];
+
+  if (existingDestinations.rows.length === 0) {
+    for (const dest of defaultDestinations) {
+      const destResult = await query(
+        `INSERT INTO destinations (agency_id, name, code, flag, description, is_active, "order") VALUES ($1, $2, $3, $4, $5, true, $6) RETURNING id`,
+        [agencyId, dest.name, dest.code, dest.flag, dest.description, dest.order]
+      );
+      destinationIds.push(destResult.rows[0].id);
+    }
+  } else {
+    const existing = await query("SELECT id FROM destinations WHERE agency_id = $1 ORDER BY \"order\" ASC", [agencyId]);
+    existing.rows.forEach((r: any) => destinationIds.push(r.id));
+  }
+
+  // 2. Tipos de visto padrão
+  const existingVisaTypes = await query(
+    "SELECT id FROM visa_types WHERE agency_id = $1 LIMIT 1",
+    [agencyId]
+  );
+  const visaTypeIds: number[] = [];
+  if (existingVisaTypes.rows.length === 0) {
+    const defaultVisaTypes = [
+      { name: 'Turismo',    description: 'Visto de turismo / visitante' },
+      { name: 'Estudante',  description: 'Visto para estudos no exterior' },
+      { name: 'Trabalho',   description: 'Visto de trabalho temporário ou permanente' },
+      { name: 'Residência', description: 'Visto de residência / imigração' },
+    ];
+    for (const vt of defaultVisaTypes) {
+      const vtResult = await query(
+        "INSERT INTO visa_types (agency_id, name, description) VALUES ($1, $2, $3) RETURNING id",
+        [agencyId, vt.name, vt.description]
+      );
+      visaTypeIds.push(vtResult.rows[0].id);
+    }
+  } else {
+    const existing = await query("SELECT id FROM visa_types WHERE agency_id = $1", [agencyId]);
+    existing.rows.forEach((r: any) => visaTypeIds.push(r.id));
+  }
+
+  // 3. Formulários padrão (apenas para tipos de visto sem formulário)
+  for (const vtId of visaTypeIds) {
+    const existingForm = await query("SELECT id FROM forms WHERE visa_type_id = $1 LIMIT 1", [vtId]);
+    if (existingForm.rows.length === 0) {
+      await query(
+        "INSERT INTO forms (visa_type_id, title, fields) VALUES ($1, $2, $3)",
+        [vtId, 'Formulário de Dados Pessoais', JSON.stringify([
+          { label: 'Nome completo',         type: 'text',   required: true },
+          { label: 'Data de nascimento',    type: 'date',   required: true },
+          { label: 'Número do passaporte',  type: 'text',   required: true },
+          { label: 'Validade do passaporte',type: 'date',   required: true },
+          { label: 'Estado civil',          type: 'select', required: true, options: ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)'] },
+          { label: 'Profissão',             type: 'text',   required: true },
+        ])]
+      );
+    }
+  }
+
+  // 4. Tarefas padrão
+  const existingTasks = await query("SELECT id FROM tasks WHERE agency_id = $1 LIMIT 1", [agencyId]);
+  if (existingTasks.rows.length === 0) {
+    const defaultTasks = [
+      { title: 'Documentação pessoal',      description: 'Coleta de documentos pessoais do cliente' },
+      { title: 'Formulário de solicitação', description: 'Preenchimento do formulário de solicitação de visto' },
+      { title: 'Análise documental',        description: 'Análise e validação dos documentos enviados' },
+      { title: 'Agendamento',               description: 'Agendamento da entrevista / biometria' },
+      { title: 'Acompanhamento',            description: 'Acompanhamento do processo junto ao consulado' },
+      { title: 'Entrega do visto',          description: 'Recebimento e entrega do visto ao cliente' },
+    ];
+    for (const task of defaultTasks) {
+      await query(
+        "INSERT INTO tasks (agency_id, title, description, is_active) VALUES ($1, $2, $3, true)",
+        [agencyId, task.title, task.description]
+      );
+    }
+  }
+
+  // 5. Planos padrão
+  const existingPlans = await query("SELECT id FROM plans WHERE agency_id = $1 LIMIT 1", [agencyId]);
+  if (existingPlans.rows.length === 0) {
+    const defaultPlans = [
+      { name: 'Básico',    description: 'Assessoria básica para solicitação de visto',          price: 500,  features: ['Orientação documental', 'Preenchimento de formulário', 'Suporte por e-mail'], is_recommended: false, icon: 'Star' },
+      { name: 'Standard',  description: 'Assessoria completa com acompanhamento',               price: 1200, features: ['Tudo do plano Básico', 'Acompanhamento do processo', 'Suporte por WhatsApp', 'Preparação para entrevista'], is_recommended: true, icon: 'Shield' },
+      { name: 'Premium',   description: 'Assessoria premium com atendimento prioritário',       price: 2500, features: ['Tudo do plano Standard', 'Atendimento prioritário', 'Consultoria personalizada', 'Suporte 24h', 'Acompanhamento pós-visto'], is_recommended: false, icon: 'Crown' },
+    ];
+    for (const plan of defaultPlans) {
+      await query(
+        "INSERT INTO plans (agency_id, name, description, price, features, is_recommended, icon) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [agencyId, plan.name, plan.description, plan.price, JSON.stringify(plan.features), plan.is_recommended, plan.icon]
+      );
+    }
+  }
+
+  // 6. Campos de formulário padrão
+  const existingFormFields = await query("SELECT id FROM form_fields WHERE agency_id = $1 LIMIT 1", [agencyId]);
+  if (existingFormFields.rows.length === 0) {
+    const defaultFormFields = [
+      { label: 'Nome completo',      type: 'text',   required: true,  order: 1, options: null },
+      { label: 'E-mail',             type: 'email',  required: true,  order: 2, options: null },
+      { label: 'Telefone',           type: 'phone',  required: true,  order: 3, options: null },
+      { label: 'Data de nascimento', type: 'date',   required: true,  order: 4, options: null },
+      { label: 'Destino desejado',   type: 'select', required: true,  order: 5, options: defaultDestinations.map(d => d.name) },
+    ];
+    for (const field of defaultFormFields) {
+      await query(
+        `INSERT INTO form_fields (agency_id, label, type, required, options, "order") VALUES ($1, $2, $3, $4, $5, $6)`,
+        [agencyId, field.label, field.type, field.required, field.options ? JSON.stringify(field.options) : null, field.order]
+      );
+    }
+  }
+
+  console.log(`[SEED] Dados padrão garantidos para agência ${agencyId}`);
+}
+
 async function startServer() {
   try {
     console.log('[BOOT] Iniciando servidor...');
@@ -228,11 +360,8 @@ async function startServer() {
   // PATCH: Compatibilidade client_id/user_id + query dinâmica segura
   // ---
   app.post("/api/processes/start", async (req, res) => {
-    // 🎯 CORREÇÃO CRÍTICA — ALINHAMENTO COM BANCO (user_id vs client_id)
-    // Agora só aceita user_id, removendo client_id do fluxo
     console.log("BODY RECEBIDO:", req.body);
     try {
-      // Aceita user_id do frontend, mas insere como client_id no banco
       const clientId = Number(req.body.user_id ?? req.body.client_id);
       const agencyId = Number(req.body.agency_id);
       if (!clientId || !agencyId || isNaN(clientId) || isNaN(agencyId)) {
@@ -240,34 +369,70 @@ async function startServer() {
           error: "user_id/client_id e agency_id são obrigatórios"
         });
       }
+
       const data: Record<string, any> = {
         client_id: clientId,
         agency_id: agencyId,
         status: "started"
       };
-      const optionalFields = [
-        "service_id",
-        "plan_id",
-        "visa_type_id",
-        "destination_id",
-        "parent_process_id"
-      ];
-      for (const field of optionalFields) {
+
+      // Valida destination_id: precisa existir e pertencer à agência
+      const rawDestinationId = req.body.destination_id;
+      if (rawDestinationId !== undefined && rawDestinationId !== null && rawDestinationId !== "" && !isNaN(Number(rawDestinationId))) {
+        const destCheck = await query(
+          "SELECT id FROM destinations WHERE id = $1 AND agency_id = $2",
+          [Number(rawDestinationId), agencyId]
+        );
+        if (destCheck.rows.length > 0) {
+          data.destination_id = Number(rawDestinationId);
+        } else {
+          // destination_id inválido para esta agência: ignora silenciosamente para não quebrar o processo
+          console.warn(`[PROCESS START] destination_id=${rawDestinationId} não pertence à agência ${agencyId}, será ignorado`);
+        }
+      }
+
+      // Valida plan_id: precisa existir e pertencer à agência
+      const rawPlanId = req.body.plan_id;
+      if (rawPlanId !== undefined && rawPlanId !== null && rawPlanId !== "" && !isNaN(Number(rawPlanId))) {
+        const planCheck = await query(
+          "SELECT id FROM plans WHERE id = $1 AND agency_id = $2",
+          [Number(rawPlanId), agencyId]
+        );
+        if (planCheck.rows.length > 0) {
+          data.plan_id = Number(rawPlanId);
+        } else {
+          console.warn(`[PROCESS START] plan_id=${rawPlanId} não pertence à agência ${agencyId}, será ignorado`);
+        }
+      }
+
+      // Valida visa_type_id: precisa existir e pertencer à agência
+      const rawVisaTypeId = req.body.visa_type_id;
+      if (rawVisaTypeId !== undefined && rawVisaTypeId !== null && rawVisaTypeId !== "" && !isNaN(Number(rawVisaTypeId))) {
+        const vtCheck = await query(
+          "SELECT id FROM visa_types WHERE id = $1 AND agency_id = $2",
+          [Number(rawVisaTypeId), agencyId]
+        );
+        if (vtCheck.rows.length > 0) {
+          data.visa_type_id = Number(rawVisaTypeId);
+        } else {
+          console.warn(`[PROCESS START] visa_type_id=${rawVisaTypeId} não pertence à agência ${agencyId}, será ignorado`);
+        }
+      }
+
+      // Demais campos opcionais sem FK de agência
+      const simpleOptionalFields = ["service_id", "parent_process_id"];
+      for (const field of simpleOptionalFields) {
         const value = req.body[field];
-        if (
-          value !== undefined &&
-          value !== null &&
-          value !== "" &&
-          !isNaN(Number(value))
-        ) {
+        if (value !== undefined && value !== null && value !== "" && !isNaN(Number(value))) {
           data[field] = Number(value);
         }
       }
+
       const keys = Object.keys(data);
       const values = Object.values(data);
       const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
       const result = await query(
-        `INSERT INTO processes (${keys.join(", ")})\n       VALUES (${placeholders})\n       RETURNING id`,
+        `INSERT INTO processes (${keys.join(", ")}) VALUES (${placeholders}) RETURNING id`,
         values
       );
       const processId = result.rows[0]?.id;
@@ -275,7 +440,7 @@ async function startServer() {
         throw new Error("Falha ao criar processo");
       }
       return res.json({ processId });
-    } catch (error) {
+    } catch (error: any) {
       console.error("[PROCESS START ERROR]", error);
       return res.status(500).json({
         error: error.message || "Erro interno ao criar processo"
@@ -375,101 +540,8 @@ async function startServer() {
         auditUserId = adminInsertResult.rows[0].id;
       }
 
-      // ========== SEED: Dados padrão para nova agência ==========
-
-      // 1. Destinos padrão
-      const defaultDestinations = [
-        { name: 'Estados Unidos', code: 'US', flag: '🇺🇸', description: 'Visto americano para turismo, trabalho e estudos', order: 1 },
-        { name: 'Canadá', code: 'CA', flag: '🇨🇦', description: 'Visto canadense para imigração, turismo e estudos', order: 2 },
-        { name: 'Reino Unido', code: 'GB', flag: '🇬🇧', description: 'Visto britânico para turismo e trabalho', order: 3 },
-        { name: 'Portugal', code: 'PT', flag: '🇵🇹', description: 'Visto português para residência e trabalho', order: 4 },
-        { name: 'Austrália', code: 'AU', flag: '🇦🇺', description: 'Visto australiano para turismo, estudos e trabalho', order: 5 },
-      ];
-      const destinationIds: number[] = [];
-      for (const dest of defaultDestinations) {
-        const destResult = await query(
-          `INSERT INTO destinations (agency_id, name, code, flag, description, is_active, "order") VALUES ($1, $2, $3, $4, $5, true, $6) RETURNING id`,
-          [agencyId, dest.name, dest.code, dest.flag, dest.description, dest.order]
-        );
-        destinationIds.push(destResult.rows[0].id);
-      }
-
-      // 2. Tipos de visto padrão
-      const defaultVisaTypes = [
-        { name: 'Turismo', description: 'Visto de turismo / visitante' },
-        { name: 'Estudante', description: 'Visto para estudos no exterior' },
-        { name: 'Trabalho', description: 'Visto de trabalho temporário ou permanente' },
-        { name: 'Residência', description: 'Visto de residência / imigração' },
-      ];
-      const visaTypeIds: number[] = [];
-      for (const vt of defaultVisaTypes) {
-        const vtResult = await query(
-          "INSERT INTO visa_types (agency_id, name, description) VALUES ($1, $2, $3) RETURNING id",
-          [agencyId, vt.name, vt.description]
-        );
-        visaTypeIds.push(vtResult.rows[0].id);
-      }
-
-      // 3. Formulários padrão para cada tipo de visto
-      for (const vtId of visaTypeIds) {
-        await query(
-          "INSERT INTO forms (visa_type_id, title, fields) VALUES ($1, $2, $3)",
-          [vtId, 'Formulário de Dados Pessoais', JSON.stringify([
-            { label: 'Nome completo', type: 'text', required: true },
-            { label: 'Data de nascimento', type: 'date', required: true },
-            { label: 'Número do passaporte', type: 'text', required: true },
-            { label: 'Validade do passaporte', type: 'date', required: true },
-            { label: 'Estado civil', type: 'select', required: true, options: ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)'] },
-            { label: 'Profissão', type: 'text', required: true },
-          ])]
-        );
-      }
-
-      // 4. Tasks padrão (etapas do processo)
-      const defaultTasks = [
-        { title: 'Documentação pessoal', description: 'Coleta de documentos pessoais do cliente', order: 1 },
-        { title: 'Formulário de solicitação', description: 'Preenchimento do formulário de solicitação de visto', order: 2 },
-        { title: 'Análise documental', description: 'Análise e validação dos documentos enviados', order: 3 },
-        { title: 'Agendamento', description: 'Agendamento da entrevista / biometria', order: 4 },
-        { title: 'Acompanhamento', description: 'Acompanhamento do processo junto ao consulado', order: 5 },
-        { title: 'Entrega do visto', description: 'Recebimento e entrega do visto ao cliente', order: 6 },
-      ];
-      for (const task of defaultTasks) {
-        await query(
-          "INSERT INTO tasks (agency_id, title, description, is_active) VALUES ($1, $2, $3, true)",
-          [agencyId, task.title, task.description]
-        );
-      }
-
-      // 5. Planos padrão
-      const defaultPlans = [
-        { name: 'Básico', description: 'Assessoria básica para solicitação de visto', price: 500, features: ['Orientação documental', 'Preenchimento de formulário', 'Suporte por e-mail'], is_recommended: false, icon: 'Star' },
-        { name: 'Standard', description: 'Assessoria completa com acompanhamento', price: 1200, features: ['Tudo do plano Básico', 'Acompanhamento do processo', 'Suporte por WhatsApp', 'Preparação para entrevista'], is_recommended: true, icon: 'Shield' },
-        { name: 'Premium', description: 'Assessoria premium com atendimento prioritário', price: 2500, features: ['Tudo do plano Standard', 'Atendimento prioritário', 'Consultoria personalizada', 'Suporte 24h', 'Acompanhamento pós-visto'], is_recommended: false, icon: 'Crown' },
-      ];
-      for (const plan of defaultPlans) {
-        await query(
-          "INSERT INTO plans (agency_id, name, description, price, features, is_recommended, icon) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-          [agencyId, plan.name, plan.description, plan.price, JSON.stringify(plan.features), plan.is_recommended, plan.icon]
-        );
-      }
-
-      // 6. Campos de formulário padrão
-      const defaultFormFields = [
-        { label: 'Nome completo', type: 'text', required: true, order: 1 },
-        { label: 'E-mail', type: 'email', required: true, order: 2 },
-        { label: 'Telefone', type: 'phone', required: true, order: 3 },
-        { label: 'Data de nascimento', type: 'date', required: true, order: 4 },
-        { label: 'Destino desejado', type: 'select', required: true, order: 5, options: defaultDestinations.map(d => d.name) },
-      ];
-      for (const field of defaultFormFields) {
-        await query(
-          `INSERT INTO form_fields (agency_id, label, type, required, options, "order") VALUES ($1, $2, $3, $4, $5, $6)`,
-          [agencyId, field.label, field.type, field.required, field.options ? JSON.stringify(field.options) : null, field.order]
-        );
-      }
-
-      // ========== FIM SEED ==========
+      // Seed de dados padrão (destinos, tipos de visto, formulários, tarefas, planos e campos)
+      await seedAgencyDefaults(agencyId);
 
       await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agencyId, auditUserId, "agency_created", `Agência criada: ${name}`]);
 
@@ -502,6 +574,21 @@ async function startServer() {
       } else {
         res.status(500).json({ error: "Erro ao atualizar agência" });
       }
+    }
+  });
+
+  // Backfill de dados padrão para agências existentes que não os possuem
+  app.post("/api/agencies/:id/seed-defaults", async (req, res) => {
+    const agencyId = Number(req.params.id);
+    if (!agencyId) return res.status(400).json({ error: "ID de agência inválido" });
+    const agency = await query("SELECT id FROM agencies WHERE id = $1", [agencyId]);
+    if (agency.rows.length === 0) return res.status(404).json({ error: "Agência não encontrada" });
+    try {
+      await seedAgencyDefaults(agencyId);
+      res.json({ success: true, message: `Dados padrão aplicados à agência ${agencyId}` });
+    } catch (e: any) {
+      console.error('[SEED DEFAULTS ERROR]', e);
+      res.status(500).json({ error: e.message || "Erro ao aplicar dados padrão" });
     }
   });
 

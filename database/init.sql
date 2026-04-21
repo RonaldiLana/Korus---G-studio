@@ -250,8 +250,8 @@ CREATE TABLE IF NOT EXISTS process_forms (
   form_id INTEGER NOT NULL,
   assigned_by INTEGER,
   assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (process_id) REFERENCES processes(id),
-  FOREIGN KEY (form_id) REFERENCES forms(id),
+  FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE CASCADE,
+  FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
   FOREIGN KEY (assigned_by) REFERENCES users(id),
   UNIQUE(process_id, form_id)
 );

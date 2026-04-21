@@ -571,6 +571,7 @@ async function startServer() {
 
   app.post("/api/agencies", async (req, res) => {
     console.log('Recebendo requisição para criar agência:', req.body);
+    if (!req.body) return res.status(400).json({ error: 'Corpo da requisição inválido' });
     const { name, slug, has_finance, admin_name, admin_email, admin_password } = req.body;
 
     try {
@@ -667,7 +668,8 @@ async function startServer() {
       await query("DELETE FROM financials WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
       await query("DELETE FROM dependents WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
 
-      await query("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1)", [agencyId]);
+      await query("DELETE FROM process_forms WHERE form_id IN (SELECT id FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1)", [agencyId, agencyId]);
+      await query("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1", [agencyId, agencyId]);
 
       await query("DELETE FROM processes WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM form_fields WHERE agency_id = $1", [agencyId]);

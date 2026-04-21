@@ -3172,7 +3172,7 @@ export default function App() {
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => setShowAgencyModal(true)}
+                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
                 className="brand-gradient text-black px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow"
               >
                 <Plus size={18} />

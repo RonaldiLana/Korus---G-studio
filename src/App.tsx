@@ -6106,13 +6106,15 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Start Process Modal */}
+          {/* Form Edit Modal */}
           <AnimatePresence>
             {showFormEditModal && editingFormResponse && (
               <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
                 <motion.div 
+                  key="form-edit-modal"
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
                   className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
                 >
                   <h3 className="text-2xl font-black mb-6 uppercase tracking-tight">Corrigir Informações: {editingFormResponse.form_title}</h3>
@@ -6169,10 +6171,14 @@ export default function App() {
                 </motion.div>
               </div>
             )}
+          </AnimatePresence>
 
+          {/* Start Process Modal */}
+          <AnimatePresence>
             {showStartModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
+                  key="start-process-modal"
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
@@ -6228,7 +6234,6 @@ export default function App() {
               </div>
             )}
           </AnimatePresence>
-        </AnimatePresence>
       </main>
       {renderGlobalOverlays()}
     </div>

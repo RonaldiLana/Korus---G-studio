@@ -91,25 +91,50 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
  * possuem registros para a agência.
  */
 async function seedAgencyDefaults(agencyId: number) {
-  // 1. Destinos padrão
+  // 1. Destinos padrão (com imagens e highlights alinhados ao frontend)
   const existingDestinations = await query(
     "SELECT id FROM destinations WHERE agency_id = $1 LIMIT 1",
     [agencyId]
   );
   const destinationIds: number[] = [];
   const defaultDestinations = [
-    { name: 'Estados Unidos', code: 'US', flag: '🇺🇸', description: 'Visto americano para turismo, trabalho e estudos', order: 1 },
-    { name: 'Canadá',         code: 'CA', flag: '🇨🇦', description: 'Visto canadense para imigração, turismo e estudos', order: 2 },
-    { name: 'Reino Unido',    code: 'GB', flag: '🇬🇧', description: 'Visto britânico para turismo e trabalho',           order: 3 },
-    { name: 'Portugal',       code: 'PT', flag: '🇵🇹', description: 'Visto português para residência e trabalho',        order: 4 },
-    { name: 'Austrália',      code: 'AU', flag: '🇦🇺', description: 'Visto australiano para turismo, estudos e trabalho', order: 5 },
+    {
+      name: 'Estados Unidos', code: 'US', flag: '🇺🇸', order: 1,
+      description: 'Oportunidades ilimitadas no maior mercado do mundo. Vistos de turismo, negócios e imigração.',
+      image: 'https://images.unsplash.com/photo-1485738422979-f5c462d49f74?auto=format&fit=crop&w=800&q=80',
+      highlight_points: ['Turismo', 'Negócios', 'Imigração'],
+    },
+    {
+      name: 'Canadá', code: 'CA', flag: '🇨🇦', order: 2,
+      description: 'Qualidade de vida e acolhimento. Explore caminhos para estudo, trabalho e residência permanente.',
+      image: 'https://images.unsplash.com/photo-1503614472-8c93d56e92ce?auto=format&fit=crop&w=800&q=80',
+      highlight_points: ['Estudo', 'Trabalho', 'Residência'],
+    },
+    {
+      name: 'Reino Unido', code: 'GB', flag: '🇬🇧', order: 3,
+      description: 'Tradição e modernidade em um dos países mais influentes do mundo. Vistos de turismo, trabalho e residência.',
+      image: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=800&q=80',
+      highlight_points: ['Turismo', 'Trabalho', 'Residência'],
+    },
+    {
+      name: 'Portugal', code: 'PT', flag: '🇵🇹', order: 4,
+      description: 'A porta de entrada para a Europa. Programas de residência, trabalho remoto e investimento.',
+      image: 'https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=800&q=80',
+      highlight_points: ['Residência', 'Trabalho', 'Investimento'],
+    },
+    {
+      name: 'Austrália', code: 'AU', flag: '🇦🇺', order: 5,
+      description: 'Estilo de vida único e economia forte. Vistos de estudante, trabalho qualificado e turismo.',
+      image: 'https://images.unsplash.com/photo-1523482580672-f109ba8cb9be?auto=format&fit=crop&w=800&q=80',
+      highlight_points: ['Estudante', 'Trabalho Qualificado', 'Turismo'],
+    },
   ];
 
   if (existingDestinations.rows.length === 0) {
     for (const dest of defaultDestinations) {
       const destResult = await query(
-        `INSERT INTO destinations (agency_id, name, code, flag, description, is_active, "order") VALUES ($1, $2, $3, $4, $5, true, $6) RETURNING id`,
-        [agencyId, dest.name, dest.code, dest.flag, dest.description, dest.order]
+        `INSERT INTO destinations (agency_id, name, code, flag, description, image, highlight_points, is_active, "order") VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8) RETURNING id`,
+        [agencyId, dest.name, dest.code, dest.flag, dest.description, dest.image, JSON.stringify(dest.highlight_points), dest.order]
       );
       destinationIds.push(destResult.rows[0].id);
     }
@@ -143,19 +168,19 @@ async function seedAgencyDefaults(agencyId: number) {
     existing.rows.forEach((r: any) => visaTypeIds.push(r.id));
   }
 
-  // 3. Formulários padrão (apenas para tipos de visto sem formulário)
+  // 3. Formulários padrão vinculados à agência (agency_id obrigatório para aparecer no painel)
   for (const vtId of visaTypeIds) {
-    const existingForm = await query("SELECT id FROM forms WHERE visa_type_id = $1 LIMIT 1", [vtId]);
+    const existingForm = await query("SELECT id FROM forms WHERE visa_type_id = $1 AND agency_id = $2 LIMIT 1", [vtId, agencyId]);
     if (existingForm.rows.length === 0) {
       await query(
-        "INSERT INTO forms (visa_type_id, title, fields) VALUES ($1, $2, $3)",
-        [vtId, 'Formulário de Dados Pessoais', JSON.stringify([
-          { label: 'Nome completo',         type: 'text',   required: true },
-          { label: 'Data de nascimento',    type: 'date',   required: true },
-          { label: 'Número do passaporte',  type: 'text',   required: true },
-          { label: 'Validade do passaporte',type: 'date',   required: true },
-          { label: 'Estado civil',          type: 'select', required: true, options: ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)'] },
-          { label: 'Profissão',             type: 'text',   required: true },
+        "INSERT INTO forms (agency_id, visa_type_id, title, fields) VALUES ($1, $2, $3, $4)",
+        [agencyId, vtId, 'Formulário de Dados Pessoais', JSON.stringify([
+          { id: 'f1', label: 'Nome completo',          type: 'text',   required: true },
+          { id: 'f2', label: 'Data de nascimento',     type: 'date',   required: true },
+          { id: 'f3', label: 'Número do passaporte',   type: 'text',   required: true },
+          { id: 'f4', label: 'Validade do passaporte', type: 'date',   required: true },
+          { id: 'f5', label: 'Estado civil',           type: 'select', required: true, options: ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)'] },
+          { id: 'f6', label: 'Profissão',              type: 'text',   required: true },
         ])]
       );
     }

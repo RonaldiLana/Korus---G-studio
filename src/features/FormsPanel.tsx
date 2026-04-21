@@ -214,9 +214,10 @@ export function FormsPanel({ agencyId, userRole }: FormsPanelProps) {
       </div>
 
       {/* Mensagens */}
-      <AnimatePresence>
+      <AnimatePresence mode="popLayout">
         {success && (
           <motion.div
+            key="success"
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className="flex items-center gap-2 px-4 py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-sm font-medium"
           >
@@ -225,6 +226,7 @@ export function FormsPanel({ agencyId, userRole }: FormsPanelProps) {
         )}
         {error && (
           <motion.div
+            key="error"
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className="flex items-center gap-2 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium"
           >

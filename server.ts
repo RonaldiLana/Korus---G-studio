@@ -741,9 +741,11 @@ async function startServer() {
       await query("DELETE FROM financials WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
       await query("DELETE FROM dependents WHERE process_id IN (SELECT id FROM processes WHERE agency_id = $1)", [agencyId]);
 
-      await query("DELETE FROM process_forms WHERE form_id IN (SELECT id FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1)", [agencyId, agencyId]);
-      await query("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1", [agencyId, agencyId]);
+      await query("DELETE FROM process_forms WHERE form_id IN (SELECT id FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1)", [agencyId]);
+      await query("DELETE FROM forms WHERE visa_type_id IN (SELECT id FROM visa_types WHERE agency_id = $1) OR agency_id = $1", [agencyId]);
 
+      // Remover FK self-referenciante antes de deletar processos
+      await query("UPDATE processes SET parent_process_id = NULL WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM processes WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM form_fields WHERE agency_id = $1", [agencyId]);
       await query("DELETE FROM visa_types WHERE agency_id = $1", [agencyId]);

@@ -4856,6 +4856,7 @@ export default function App() {
               )}
             </motion.div>
           )}
+          </AnimatePresence>
           <AnimatePresence>
             {showUserModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">

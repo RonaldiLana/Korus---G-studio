@@ -1414,15 +1414,35 @@ async function startServer() {
 
   app.delete("/api/processes/:id", async (req, res) => {
     try {
+      const { user_id, role } = req.query;
+
+      // Verificar no banco se o usuário realmente tem role master
+      if (!user_id || !role) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas o usuário master pode excluir processos.' });
+      }
+
+      const userCheck = await query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'master'",
+        [user_id]
+      );
+
+      if (userCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas o usuário master pode excluir processos.' });
+      }
+
+      const processId = req.params.id;
+
       await query('BEGIN', []);
-      await query("DELETE FROM process_tasks WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM form_responses WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM process_forms WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM documents WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM messages WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM financials WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM dependents WHERE process_id = $1", [req.params.id]);
-      await query("DELETE FROM processes WHERE id = $1", [req.params.id]);
+      // Remover FK self-referenciante (processos filhos) antes de deletar o processo pai
+      await query("UPDATE processes SET parent_process_id = NULL WHERE parent_process_id = $1", [processId]);
+      await query("DELETE FROM process_tasks WHERE process_id = $1", [processId]);
+      await query("DELETE FROM form_responses WHERE process_id = $1", [processId]);
+      await query("DELETE FROM process_forms WHERE process_id = $1", [processId]);
+      await query("DELETE FROM documents WHERE process_id = $1", [processId]);
+      await query("DELETE FROM messages WHERE process_id = $1", [processId]);
+      await query("DELETE FROM financials WHERE process_id = $1", [processId]);
+      await query("DELETE FROM dependents WHERE process_id = $1", [processId]);
+      await query("DELETE FROM processes WHERE id = $1", [processId]);
       await query('COMMIT', []);
       res.json({ success: true });
     } catch (err: any) {

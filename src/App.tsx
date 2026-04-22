@@ -2332,12 +2332,19 @@ export default function App() {
       return;
     }
 
+    if (user.role !== 'master') {
+      notify('Apenas o usuário master pode excluir processos.', 'error');
+      return;
+    }
+
     requestConfirmation('Tem certeza que deseja excluir este processo? Todos os documentos e mensagens serão removidos.', async () => {
-      const res = await fetch(`${API_URL}/api/processes/${id}`, {
+      const res = await fetch(`${API_URL}/api/processes/${id}?user_id=${user.id}&role=${user.role}`, {
         method: 'DELETE',
         headers: { 'Authorization': token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
+        setSelectedProcess(null);
+        setView('clients');
         fetchProcesses();
         notify('Processo excluído com sucesso!', 'success');
       } else {
@@ -5642,6 +5649,15 @@ export default function App() {
                           title="Editar processo"
                         >
                           <Pencil size={20} />
+                        </button>
+                      )}
+                      {user?.role === 'master' && (
+                        <button
+                          onClick={() => deleteProcess(selectedProcess.id)}
+                          className="p-3 bg-red-500/10 hover:bg-red-500/20 rounded-2xl transition-all text-red-400 border border-red-500/20"
+                          title="Excluir processo"
+                        >
+                          <Trash2 size={20} />
                         </button>
                       )}
                       <StatusBadge status={selectedProcess.status} />

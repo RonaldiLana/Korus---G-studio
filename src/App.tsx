@@ -3906,11 +3906,12 @@ export default function App() {
                         <th className="px-6 py-4">Usuário</th>
                         <th className="px-6 py-4">Ação</th>
                         <th className="px-6 py-4">Detalhes</th>
+                        <th className="px-6 py-4"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
                       {auditLogs.map(log => (
-                        <tr key={log.id} className="hover:bg-[var(--bg-input)] transition-colors">
+                        <tr key={log.id} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {new Date(log.created_at).toLocaleString('pt-BR')}
                           </td>
@@ -3928,11 +3929,31 @@ export default function App() {
                           <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {log.details}
                           </td>
+                          <td className="px-6 py-4 text-right">
+                            <button
+                              onClick={async () => {
+                                const res = await fetch(`${API_URL}/api/audit-logs/${log.id}?user_id=${user?.id}`, {
+                                  method: 'DELETE',
+                                  headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+                                });
+                                if (res.ok) {
+                                  setAuditLogs(prev => prev.filter(l => l.id !== log.id));
+                                  notify('Log excluído com sucesso!', 'success');
+                                } else {
+                                  notify('Não foi possível excluir o log.', 'error');
+                                }
+                              }}
+                              className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
+                              title="Excluir este log"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       {auditLogs.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-6 py-20 text-center">
+                          <td colSpan={6} className="px-6 py-20 text-center">
                             <ShieldCheck className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
                             <p className="text-[var(--text-muted)] font-bold">Nenhum log registrado.</p>
                           </td>

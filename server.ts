@@ -565,6 +565,30 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/audit-logs/:id", async (req, res) => {
+    try {
+      const { user_id } = req.query;
+
+      if (!user_id) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas o usuário master pode excluir logs.' });
+      }
+
+      const userCheck = await query(
+        "SELECT id FROM users WHERE id = $1 AND role = 'master'",
+        [user_id]
+      );
+
+      if (userCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas o usuário master pode excluir logs.' });
+      }
+
+      await query("DELETE FROM audit_logs WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/agencies", async (req, res) => {
     try {
       const agenciesResult = await query(`

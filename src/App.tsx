@@ -1178,6 +1178,29 @@ export default function App() {
     }
   };
 
+  const clearAuditLogs = async () => {
+    if (user?.role !== 'master' || !(user?.id && user?.role)) {
+      notify('Apenas o usuário master pode excluir logs.', 'error');
+      return;
+    }
+    requestConfirmation('Tem certeza que deseja excluir todos os logs de auditoria? Esta ação não pode ser desfeita.', async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/audit-logs?user_id=${user.id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+        });
+        if (res.ok) {
+          setAuditLogs([]);
+          notify('Logs de auditoria excluídos com sucesso!', 'success');
+        } else {
+          notify('Não foi possível excluir os logs.', 'error');
+        }
+      } catch {
+        notify('Erro de conexão.', 'error');
+      }
+    });
+  };
+
   const fetchGlobalUsers = async () => {
     if (!(user?.role === 'master') || !(user?.id && user?.role)) return;
     try {
@@ -3864,8 +3887,15 @@ export default function App() {
               className="space-y-8"
             >
               <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
-                <div className="p-6 border-b border-[var(--border-color)]">
+                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Logs do Sistema</h3>
+                  <button
+                    onClick={clearAuditLogs}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
+                  >
+                    <Trash2 size={14} />
+                    Excluir Log
+                  </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">

@@ -394,9 +394,9 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
                     <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">
                       {field.label} {field.required ? '*' : ''}
                     </label>
-                    {(field.type === 'text' || field.type === 'email' || field.type === 'phone') && (
+                    {(field.type === 'text' || field.type === 'email' || field.type === 'phone' || field.type === 'number' || !['date','select','radio','textarea','text','email','phone'].includes(field.type)) && (
                       <input
-                        type={field.type === 'phone' ? 'tel' : field.type}
+                        type={field.type === 'phone' ? 'tel' : field.type === 'number' ? 'text' : ['text','email'].includes(field.type) ? field.type : 'text'}
                         className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
                         value={responses[field.id] || ''}
                         onChange={e => handleCustomFormChange(cf.id, field.id, e.target.value)}
@@ -469,7 +469,7 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
                     {field.label} {field.required ? '*' : ''}
                   </label>
                   
-                  {field.type === 'text' && (
+                  {(field.type === 'text' || field.type === 'number' || !['text','email','phone','date','select','radio'].includes(field.type)) && (
                     <input 
                       type="text"
                       className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"

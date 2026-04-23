@@ -499,12 +499,21 @@ async function startServer() {
       for (const [formId, responseData] of Object.entries(customFormResponses)) {
         if (responseData && Object.keys(responseData).length > 0) {
           try {
-            await query(
-              `INSERT INTO form_responses (process_id, form_id, data, status) 
-               VALUES ($1, $2, $3, 'pending')
-               ON CONFLICT (process_id, form_id) DO UPDATE SET data = EXCLUDED.data`,
-              [processId, Number(formId), JSON.stringify(responseData)]
+            const existingFR = await query(
+              "SELECT id FROM form_responses WHERE process_id = $1 AND form_id = $2",
+              [processId, Number(formId)]
             );
+            if (existingFR.rows.length > 0) {
+              await query(
+                "UPDATE form_responses SET data = $1, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                [JSON.stringify(responseData), existingFR.rows[0].id]
+              );
+            } else {
+              await query(
+                "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, $3, 'pending')",
+                [processId, Number(formId), JSON.stringify(responseData)]
+              );
+            }
           } catch (_) { /* ignorar erros de constraint */ }
         }
       }
@@ -1067,11 +1076,17 @@ async function startServer() {
         "INSERT INTO process_forms (process_id, form_id, assigned_by) VALUES ($1, $2, $3) ON CONFLICT (process_id, form_id) DO NOTHING RETURNING id",
         [process_id, form_id, assigned_by || null]
       );
-      // Criar form_response inicial se ainda não existir
-      await query(
-        "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, '{}', 'open') ON CONFLICT DO NOTHING",
+      // Criar form_response inicial se ainda não existir (sem duplicar)
+      const existingResp = await query(
+        "SELECT id FROM form_responses WHERE process_id = $1 AND form_id = $2",
         [process_id, form_id]
       );
+      if (existingResp.rows.length === 0) {
+        await query(
+          "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, '{}', 'open')",
+          [process_id, form_id]
+        );
+      }
       res.json({ id: result.rows[0]?.id || null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1548,10 +1563,11 @@ async function startServer() {
       const messagesResult = await query("SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.process_id = $1 ORDER BY sent_at ASC", [req.params.id]);
       const financialResult = await query("SELECT * FROM financials WHERE process_id = $1", [req.params.id]);
       const responsesResult = await query(`
-        SELECT fr.*, f.title as form_title, f.fields as form_fields
+        SELECT DISTINCT ON (fr.form_id) fr.*, f.title as form_title, f.fields as form_fields
         FROM form_responses fr
         LEFT JOIN forms f ON fr.form_id = f.id
-        WHERE fr.process_id = $1
+        WHERE fr.process_id = $1 AND fr.form_id IS NOT NULL
+        ORDER BY fr.form_id, fr.updated_at DESC NULLS LAST
       `, [req.params.id]);
       const dependentsResult = await query("SELECT * FROM dependents WHERE process_id = $1", [req.params.id]);
       const tasksResult = await query(`

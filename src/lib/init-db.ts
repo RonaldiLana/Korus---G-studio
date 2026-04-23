@@ -102,6 +102,13 @@ async function applyMigrations() {
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS pre_form_data TEXT`,
     // process_forms: coluna de ordem para supervisor definir sequência
     `ALTER TABLE process_forms ADD COLUMN IF NOT EXISTS "order" INTEGER DEFAULT 0`,
+    // form_responses: remover duplicatas (manter a mais recente por process_id+form_id)
+    `DELETE FROM form_responses WHERE id NOT IN (
+      SELECT DISTINCT ON (process_id, form_id) id
+      FROM form_responses
+      WHERE form_id IS NOT NULL
+      ORDER BY process_id, form_id, updated_at DESC NULLS LAST
+    ) AND form_id IS NOT NULL`,
   ];
 
   for (const sql of migrations) {

@@ -60,7 +60,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
 
   useEffect(() => {
     if (user?.agency_id) {
-      fetch(`${API_URL}/api/forms?agency_id=${user.agency_id}`)
+      fetch(`${API_URL}/api/forms?agency_id=${user.agency_id}&active_only=true`)
         .then(r => r.json())
         .then(data => setAgencyCustomForms(Array.isArray(data) ? data : []))
         .catch(() => {});

@@ -942,7 +942,7 @@ async function startServer() {
   // ─── FORMS (listagem geral + por visto/destino/agência) ────────────────────
 
   app.get("/api/forms", async (req, res) => {
-    const { agency_id, visa_type_id, destination_id } = req.query;
+    const { agency_id, visa_type_id, destination_id, active_only } = req.query;
     try {
       let sql = `
         SELECT f.*, vt.name as visa_type_name, d.name as destination_name
@@ -955,6 +955,7 @@ async function startServer() {
       if (agency_id) { params.push(agency_id); sql += ` AND f.agency_id = $${params.length}`; }
       if (visa_type_id) { params.push(visa_type_id); sql += ` AND f.visa_type_id = $${params.length}`; }
       if (destination_id) { params.push(destination_id); sql += ` AND f.destination_id = $${params.length}`; }
+      if (active_only === 'true') { sql += ` AND (f.is_active IS TRUE OR f.is_active IS NULL)`; }
       sql += ' ORDER BY f.created_at DESC';
       const forms = await query(sql, params);
       res.json(forms.rows.map((f: any) => ({ ...f, fields: JSON.parse(f.fields || '[]') })));
@@ -993,12 +994,20 @@ async function startServer() {
   });
 
   app.put("/api/forms/:id", async (req, res) => {
-    const { agency_id, visa_type_id, destination_id, title, fields } = req.body;
+    const { agency_id, visa_type_id, destination_id, title, fields, is_active } = req.body;
     try {
-      await query(
-        "UPDATE forms SET agency_id = $1, visa_type_id = $2, destination_id = $3, title = $4, fields = $5 WHERE id = $6",
-        [agency_id || null, visa_type_id || null, destination_id || null, title, JSON.stringify(fields || []), req.params.id]
-      );
+      // Se apenas is_active foi enviado, atualiza só essa coluna
+      if (is_active !== undefined && title === undefined) {
+        await query(
+          "UPDATE forms SET is_active = $1 WHERE id = $2",
+          [Boolean(is_active), req.params.id]
+        );
+      } else {
+        await query(
+          "UPDATE forms SET agency_id = $1, visa_type_id = $2, destination_id = $3, title = $4, fields = $5, is_active = COALESCE($6, is_active) WHERE id = $7",
+          [agency_id || null, visa_type_id || null, destination_id || null, title, JSON.stringify(fields || []), is_active !== undefined ? Boolean(is_active) : null, req.params.id]
+        );
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1567,6 +1576,7 @@ async function startServer() {
         FROM form_responses fr
         LEFT JOIN forms f ON fr.form_id = f.id
         WHERE fr.process_id = $1 AND fr.form_id IS NOT NULL
+          AND (f.is_active IS TRUE OR f.is_active IS NULL)
         ORDER BY fr.form_id, fr.updated_at DESC NULLS LAST
       `, [req.params.id]);
       const dependentsResult = await query("SELECT * FROM dependents WHERE process_id = $1", [req.params.id]);

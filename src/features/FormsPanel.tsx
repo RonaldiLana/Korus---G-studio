@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, X, ClipboardList, ChevronDown, ChevronUp, Edit2, Check, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Save, X, ClipboardList, ChevronDown, ChevronUp, Edit2, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 const API_URL = import.meta.env.VITE_API_URL?.trim() || 'https://korus-backend-a55k.onrender.com';
@@ -30,6 +30,7 @@ interface Form {
   fields: FormField[];
   visa_type_name?: string;
   destination_name?: string;
+  is_active?: boolean;
 }
 
 interface VisaType { id: number; name: string; }
@@ -177,6 +178,22 @@ export function FormsPanel({ agencyId, userRole }: FormsPanelProps) {
       fetchAll();
     } catch (e: any) {
       setError('Erro ao excluir formulário');
+    }
+  }
+
+  async function toggleFormActive(form: Form) {
+    if (!form.id) return;
+    const newState = !(form.is_active !== false);
+    setForms(prev => prev.map(f => f.id === form.id ? { ...f, is_active: newState } : f));
+    try {
+      await apiRequest(`${API_URL}/api/forms/${form.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: newState }),
+      });
+    } catch (e: any) {
+      setForms(prev => prev.map(f => f.id === form.id ? { ...f, is_active: !newState } : f));
+      setError('Erro ao alterar status do formulário');
     }
   }
 
@@ -416,6 +433,11 @@ export function FormsPanel({ agencyId, userRole }: FormsPanelProps) {
                               {form.visa_type_name}
                             </span>
                           )}
+                          {form.is_active !== false ? (
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded-full border border-emerald-500/20">ATIVO</span>
+                          ) : (
+                            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 bg-white/5 text-[var(--text-muted)] rounded-full border border-[var(--border-color)]">INATIVO</span>
+                          )}
                           <span className="text-xs text-[var(--text-muted)]">
                             {form.fields.length} campo{form.fields.length !== 1 ? 's' : ''} ·{' '}
                             {form.fields.filter(f => f.required).length} obrigatório{form.fields.filter(f => f.required).length !== 1 ? 's' : ''}
@@ -425,6 +447,17 @@ export function FormsPanel({ agencyId, userRole }: FormsPanelProps) {
                       <div className="flex items-center gap-2">
                         {canEdit && (
                           <>
+                            <button
+                              title={form.is_active !== false ? 'Inativar formulário' : 'Ativar formulário'}
+                              onClick={e => { e.stopPropagation(); toggleFormActive(form); }}
+                              className={`p-2 rounded-lg transition-all ${
+                                form.is_active !== false
+                                  ? 'hover:bg-emerald-500/10 text-emerald-400 hover:text-emerald-300'
+                                  : 'hover:bg-white/10 text-[var(--text-muted)] hover:text-white'
+                              }`}
+                            >
+                              {form.is_active !== false ? <Eye size={15} /> : <EyeOff size={15} />}
+                            </button>
                             <button
                               onClick={e => { e.stopPropagation(); startEditForm(form); }}
                               className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all"

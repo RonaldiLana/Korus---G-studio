@@ -52,7 +52,8 @@ import {
   Settings,
   Target,
   Key,
-  Trello
+  Trello,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
@@ -5257,6 +5258,129 @@ export default function App() {
                         Cancelar
                       </button>
                       <button 
+                        type="submit"
+                        className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
+                      >
+                        Confirmar
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+
+            {showFormFieldModal && (
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+                >
+                  <h3 className="text-2xl font-black mb-6">{editingFormField ? 'Editar Campo' : 'Novo Campo'}</h3>
+                  <form onSubmit={saveFormField} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Rótulo</label>
+                      <input
+                        type="text"
+                        required
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={formFieldForm.label}
+                        onChange={e => setFormFieldForm({ ...formFieldForm, label: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo</label>
+                      <select
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={formFieldForm.type}
+                        onChange={e => setFormFieldForm({ ...formFieldForm, type: e.target.value as FormField['type'] })}
+                      >
+                        <option value="text">Texto</option>
+                        <option value="email">E-mail</option>
+                        <option value="phone">Telefone</option>
+                        <option value="date">Data</option>
+                        <option value="select">Seleção</option>
+                        <option value="radio">Rádio</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Ordem</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={formFieldForm.order}
+                        onChange={e => setFormFieldForm({ ...formFieldForm, order: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Destino (opcional)</label>
+                      <select
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={formFieldForm.destination_id ?? ''}
+                        onChange={e => setFormFieldForm({ ...formFieldForm, destination_id: e.target.value ? Number(e.target.value) : null })}
+                      >
+                        <option value="">Todos os destinos</option>
+                        {destinations.map(d => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {(formFieldForm.type === 'select' || formFieldForm.type === 'radio') && (
+                      <div>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Opções</label>
+                        <div className="space-y-2">
+                          {formFieldForm.options.map((opt, idx) => (
+                            <div key={idx} className="flex gap-2">
+                              <input
+                                type="text"
+                                className="flex-1 px-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                                value={opt}
+                                onChange={e => {
+                                  const newOpts = [...formFieldForm.options];
+                                  newOpts[idx] = e.target.value;
+                                  setFormFieldForm({ ...formFieldForm, options: newOpts });
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setFormFieldForm({ ...formFieldForm, options: formFieldForm.options.filter((_, i) => i !== idx) })}
+                                className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setFormFieldForm({ ...formFieldForm, options: [...formFieldForm.options, ''] })}
+                            className="w-full py-2 bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] transition-all flex items-center justify-center gap-2 border border-[var(--border-color)]"
+                          >
+                            <Plus size={12} />
+                            Adicionar Opção
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setFormFieldForm({ ...formFieldForm, required: !formFieldForm.required })}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${formFieldForm.required ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-[var(--bg-input)] text-[var(--text-muted)] border-[var(--border-color)]'}`}
+                      >
+                        {formFieldForm.required ? '★ Obrigatório' : '☆ Opcional'}
+                      </button>
+                    </div>
+                    <div className="flex gap-3 mt-8">
+                      <button
+                        type="button"
+                        onClick={() => setShowFormFieldModal(false)}
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
                         type="submit"
                         className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
                       >

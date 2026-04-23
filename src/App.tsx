@@ -5169,6 +5169,109 @@ export default function App() {
               </div>
             )}
 
+            {showPlanModal && (
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="bg-[var(--bg-card)] w-full max-w-lg rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
+                >
+                  <h3 className="text-2xl font-black mb-6">{editingPlan ? 'Editar Plano' : 'Novo Plano'}</h3>
+                  <form onSubmit={savePlan} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome</label>
+                      <input
+                        type="text"
+                        required
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={planForm.name}
+                        onChange={e => setPlanForm({ ...planForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição</label>
+                      <textarea
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
+                        value={planForm.description}
+                        onChange={e => setPlanForm({ ...planForm, description: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Preço (R$)</label>
+                      <input
+                        type="number"
+                        required
+                        min={0}
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={planForm.price}
+                        onChange={e => setPlanForm({ ...planForm, price: Number(e.target.value) })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Recursos (Features)</label>
+                      <div className="space-y-2">
+                        {planForm.features.map((feat, idx) => (
+                          <div key={idx} className="flex gap-2">
+                            <input
+                              type="text"
+                              className="flex-1 px-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                              value={feat}
+                              onChange={e => {
+                                const updated = [...planForm.features];
+                                updated[idx] = e.target.value;
+                                setPlanForm({ ...planForm, features: updated });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setPlanForm({ ...planForm, features: planForm.features.filter((_, i) => i !== idx) })}
+                              className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setPlanForm({ ...planForm, features: [...planForm.features, ''] })}
+                          className="w-full py-2 bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] transition-all flex items-center justify-center gap-2 border border-[var(--border-color)]"
+                        >
+                          <Plus size={12} />
+                          Adicionar Recurso
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="plan-recommended"
+                        checked={planForm.is_recommended}
+                        onChange={e => setPlanForm({ ...planForm, is_recommended: e.target.checked })}
+                        className="w-4 h-4 accent-emerald-500"
+                      />
+                      <label htmlFor="plan-recommended" className="text-sm font-bold text-[var(--text-main)] cursor-pointer">Marcar como Recomendado</label>
+                    </div>
+                    <div className="flex gap-3 mt-8">
+                      <button
+                        type="button"
+                        onClick={() => setShowPlanModal(false)}
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
+                      >
+                        Confirmar
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+
             {showFormModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 

@@ -56,6 +56,16 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   const [selectedDestination, setSelectedDestination] = useState<any>(null);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [formData, setFormData] = useState<any>(null);
+  const [agencyCustomForms, setAgencyCustomForms] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (user?.agency_id) {
+      fetch(`${API_URL}/api/forms?agency_id=${user.agency_id}`)
+        .then(r => r.json())
+        .then(data => setAgencyCustomForms(Array.isArray(data) ? data : []))
+        .catch(() => {});
+    }
+  }, [user?.agency_id]);
 
   // Update step if processes change (e.g. after creation)
   useEffect(() => {
@@ -114,6 +124,9 @@ export const ClientJourneyFlow: React.FC<Props> = ({
         travelGoal: formData?.travelGoal,
         dependentLevel: formData?.dependentLevel
       };
+      if (formData?.customFormResponses) {
+        payload.custom_form_responses = formData.customFormResponses;
+      }
       console.log('PAYLOAD:', payload);
       const response = await fetch(`${API_URL}/api/processes/start`, {
         method: 'POST',
@@ -264,6 +277,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
                 onComplete={handlePreFormComplete} 
                 preFormQuestions={preFormQuestions}
                 formFields={formFields}
+                customForms={agencyCustomForms.filter((f: any) => !f.destination_id || f.destination_id === selectedDestination?.id)}
                 destinationId={selectedDestination?.id}
                 visaTypes={visaTypes}
               />

@@ -2074,6 +2074,25 @@ export default function App() {
     }
   };
 
+  const moveProcessForm = async (index: number, direction: 'up' | 'down') => {
+    if (!selectedProcess?.process_forms) return;
+    const forms = [...selectedProcess.process_forms];
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= forms.length) return;
+    [forms[index], forms[swapIndex]] = [forms[swapIndex], forms[index]];
+    const orders = forms.map((f: any, i: number) => ({ id: f.id, order: i }));
+    try {
+      await fetch(`${API_URL}/api/process-forms/reorder`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ orders }),
+      });
+      fetchProcessDetail(selectedProcess.id);
+    } catch (e) {
+      notify('Erro ao reordenar formulários', 'error');
+    }
+  };
+
   const saveProcessFormResponse = async () => {
     if (!editingProcessFormResponse) return;
     try {
@@ -2980,7 +2999,7 @@ export default function App() {
         processes={processes}
         onRefreshProcesses={fetchProcesses}
         agencyName={agencySettings.name}
-        agencyLogo={agencySettings.logo_url}
+        agencyLogo={resolveLogoUrl(agencySettings.logo_url)}
         destinations={destinations}
         preFormQuestions={agencySettings.pre_form_questions}
         plans={plans}
@@ -4879,7 +4898,7 @@ export default function App() {
                                       onClick={() => {
                                         setEditingForm(f);
                                         setFormForm({ 
-                                          visa_type_id: f.visa_type_id, 
+                                          visa_type_id: (f.visa_type_id as number) || 0, 
                                           title: f.title, 
                                           fields: f.fields || [] 
                                         });
@@ -5856,18 +5875,63 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Form Responses Section */}
-                  {selectedProcess.responses && selectedProcess.responses.length > 0 && (
+                  {/* Pré-Formulário do Cliente */}
+                  {selectedProcess.pre_form_data && (() => {
+                    let preData: Record<string, any> = {};
+                    try {
+                      preData = typeof selectedProcess.pre_form_data === 'string'
+                        ? JSON.parse(selectedProcess.pre_form_data)
+                        : selectedProcess.pre_form_data;
+                    } catch { return null; }
+                    if (!preData || typeof preData !== 'object' || Array.isArray(preData) || Object.keys(preData).length === 0) return null;
+                    const PRE_LABELS: Record<string, string> = {
+                      fullName: 'Nome Completo', phone: 'Telefone', email: 'E-mail', city: 'Cidade',
+                      hasPassport: 'Possui Passaporte', hasVisaDenied: 'Visto Negado Anteriormente',
+                      travelDate: 'Data de Viagem', travelParty: 'Companhia de Viagem',
+                      travelGoal: 'Objetivo', visaTypeId: 'Tipo de Visto', dependentLevel: 'Tipo de Processo',
+                    };
+                    return (
+                      <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                        <h4 className="font-black uppercase tracking-widest text-xs mb-4">Pré-Formulário do Cliente</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
+                          {Object.entries(preData).map(([key, value]) => {
+                            if (key === 'dynamicResponses' || key === 'dependents') return null;
+                            const label = PRE_LABELS[key] || key;
+                            const display = value === true ? 'Sim' : value === false ? 'Não' : String(value || '-');
+                            return (
+                              <div key={key} className="space-y-1">
+                                <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{label}</p>
+                                <p className="text-sm font-bold text-[var(--text-main)]">{display}</p>
+                              </div>
+                            );
+                          })}
+                          {preData.dynamicResponses && typeof preData.dynamicResponses === 'object' &&
+                            Object.entries(preData.dynamicResponses).map(([fieldId, value]) => (
+                              <div key={`dyn-${fieldId}`} className="space-y-1">
+                                <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">Campo {fieldId}</p>
+                                <p className="text-sm font-bold text-[var(--text-main)]">{String(value || '-')}</p>
+                              </div>
+                            ))
+                          }
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Form Responses Section (formulários customizados respondidos) */}
+                  {selectedProcess.responses && selectedProcess.responses.filter((r: any) => r.form_id).length > 0 && (
                     <div className="mt-8 pt-8 border-t border-[var(--border-color)] space-y-8">
-                      {selectedProcess.responses.map((resp: any) => {
+                      {selectedProcess.responses.filter((r: any) => r.form_id).map((resp: any) => {
                         let data: Record<string, any> = {};
-                        let fields = [];
+                        let fields: any[] = [];
                         try {
-                          data = JSON.parse(resp.data);
-                          fields = JSON.parse(resp.form_fields || '[]');
-                        } catch (e) {
-                          return null;
-                        }
+                          data = typeof resp.data === 'string' ? JSON.parse(resp.data) : (resp.data || {});
+                          if (typeof data !== 'object' || Array.isArray(data)) data = {};
+                        } catch { data = {}; }
+                        try {
+                          fields = typeof resp.form_fields === 'string' ? JSON.parse(resp.form_fields) : (resp.form_fields || []);
+                          if (!Array.isArray(fields)) fields = [];
+                        } catch { fields = []; }
 
                         return (
                           <div key={resp.id} className="space-y-6">
@@ -5888,22 +5952,17 @@ export default function App() {
                               )}
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
-                              {fields.map((field: any) => (
+                              {fields.length > 0 ? fields.map((field: any) => (
                                 <div key={field.id} className="space-y-1">
                                   <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{field.label}</p>
-                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(data[field.id] || '-')}</p>
+                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(data[field.id] ?? '-')}</p>
+                                </div>
+                              )) : Object.entries(data).map(([key, value]) => (
+                                <div key={key} className="space-y-1">
+                                  <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{key}</p>
+                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(value ?? '-')}</p>
                                 </div>
                               ))}
-                              {/* Fallback for fields not in definition but in data */}
-                              {Object.entries(data).map(([key, value]) => {
-                                if (fields.find((f: any) => f.id === key)) return null;
-                                return (
-                                  <div key={key} className="space-y-1">
-                                    <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{key}</p>
-                                    <p className="text-sm font-bold text-[var(--text-main)]">{String(value)}</p>
-                                  </div>
-                                );
-                              })}
                             </div>
                           </div>
                         );
@@ -6033,7 +6092,7 @@ export default function App() {
 
                       {selectedProcess.process_forms && selectedProcess.process_forms.length > 0 ? (
                         <div className="space-y-3">
-                          {selectedProcess.process_forms.map((pf: any) => (
+                          {selectedProcess.process_forms.map((pf: any, pfIdx: number) => (
                             <div key={pf.id} className="flex items-center gap-4 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
                               <div className="flex-1 min-w-0">
                                 <p className="font-bold text-sm truncate">{pf.form_title}</p>
@@ -6068,6 +6127,26 @@ export default function App() {
                                 >
                                   <Pencil size={14} />
                                 </button>
+                                {(user?.role === 'master' || user?.role === 'supervisor') && (
+                                  <>
+                                    <button
+                                      onClick={() => moveProcessForm(pfIdx, 'up')}
+                                      disabled={pfIdx === 0}
+                                      className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
+                                      title="Mover para cima"
+                                    >
+                                      ↑
+                                    </button>
+                                    <button
+                                      onClick={() => moveProcessForm(pfIdx, 'down')}
+                                      disabled={pfIdx === selectedProcess.process_forms.length - 1}
+                                      className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
+                                      title="Mover para baixo"
+                                    >
+                                      ↓
+                                    </button>
+                                  </>
+                                )}
                                 {(user?.role === 'master' || user?.role === 'supervisor') && (
                                   <button
                                     onClick={() => removeFormFromProcess(pf.id)}

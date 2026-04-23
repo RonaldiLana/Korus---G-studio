@@ -16,11 +16,12 @@ interface Props {
   onComplete: (data: any) => void;
   preFormQuestions?: any[];
   formFields?: any[];
+  customForms?: any[];
   destinationId?: number;
   visaTypes?: any[];
 }
 
-export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, formFields, destinationId, visaTypes }) => {
+export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, formFields, customForms, destinationId, visaTypes }) => {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<any>({
     fullName: '',
@@ -35,13 +36,21 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
     visaTypeId: null,
     dependentLevel: 'Individual',
     dependents: [],
-    dynamicResponses: {}
+    dynamicResponses: {},
+    customFormResponses: {} as Record<number, Record<string, any>>
   });
 
   const dynamicFields = formFields?.filter(f => !f.destination_id || f.destination_id === destinationId) || [];
-  
-  // Steps: 1: Basic, 2: Travel, 3: Dependents, 4: Goal, 5: Dynamic
-  const totalSteps = 4 + (dynamicFields.length > 0 ? 1 : 0);
+  const parsedCustomForms: any[] = (customForms || []).map(cf => ({
+    ...cf,
+    fields: typeof cf.fields === 'string' ? (() => { try { return JSON.parse(cf.fields); } catch { return []; } })() : (cf.fields || [])
+  })).filter(cf => cf.fields.length > 0);
+
+  // Steps: 1: Basic, 2: Travel, 3: Dependents, 4: Goal, 5+: Custom forms, then legacy dynamic
+  const customFormStepOffset = 5;
+  const totalCustomFormSteps = parsedCustomForms.length;
+  const hasDynamicStep = dynamicFields.length > 0;
+  const totalSteps = 4 + totalCustomFormSteps + (hasDynamicStep ? 1 : 0);
   const progress = (step / totalSteps) * 100;
 
   const displayGoals = visaTypes && visaTypes.length > 0 && visaTypes.some(v => v.destination_id === destinationId)
@@ -70,6 +79,19 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
       dynamicResponses: {
         ...formData.dynamicResponses,
         [fieldId]: value
+      }
+    });
+  };
+
+  const handleCustomFormChange = (formId: number, fieldId: string, value: any) => {
+    setFormData({
+      ...formData,
+      customFormResponses: {
+        ...formData.customFormResponses,
+        [formId]: {
+          ...(formData.customFormResponses[formId] || {}),
+          [fieldId]: value
+        }
       }
     });
   };
@@ -351,10 +373,90 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
             </div>
           </motion.div>
         );
-      case 5:
+      default: {
+        // Custom form steps: steps 5, 6, 7... based on parsedCustomForms
+        const customFormIdx = step - customFormStepOffset;
+        if (customFormIdx >= 0 && customFormIdx < parsedCustomForms.length) {
+          const cf = parsedCustomForms[customFormIdx];
+          const responses = formData.customFormResponses[cf.id] || {};
+          return (
+            <motion.div
+              key={`custom-form-${cf.id}`}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar"
+            >
+              <h3 className="text-sm font-black uppercase tracking-widest text-emerald-400 mb-4">{cf.title}</h3>
+              <div className="space-y-6">
+                {cf.fields.map((field: any) => (
+                  <div key={field.id} className="space-y-3">
+                    <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 ml-1">
+                      {field.label} {field.required ? '*' : ''}
+                    </label>
+                    {(field.type === 'text' || field.type === 'email' || field.type === 'phone') && (
+                      <input
+                        type={field.type === 'phone' ? 'tel' : field.type}
+                        className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                        value={responses[field.id] || ''}
+                        onChange={e => handleCustomFormChange(cf.id, field.id, e.target.value)}
+                        required={field.required}
+                      />
+                    )}
+                    {field.type === 'date' && (
+                      <input
+                        type="date"
+                        className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                        value={responses[field.id] || ''}
+                        onChange={e => handleCustomFormChange(cf.id, field.id, e.target.value)}
+                        required={field.required}
+                      />
+                    )}
+                    {field.type === 'select' && (
+                      <select
+                        className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white appearance-none"
+                        value={responses[field.id] || ''}
+                        onChange={e => handleCustomFormChange(cf.id, field.id, e.target.value)}
+                        required={field.required}
+                      >
+                        <option value="">Selecione uma opção</option>
+                        {Array.isArray(field.options) && field.options.map((opt: any, i: number) => (
+                          <option key={i} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    )}
+                    {field.type === 'radio' && (
+                      <div className="flex flex-wrap gap-2">
+                        {Array.isArray(field.options) && field.options.map((opt: any, i: number) => (
+                          <button
+                            key={i}
+                            onClick={() => handleCustomFormChange(cf.id, field.id, opt)}
+                            className={`px-6 py-3 rounded-xl font-bold transition-all border ${responses[field.id] === opt ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-zinc-900/50 border-white/5 text-zinc-500 hover:bg-zinc-800'}`}
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {field.type === 'textarea' && (
+                      <textarea
+                        className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white resize-none"
+                        rows={4}
+                        value={responses[field.id] || ''}
+                        onChange={e => handleCustomFormChange(cf.id, field.id, e.target.value)}
+                        required={field.required}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          );
+        }
+        // Legacy dynamic fields step
         return (
           <motion.div 
-            key="step5"
+            key="step-dynamic"
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
@@ -370,6 +472,26 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
                   {field.type === 'text' && (
                     <input 
                       type="text"
+                      className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                      value={formData.dynamicResponses[field.id] || ''}
+                      onChange={e => handleDynamicChange(field.id, e.target.value)}
+                      required={field.required}
+                    />
+                  )}
+
+                  {field.type === 'email' && (
+                    <input 
+                      type="email"
+                      className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
+                      value={formData.dynamicResponses[field.id] || ''}
+                      onChange={e => handleDynamicChange(field.id, e.target.value)}
+                      required={field.required}
+                    />
+                  )}
+
+                  {field.type === 'phone' && (
+                    <input 
+                      type="tel"
                       className="w-full px-6 py-4 bg-zinc-900/50 border border-white/5 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium text-white"
                       value={formData.dynamicResponses[field.id] || ''}
                       onChange={e => handleDynamicChange(field.id, e.target.value)}
@@ -421,8 +543,7 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
             </div>
           </motion.div>
         );
-      default:
-        return null;
+      }
     }
   };
 

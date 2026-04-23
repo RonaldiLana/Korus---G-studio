@@ -43,7 +43,7 @@ export interface FormField {
   agency_id: number;
   destination_id?: number | null;
   label: string;
-  type: 'text' | 'select' | 'radio' | 'date';
+  type: 'text' | 'email' | 'phone' | 'select' | 'radio' | 'date';
   required: boolean;
   options: string[];
   order: number;

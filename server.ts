@@ -483,17 +483,30 @@ async function startServer() {
         } catch (_) { /* ignorar se tabela não existir */ }
       }
 
-      // Salvar form_responses iniciais (preenchimento feito antes do processo)
+      // Salvar pré-formulário como pre_form_data no processo
       const formResponses: Record<string, any> = req.body.form_responses || {};
-      for (const [formId, responseData] of Object.entries(formResponses)) {
+      if (formResponses && Object.keys(formResponses).length > 0) {
         try {
-          if (responseData && Object.keys(responseData).length > 0) {
+          await query(
+            "UPDATE processes SET pre_form_data = $1 WHERE id = $2",
+            [JSON.stringify(formResponses), processId]
+          );
+        } catch (_) { /* coluna pode não existir ainda – migração abaixo */ }
+      }
+
+      // Salvar respostas de formulários customizados
+      const customFormResponses: Record<string, any> = req.body.custom_form_responses || {};
+      for (const [formId, responseData] of Object.entries(customFormResponses)) {
+        if (responseData && Object.keys(responseData).length > 0) {
+          try {
             await query(
-              "INSERT INTO form_responses (process_id, form_id, data, status) VALUES ($1, $2, $3, 'in_progress') ON CONFLICT DO NOTHING",
+              `INSERT INTO form_responses (process_id, form_id, data, status) 
+               VALUES ($1, $2, $3, 'pending')
+               ON CONFLICT (process_id, form_id) DO UPDATE SET data = EXCLUDED.data`,
               [processId, Number(formId), JSON.stringify(responseData)]
             );
-          }
-        } catch (_) { /* ignorar erros */ }
+          } catch (_) { /* ignorar erros de constraint */ }
+        }
       }
 
       // Criar registro financeiro pendente
@@ -1537,7 +1550,7 @@ async function startServer() {
       const responsesResult = await query(`
         SELECT fr.*, f.title as form_title, f.fields as form_fields
         FROM form_responses fr
-        JOIN forms f ON fr.form_id = f.id
+        LEFT JOIN forms f ON fr.form_id = f.id
         WHERE fr.process_id = $1
       `, [req.params.id]);
       const dependentsResult = await query("SELECT * FROM dependents WHERE process_id = $1", [req.params.id]);
@@ -1564,7 +1577,7 @@ async function startServer() {
         LEFT JOIN users ab ON pf.assigned_by = ab.id
         LEFT JOIN form_responses fr ON fr.process_id = pf.process_id AND fr.form_id = pf.form_id
         WHERE pf.process_id = $1
-        ORDER BY pf.assigned_at ASC
+        ORDER BY COALESCE(pf."order", 0) ASC, pf.assigned_at ASC
       `, [req.params.id]);
 
       const processFormsWithProgress = processFormsResult.rows.map((row: any) => {
@@ -1591,6 +1604,21 @@ async function startServer() {
         tasks: tasksResult.rows,
         process_forms: processFormsWithProgress,
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Reordenar formulários de um processo
+  app.put("/api/process-forms/reorder", async (req, res) => {
+    // body: { orders: [{ id: number, order: number }, ...] }
+    const { orders } = req.body as { orders: { id: number; order: number }[] };
+    if (!Array.isArray(orders)) return res.status(400).json({ error: "orders deve ser um array" });
+    try {
+      for (const item of orders) {
+        await query('UPDATE process_forms SET "order" = $1 WHERE id = $2', [item.order, item.id]);
+      }
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

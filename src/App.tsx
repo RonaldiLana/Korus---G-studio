@@ -2781,12 +2781,20 @@ export default function App() {
                 alt={publicAgency.name} 
                 className="h-16 object-contain"
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  const fallback = document.getElementById('public-agency-logo-fallback');
+                  if (fallback) fallback.style.display = 'flex';
+                }}
               />
-            ) : (
-              <div className="w-16 h-16 brand-gradient rounded-2xl flex items-center justify-center text-black font-black text-2xl">
-                {(publicAgency?.name || "A").charAt(0).toUpperCase()}
-              </div>
-            )}
+            ) : null}
+            <div 
+              id="public-agency-logo-fallback"
+              style={{ display: publicAgency.logo_url && publicAgency.logo_url.trim() !== '' ? 'none' : 'flex' }}
+              className="w-16 h-16 brand-gradient rounded-2xl items-center justify-center text-black font-black text-2xl"
+            >
+              {(publicAgency?.name || "A").charAt(0).toUpperCase()}
+            </div>
           </div>
           
           <div className="text-center mb-10">

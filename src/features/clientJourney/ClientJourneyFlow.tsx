@@ -167,6 +167,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
                   alt={agencyName} 
                   className="h-8 w-auto object-contain"
                   referrerPolicy="no-referrer"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
               ) : (
                 <div className="w-8 h-8 brand-gradient rounded-lg flex items-center justify-center text-black font-black text-xs">

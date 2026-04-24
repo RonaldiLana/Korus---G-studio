@@ -5,6 +5,12 @@ import { Process } from '../../types';
 import axios from 'axios';
 import { toast } from 'sonner';
 
+const MAX_DOC_SIZE_MB = 5;
+const MAX_DOC_SIZE = MAX_DOC_SIZE_MB * 1024 * 1024; // 5 MB
+const MAX_DOCS = 3;
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+const ACCEPT_ATTR = 'image/jpeg,image/png,image/webp,image/gif,application/pdf';
+
 const ICON_MAP: Record<string, any> = {
   Star,
   ShieldCheck: ShieldCheckIcon,
@@ -150,21 +156,42 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
   const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>, docName: string) => {
     const file = e.target.files?.[0];
+    // Limpar valor do input para permitir re-upload do mesmo arquivo
+    e.target.value = '';
     if (!file || !latestProcess) return;
 
+    // Validação de tipo
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast.error('Tipo não permitido. Envie imagens (JPEG, PNG, WEBP) ou PDF.');
+      return;
+    }
+
+    // Validação de tamanho (5 MB)
+    if (file.size > MAX_DOC_SIZE) {
+      toast.error(`Arquivo muito grande. Tamanho máximo: ${MAX_DOC_SIZE_MB} MB.`);
+      return;
+    }
+
+    // Validação de quantidade (max 3)
+    const currentCount = fullProcess?.documents?.length || 0;
+    if (currentCount >= MAX_DOCS) {
+      toast.error(`Limite de ${MAX_DOCS} documentos por processo atingido.`);
+      return;
+    }
+
     setUploadingDoc(docName);
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('process_id', latestProcess.id.toString());
-    formData.append('name', docName);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('process_id', latestProcess.id.toString());
+    fd.append('name', docName);
 
     try {
-      await axios.post(`${API_URL}/api/documents`, formData);
+      await axios.post(`${API_URL}/api/documents`, fd);
       toast.success(`Documento "${docName}" enviado com sucesso!`);
       fetchFullProcess();
-    } catch (error) {
-      console.error('Error uploading document:', error);
-      toast.error('Erro ao enviar documento. Tente novamente.');
+    } catch (error: any) {
+      const msg = error?.response?.data?.error || 'Erro ao enviar documento. Tente novamente.';
+      toast.error(msg);
     } finally {
       setUploadingDoc(null);
     }
@@ -391,11 +418,31 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
                         {/* Documents Section */}
                         <div className="bg-zinc-900/40 border border-white/5 rounded-[40px] p-10 backdrop-blur-xl">
-                          <h2 className="text-2xl font-black tracking-tighter mb-8 flex items-center gap-3">
-                            <Upload className="text-emerald-400" />
-                            Envio de Documentação
-                          </h2>
-                          
+                          <div className="flex items-center justify-between mb-8">
+                            <h2 className="text-2xl font-black tracking-tighter flex items-center gap-3">
+                              <Upload className="text-emerald-400" />
+                              Envio de Documentação
+                            </h2>
+                            {(() => {
+                              const count = fullProcess.documents?.length || 0;
+                              const remaining = MAX_DOCS - count;
+                              return (
+                                <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-lg ${
+                                  remaining === 0 ? 'bg-red-500/10 text-red-400' : 'bg-zinc-800 text-zinc-400'
+                                }`}>
+                                  {count}/{MAX_DOCS} documentos
+                                </span>
+                              );
+                            })()}
+                          </div>
+                          {(fullProcess.documents?.length || 0) >= MAX_DOCS && (
+                            <div className="mb-4 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold">
+                              Limite de {MAX_DOCS} documentos atingido. Fale com seu consultor caso precise substituir algum arquivo.
+                            </div>
+                          )}
+                          <p className="text-[10px] text-zinc-500 font-bold mb-6">
+                            Formatos aceitos: JPEG, PNG, WEBP, GIF, PDF &nbsp;·&nbsp; Tamanho máximo: {MAX_DOC_SIZE_MB} MB por arquivo
+                          </p>
                           <div className="space-y-4">
                             {/* Required Docs from Visa Type */}
                             {fullProcess.required_docs && (typeof fullProcess.required_docs === 'string' ? JSON.parse(fullProcess.required_docs) : fullProcess.required_docs).map((docName: string, idx: number) => {
@@ -438,12 +485,13 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                           type="file" 
                                           className="hidden" 
                                           id={`doc-${docName}`}
+                                          accept={ACCEPT_ATTR}
                                           onChange={(e) => handleDocumentUpload(e, docName)}
                                         />
                                         <button 
                                           onClick={() => document.getElementById(`doc-${docName}`)?.click()}
-                                          disabled={uploadingDoc === docName}
-                                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2"
+                                          disabled={uploadingDoc === docName || (fullProcess.documents?.length || 0) >= MAX_DOCS}
+                                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                                         >
                                           {uploadingDoc === docName ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                                           Enviar
@@ -455,6 +503,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                               );
                             })}
                             {/* Upload de documento adicional livre */}
+                            {(fullProcess.documents?.length || 0) < MAX_DOCS && (
                             <div className="mt-6 pt-6 border-t border-white/5">
                               <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-3">Enviar Documento Adicional</p>
                               <div className="flex gap-3 items-center">
@@ -469,6 +518,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                   type="file"
                                   className="hidden"
                                   ref={extraDocInputRef}
+                                  accept={ACCEPT_ATTR}
                                   onChange={(e) => {
                                     if (extraDocName.trim()) handleDocumentUpload(e, extraDocName.trim());
                                     else toast.error('Informe o nome do documento antes de enviar.');
@@ -487,6 +537,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                 </button>
                               </div>
                             </div>
+                            )}
                           </div>
                         </div>
                       </>

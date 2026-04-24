@@ -27,7 +27,18 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB — tamanho máximo de uma foto comum
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo não permitido. Envie imagens (JPEG, PNG, WEBP) ou PDF.'));
+    }
+  },
+});
 
 // Round Robin Helper
 async function getNextConsultant(agencyId: number) {
@@ -1278,6 +1289,13 @@ async function startServer() {
     const url = file ? `/uploads/${file.filename}` : null;
 
     try {
+      // Verificar limite de 3 documentos por processo
+      const countResult = await query("SELECT COUNT(*) FROM documents WHERE process_id = $1", [process_id]);
+      const docCount = parseInt(countResult.rows[0].count, 10);
+      if (docCount >= 3) {
+        return res.status(400).json({ error: "Limite de 3 documentos por processo atingido." });
+      }
+
       const result = await query("INSERT INTO documents (process_id, name, url, status) VALUES ($1, $2, $3, 'uploaded') RETURNING id", [process_id, name, url]);
       res.json({ id: result.rows[0].id, url });
     } catch (e) {
@@ -2159,6 +2177,17 @@ async function startServer() {
     app.use(vite.middlewares);
   }
   // In production: backend is API-only, frontend served separately
+
+  // Handler de erros do multer (tamanho/tipo de arquivo)
+  app.use((err: any, _req: any, res: any, next: any) => {
+    if (err?.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Arquivo muito grande. O tamanho máximo permitido é 5 MB.' });
+    }
+    if (err?.message?.includes('Tipo de arquivo')) {
+      return res.status(400).json({ error: err.message });
+    }
+    next(err);
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);

@@ -3740,6 +3740,7 @@ export default function App() {
                       <th className="px-6 py-4">Status</th>
                       <th className="px-6 py-4">Status Interno</th>
                       <th className="px-6 py-4">Data Início</th>
+                      {isConsultantSupervisorOrMaster(user) && <th className="px-6 py-4 text-right">Ações</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
@@ -3758,11 +3759,38 @@ export default function App() {
                         <td className="px-6 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.internal_status || '-'}</td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
+                        {isConsultantSupervisorOrMaster(user) && (
+                          <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={async () => {
+                                if (!process?.id || !user?.id) return;
+                                try {
+                                  await apiRequest(`${API_URL}/api/processes/${process.id}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                                    body: JSON.stringify({ consultant_id: user.id })
+                                  });
+                                  await fetchProcesses();
+                                } catch (err) {
+                                  console.error('Erro ao assumir processo:', err);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                                process?.consultant_id === user?.id
+                                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 cursor-default'
+                                  : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:border-emerald-500/50 hover:text-emerald-400'
+                              }`}
+                              disabled={process?.consultant_id === user?.id}
+                            >
+                              {process?.consultant_id === user?.id ? 'Responsável' : 'Assumir Processo'}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                     {(Array.isArray(processes) ? processes : []).length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
+                        <td colSpan={isConsultantSupervisorOrMaster(user) ? 7 : 6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
                       </tr>
                     )}
                   </tbody>

@@ -111,6 +111,9 @@ async function applyMigrations() {
       WHERE form_id IS NOT NULL
       ORDER BY process_id, form_id, updated_at DESC NULLS LAST
     ) AND form_id IS NOT NULL`,
+    // visa_types: adicionar colunas base_price e required_docs (usadas pelo servidor)
+    `ALTER TABLE visa_types ADD COLUMN IF NOT EXISTS base_price DECIMAL DEFAULT 0`,
+    `ALTER TABLE visa_types ADD COLUMN IF NOT EXISTS required_docs TEXT DEFAULT '[]'`,
   ];
 
   for (const sql of migrations) {

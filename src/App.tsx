@@ -2323,7 +2323,7 @@ export default function App() {
 
     const payload = editingProcess
       ? {
-          visa_type_id: Number(processForm.visa_type_id || editingProcess.visa_type_id),
+          visa_type_id: processForm.visa_type_id ? Number(processForm.visa_type_id) : (editingProcess.visa_type_id || null),
           consultant_id: processForm.consultant_id ? Number(processForm.consultant_id) : null,
           analyst_id: processForm.analyst_id ? Number(processForm.analyst_id) : null,
           status: processForm.status,
@@ -2387,6 +2387,42 @@ export default function App() {
       }
     } catch (error) {
       console.error('[AUTH] handleUpdateProcessStatus error:', error);
+      notify('Erro de conexão.', 'error');
+    }
+  };
+
+  const handleApproveStage = async () => {
+    if (!selectedProcess || !(user?.id && user?.role)) return;
+
+    const nextStatus: Record<string, string> = {
+      reviewing: 'submitted',
+      documents_requested: 'reviewing',
+      pending: 'documents_requested',
+    };
+    const next = nextStatus[selectedProcess.internal_status];
+    if (!next) {
+      notify('Esta etapa não pode ser aprovada manualmente.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ internal_status: next, changed_by_user_id: user.id }),
+      });
+      if (res.ok) {
+        notify('Etapa aprovada com sucesso!', 'success');
+        fetchProcessDetail(selectedProcess.id);
+        fetchProcesses();
+      } else {
+        notify('Falha ao aprovar a etapa.', 'error');
+      }
+    } catch (error) {
+      console.error('[AUTH] handleApproveStage error:', error);
       notify('Erro de conexão.', 'error');
     }
   };
@@ -6091,6 +6127,19 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* Botão de aprovação de etapa para consultor/supervisor/master */}
+                  {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && ['pending', 'documents_requested', 'reviewing'].includes(selectedProcess.internal_status) && (
+                    <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
+                      <button
+                        onClick={handleApproveStage}
+                        className="w-full flex items-center justify-center gap-2 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow hover:opacity-90 transition-opacity"
+                      >
+                        <ShieldCheck size={18} />
+                        Aprovar Etapa: {STATUS_LABELS[selectedProcess.internal_status]} → {STATUS_LABELS[{ pending: 'documents_requested', documents_requested: 'reviewing', reviewing: 'submitted' }[selectedProcess.internal_status as string] as string] || ''}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Pré-Formulário do Cliente */}
                   {selectedProcess.pre_form_data && (() => {

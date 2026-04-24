@@ -4,6 +4,13 @@ const API_URL =
   import.meta.env.VITE_API_URL?.trim() ||
   'https://korus-backend-a55k.onrender.com';
 
+// Resolve URLs relativas (/uploads/...) contra o backend
+const resolveFileUrl = (url: string | null | undefined): string => {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+  return `${API_URL}${url}`;
+};
+
 /**
  * Helper global para requisições API
  */
@@ -6301,7 +6308,7 @@ export default function App() {
                                 {doc.status}
                               </span>
                               <button 
-                                onClick={() => window.open(doc.url, '_blank')}
+                                onClick={() => window.open(resolveFileUrl(doc.url), '_blank')}
                                 className="text-xs font-black hover:text-emerald-400 transition-colors"
                               >
                                 ABRIR

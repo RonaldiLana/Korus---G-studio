@@ -11,6 +11,9 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// URL pública do backend — usada para gerar URLs absolutas de arquivos
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://korus-backend-a55k.onrender.com').replace(/\/$/, '');
+
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -298,7 +301,7 @@ async function startServer() {
   // API Routes
   app.post("/api/upload-logo", upload.single("logo"), (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const logoUrl = `/uploads/${req.file.filename}`;
+    const logoUrl = `${BACKEND_URL}/uploads/${req.file.filename}`;
     res.json({ url: logoUrl });
   });
 
@@ -1244,7 +1247,7 @@ async function startServer() {
   app.post("/api/financials/confirm-proof", upload.single('file'), async (req, res) => {
     const { process_id } = req.body;
     const file = req.file;
-    const proof_url = file ? `/uploads/${file.filename}` : null;
+    const proof_url = file ? `${BACKEND_URL}/uploads/${file.filename}` : null;
 
     try {
       await query("UPDATE financials SET status = 'proof_received', proof_url = $1 WHERE process_id = $2", [proof_url, process_id]);
@@ -1286,7 +1289,7 @@ async function startServer() {
   app.post("/api/documents", upload.single('file'), async (req, res) => {
     const { process_id, name } = req.body;
     const file = req.file;
-    const url = file ? `/uploads/${file.filename}` : null;
+    const url = file ? `${BACKEND_URL}/uploads/${file.filename}` : null;
 
     try {
       // Verificar limite de 3 documentos por processo

@@ -48,7 +48,13 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
   const API_URL =
     import.meta.env.VITE_API_URL?.trim() ||
     'https://korus-backend-a55k.onrender.com';
-  console.log('[BUILD] ClientProcessDashboard API_URL =', API_URL);
+
+  // Garante que URLs relativas (/uploads/...) sejam resolvidas contra o backend
+  const resolveFileUrl = (url: string | null | undefined): string => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    return `${API_URL}${url}`;
+  };
   const latestProcess = processes.length > 0 ? processes[0] : null;
   const [fullProcess, setFullProcess] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
@@ -473,7 +479,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                            uploadedDoc.status === 'approved' ? 'Aprovado' : 'Recusado'}
                                         </span>
                                         <button 
-                                          onClick={() => window.open(uploadedDoc.url, '_blank')}
+                                          onClick={() => window.open(resolveFileUrl(uploadedDoc.url), '_blank')}
                                           className="text-xs font-black hover:text-emerald-400 transition-colors"
                                         >
                                           VER

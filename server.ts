@@ -563,6 +563,36 @@ async function startServer() {
     }
   });
 
+  // Endpoint de notificações de processos por agência (não-clientes)
+  app.get("/api/process-notifications", async (req, res) => {
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      const result = await query(`
+        SELECT l.id, l.action, l.details, l.created_at,
+               u.name as user_name,
+               p.id as process_id,
+               pu.name as client_name,
+               p.status as process_status,
+               p.internal_status
+        FROM audit_logs l
+        LEFT JOIN users u ON l.user_id = u.id
+        LEFT JOIN processes p ON (
+          l.action IN ('process_status_changed', 'process_created', 'process_started')
+          AND l.details LIKE '%#' || p.id || ':%'
+        )
+        LEFT JOIN users pu ON p.client_id = pu.id
+        WHERE l.agency_id = $1
+          AND l.action IN ('process_status_changed', 'process_created', 'process_started')
+        ORDER BY l.created_at DESC
+        LIMIT 20
+      `, [agency_id]);
+      res.json(result.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.delete("/api/audit-logs", async (req, res) => {
     try {
       const { user_id } = req.query;
@@ -1467,10 +1497,10 @@ async function startServer() {
   });
 
   app.put("/api/processes/:id", async (req, res) => {
-    const { visa_type_id, consultant_id, analyst_id, status, internal_status } = req.body;
+    const { visa_type_id, consultant_id, analyst_id, status, internal_status, changed_by_user_id } = req.body;
 
     try {
-      const existingProcessResult = await query("SELECT id, status, internal_status, visa_type_id FROM processes WHERE id = $1", [req.params.id]);
+      const existingProcessResult = await query("SELECT id, status, internal_status, visa_type_id, agency_id FROM processes WHERE id = $1", [req.params.id]);
       if (existingProcessResult.rows.length === 0) {
         return res.status(404).json({ error: "Processo não encontrado" });
       }
@@ -1480,6 +1510,9 @@ async function startServer() {
         return res.status(400).json({ error: "Processos concluídos não podem ser editados" });
       }
 
+      const newStatus = status !== undefined ? status : existingProcess.status;
+      const newInternalStatus = internal_status !== undefined ? internal_status : existingProcess.internal_status;
+
       await query(`
         UPDATE processes
         SET visa_type_id = $1, consultant_id = $2, analyst_id = $3, status = $4, internal_status = $5
@@ -1488,10 +1521,28 @@ async function startServer() {
         visa_type_id !== undefined ? visa_type_id : existingProcess.visa_type_id,
         consultant_id !== undefined ? consultant_id : existingProcess.consultant_id,
         analyst_id !== undefined ? analyst_id : existingProcess.analyst_id,
-        status !== undefined ? status : existingProcess.status,
-        internal_status !== undefined ? internal_status : existingProcess.internal_status,
+        newStatus,
+        newInternalStatus,
         req.params.id,
       ]);
+
+      // Registrar audit log se status ou internal_status mudou
+      const statusChanged = status !== undefined && status !== existingProcess.status;
+      const internalChanged = internal_status !== undefined && internal_status !== existingProcess.internal_status;
+      const consultantChanged = consultant_id !== undefined;
+      if (statusChanged || internalChanged || consultantChanged) {
+        const auditUserId = changed_by_user_id || null;
+        let details = `Processo #${req.params.id}:`;
+        if (statusChanged) details += ` status ${existingProcess.status} → ${newStatus}`;
+        if (internalChanged) details += ` status_interno ${existingProcess.internal_status} → ${newInternalStatus}`;
+        if (consultantChanged) details += ` consultor assumiu o processo`;
+        try {
+          await query(
+            "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+            [existingProcess.agency_id, auditUserId, "process_status_changed", details]
+          );
+        } catch (_) {}
+      }
 
       res.json({ success: true });
     } catch (err: any) {

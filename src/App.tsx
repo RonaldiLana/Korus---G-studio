@@ -402,6 +402,7 @@ export default function App() {
   };
   const [visaTypes, setVisaTypes] = useState<VisaType[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [processNotifications, setProcessNotifications] = useState<any[]>([]);
   const [selectedProcess, setSelectedProcess] = useState<any>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
@@ -1177,6 +1178,18 @@ export default function App() {
     } catch (err) {
       console.error('[FETCH] fetchAuditLogs error:', err);
     }
+  };
+
+  const fetchProcessNotifications = async () => {
+    if (!user || isClient(user)) return;
+    const agencyId = user.agency_id;
+    if (!agencyId) return;
+    try {
+      const data = await apiRequest(`${API_URL}/api/process-notifications?agency_id=${agencyId}`, {
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+      setProcessNotifications(Array.isArray(data) ? data : []);
+    } catch (_) {}
   };
 
   const clearAuditLogs = async () => {
@@ -2215,6 +2228,13 @@ export default function App() {
       fetchAgencies();
       fetchAuditLogs();
       fetchGlobalUsers();
+    }
+
+    // Notificações de processos para não-clientes (polling a cada 30s)
+    if (!isClient(user) && user.agency_id) {
+      fetchProcessNotifications();
+      const notifInterval = setInterval(fetchProcessNotifications, 30000);
+      return () => clearInterval(notifInterval);
     }
   }, [user]);
 
@@ -3342,23 +3362,50 @@ export default function App() {
                 </div>
 
                 <div className="space-y-6">
-                  <h3 className="text-xl font-black tracking-tight">Notificações</h3>
-                  <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] space-y-6">
-                    {[
-                      { text: 'Seu documento "Passaporte" foi aprovado.', time: '2h atrás', icon: CheckCircle2, color: 'text-emerald-400' },
-                      { text: 'Nova mensagem do seu consultor.', time: '5h atrás', icon: MessageSquare, color: 'text-blue-400' },
-                      { text: 'Pagamento confirmado com sucesso.', time: '1d atrás', icon: DollarSign, color: 'text-emerald-500' },
-                    ].map((notif, i) => (
-                      <div key={`notification-${i}-${notif.time}`} className="flex gap-4 group cursor-pointer">
-                        <div className={`mt-1 ${notif.color}`}>
-                          <notif.icon size={18} />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-emerald-500 transition-colors">{notif.text}</p>
-                          <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest mt-1">{notif.time}</p>
-                        </div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-black tracking-tight">Notificações</h3>
+                    {processNotifications.length > 0 && (
+                      <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg">
+                        {processNotifications.length} atividades
+                      </span>
+                    )}
+                  </div>
+                  <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] space-y-6 max-h-[400px] overflow-y-auto custom-scrollbar">
+                    {processNotifications.length === 0 ? (
+                      <div className="text-center py-8">
+                        <CheckCircle2 className="mx-auto text-[var(--text-muted)] opacity-20 mb-3" size={36} />
+                        <p className="text-[var(--text-muted)] text-sm font-bold">Nenhuma atividade recente.</p>
                       </div>
-                    ))}
+                    ) : processNotifications.map((notif: any, i: number) => {
+                      const isCreated = notif.action === 'process_created' || notif.action === 'process_started';
+                      const isConsultant = notif.details?.includes('consultor assumiu');
+                      const Icon = isCreated ? FileText : isConsultant ? Users : ClipboardList;
+                      const color = isCreated ? 'text-cyan-400' : isConsultant ? 'text-emerald-400' : 'text-amber-400';
+                      const timeAgo = (() => {
+                        const diff = Date.now() - new Date(notif.created_at).getTime();
+                        const mins = Math.floor(diff / 60000);
+                        if (mins < 60) return `${mins}min atrás`;
+                        const hrs = Math.floor(mins / 60);
+                        if (hrs < 24) return `${hrs}h atrás`;
+                        return `${Math.floor(hrs / 24)}d atrás`;
+                      })();
+                      return (
+                        <div key={`notif-${notif.id}-${i}`} className="flex gap-4 group cursor-pointer">
+                          <div className={`mt-1 flex-shrink-0 ${color}`}>
+                            <Icon size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-emerald-400 transition-colors leading-snug">
+                              {notif.details?.replace(`Processo #${notif.process_id}:`, '').trim() || notif.action}
+                            </p>
+                            {notif.client_name && (
+                              <p className="text-[10px] text-emerald-400 font-bold mt-0.5">{notif.client_name}</p>
+                            )}
+                            <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest mt-1">{timeAgo}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

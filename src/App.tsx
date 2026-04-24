@@ -2394,37 +2394,56 @@ export default function App() {
   const handleApproveStage = async () => {
     if (!selectedProcess || !(user?.id && user?.role)) return;
 
-    const nextStatus: Record<string, string> = {
-      reviewing: 'submitted',
-      documents_requested: 'reviewing',
-      pending: 'documents_requested',
+    type StageTransition = { internal_status?: string; status?: string; label: string };
+    const stageTransitions: Record<string, StageTransition> = {
+      pending:             { internal_status: 'documents_requested', status: 'analyzing',   label: 'Liberar para Cliente (Docs + Formulários)' },
+      documents_requested: { internal_status: 'reviewing',                                  label: 'Confirmar Recebimento e Avançar para Revisão' },
+      reviewing:           { internal_status: 'submitted',           status: 'final_phase', label: 'Aprovar Revisão e Submeter' },
+      submitted:           { internal_status: 'confirmed',                                  label: 'Confirmar Aprovação das Autoridades' },
+      confirmed:           { status: 'completed',                                           label: 'Concluir Processo' },
     };
-    const next = nextStatus[selectedProcess.internal_status];
-    if (!next) {
+
+    const transition = stageTransitions[selectedProcess.internal_status];
+    if (!transition) {
       notify('Esta etapa não pode ser aprovada manualmente.', 'error');
       return;
     }
 
-    try {
-      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ internal_status: next, changed_by_user_id: user.id }),
-      });
-      if (res.ok) {
-        notify('Etapa aprovada com sucesso!', 'success');
-        fetchProcessDetail(selectedProcess.id);
-        fetchProcesses();
-      } else {
-        notify('Falha ao aprovar a etapa.', 'error');
+    requestConfirmation(
+      `Confirma a ação: "${transition.label}"?`,
+      async () => {
+        try {
+          const body: Record<string, any> = { changed_by_user_id: user.id };
+          if (transition.internal_status) body.internal_status = transition.internal_status;
+          if (transition.status) body.status = transition.status;
+
+          const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': token ? `Bearer ${token}` : '',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            notify('Etapa aprovada com sucesso!', 'success');
+            if (transition.status === 'completed') {
+              setSelectedProcess(null);
+              setView('clients');
+              fetchProcesses();
+            } else {
+              fetchProcessDetail(selectedProcess.id);
+              fetchProcesses();
+            }
+          } else {
+            notify('Falha ao aprovar a etapa.', 'error');
+          }
+        } catch (error) {
+          console.error('[AUTH] handleApproveStage error:', error);
+          notify('Erro de conexão.', 'error');
+        }
       }
-    } catch (error) {
-      console.error('[AUTH] handleApproveStage error:', error);
-      notify('Erro de conexão.', 'error');
-    }
+    );
   };
 
   const deleteProcess = async (id: number) => {
@@ -6129,15 +6148,33 @@ export default function App() {
                   </div>
 
                   {/* Botão de aprovação de etapa para consultor/supervisor/master */}
-                  {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && ['pending', 'documents_requested', 'reviewing'].includes(selectedProcess.internal_status) && (
+                  {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
                     <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
-                      <button
-                        onClick={handleApproveStage}
-                        className="w-full flex items-center justify-center gap-2 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow hover:opacity-90 transition-opacity"
-                      >
-                        <ShieldCheck size={18} />
-                        Aprovar Etapa: {STATUS_LABELS[selectedProcess.internal_status]} → {STATUS_LABELS[{ pending: 'documents_requested', documents_requested: 'reviewing', reviewing: 'submitted' }[selectedProcess.internal_status as string] as string] || ''}
-                      </button>
+                      {(() => {
+                        const stageLabels: Record<string, string> = {
+                          pending:             'Liberar para Cliente (Docs + Formulários)',
+                          documents_requested: 'Confirmar Recebimento e Avançar para Revisão',
+                          reviewing:           'Aprovar Revisão e Submeter',
+                          submitted:           'Confirmar Aprovação das Autoridades',
+                          confirmed:           'Concluir Processo',
+                        };
+                        const label = stageLabels[selectedProcess.internal_status];
+                        if (!label) return null;
+                        const isFinal = selectedProcess.internal_status === 'confirmed';
+                        return (
+                          <button
+                            onClick={handleApproveStage}
+                            className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-black shadow-lg hover:opacity-90 transition-opacity ${
+                              isFinal
+                                ? 'bg-purple-500 text-white'
+                                : 'brand-gradient text-black brand-shadow'
+                            }`}
+                          >
+                            <ShieldCheck size={18} />
+                            {label}
+                          </button>
+                        );
+                      })()}
                     </div>
                   )}
 

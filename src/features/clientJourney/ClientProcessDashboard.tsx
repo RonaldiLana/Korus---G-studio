@@ -58,6 +58,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
   const [editingForm, setEditingForm] = useState<any>(null);
   const [formData, setFormData] = useState<any>({});
+  const [extraDocName, setExtraDocName] = useState('');
+  const extraDocInputRef = useRef<HTMLInputElement>(null);
 
   const isPaymentConfirmed = ['payment_confirmed', 'analyzing', 'final_phase', 'submitted', 'completed'].includes(latestProcess?.status || '');
 
@@ -75,6 +77,13 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
   useEffect(() => {
     fetchFullProcess();
   }, [latestProcess?.id, latestProcess?.status]);
+
+  // Auto-abre detalhes quando cliente tem docs pendentes
+  useEffect(() => {
+    if (latestProcess?.internal_status === 'documents_requested') {
+      setShowDetails(true);
+    }
+  }, [latestProcess?.internal_status]);
 
   const fetchMessages = async () => {
     if (!latestProcess) return;
@@ -319,45 +328,60 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                       </div>
                     ) : (
                       <>
-                        {/* Forms Section */}
-                        {fullProcess.responses && fullProcess.responses.length > 0 && (
+                        {/* Forms Section — usa process_forms */}
+                        {fullProcess.process_forms && fullProcess.process_forms.length > 0 && (
                           <div className="bg-zinc-900/40 border border-white/5 rounded-[40px] p-10 backdrop-blur-xl">
                             <h2 className="text-2xl font-black tracking-tighter mb-8 flex items-center gap-3">
                               <FileText className="text-emerald-400" />
                               Formulários Necessários
                             </h2>
                             <div className="space-y-6">
-                              {fullProcess.responses.map((resp: any) => {
-                                const data = typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data;
-                                const fields = typeof resp.form_fields === 'string' ? JSON.parse(resp.form_fields) : resp.form_fields;
-                                const isSubmitted = Object.keys(data).length > 0;
+                              {fullProcess.process_forms.map((pf: any) => {
+                                const fields = typeof pf.form_fields === 'string' ? JSON.parse(pf.form_fields) : (pf.form_fields || []);
+                                const data = typeof pf.response_data === 'string' ? JSON.parse(pf.response_data) : (pf.response_data || {});
+                                const isSubmitted = pf.response_status === 'submitted' || pf.response_status === 'locked';
+                                const hasData = Object.keys(data).length > 0;
 
                                 return (
-                                  <div key={resp.id} className="p-6 rounded-3xl bg-zinc-800/30 border border-white/5">
+                                  <div key={pf.id} className="p-6 rounded-3xl bg-zinc-800/30 border border-white/5">
                                     <div className="flex justify-between items-center mb-6">
-                                      <h4 className="font-black uppercase tracking-widest text-xs">{resp.form_title}</h4>
-                                      <button 
-                                        onClick={() => {
-                                          setEditingForm(resp);
-                                          setFormData(data);
-                                        }}
-                                        className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${
-                                          isSubmitted ? 'text-emerald-400 hover:text-emerald-300' : 'text-blue-400 hover:text-blue-300'
-                                        }`}
-                                      >
-                                        <Pencil size={12} />
-                                        {isSubmitted ? 'Editar Respostas' : 'Preencher Agora'}
-                                      </button>
+                                      <div>
+                                        <h4 className="font-black uppercase tracking-widest text-xs">{pf.form_title}</h4>
+                                        {pf.progress !== undefined && (
+                                          <p className="text-[10px] text-zinc-500 mt-1">{pf.progress}% preenchido</p>
+                                        )}
+                                      </div>
+                                      {!isSubmitted && (
+                                        <button 
+                                          onClick={() => {
+                                            setEditingForm(pf);
+                                            setFormData(data);
+                                          }}
+                                          className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${
+                                            hasData ? 'text-emerald-400 hover:text-emerald-300' : 'text-blue-400 hover:text-blue-300'
+                                          }`}
+                                        >
+                                          <Pencil size={12} />
+                                          {hasData ? 'Editar Respostas' : 'Preencher Agora'}
+                                        </button>
+                                      )}
+                                      {isSubmitted && (
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 flex items-center gap-1">
+                                          <Check size={12} /> Enviado
+                                        </span>
+                                      )}
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      {fields.map((field: any, idx: number) => (
-                                        <div key={field.id || `field-${idx}`} className="space-y-1">
-                                          <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">{field.label}</p>
-                                          <p className="text-sm font-bold text-white">{String(data[field.id] || '-')}</p>
-                                        </div>
-                                      ))}
-                                    </div>
+                                    {hasData && (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {fields.map((field: any, idx: number) => (
+                                          <div key={field.id || `field-${idx}`} className="space-y-1">
+                                            <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">{field.label}</p>
+                                            <p className="text-sm font-bold text-white">{String(data[field.id] || '-')}</p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -374,7 +398,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                           
                           <div className="space-y-4">
                             {/* Required Docs from Visa Type */}
-                            {fullProcess.required_docs && JSON.parse(fullProcess.required_docs).map((docName: string, idx: number) => {
+                            {fullProcess.required_docs && (typeof fullProcess.required_docs === 'string' ? JSON.parse(fullProcess.required_docs) : fullProcess.required_docs).map((docName: string, idx: number) => {
                               const uploadedDoc = fullProcess.documents?.find((d: any) => d.name === docName);
                               return (
                                 <div key={docName || `doc-${idx}`} className="flex items-center justify-between p-6 bg-zinc-800/30 rounded-3xl border border-white/5">
@@ -430,6 +454,39 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                                 </div>
                               );
                             })}
+                            {/* Upload de documento adicional livre */}
+                            <div className="mt-6 pt-6 border-t border-white/5">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-3">Enviar Documento Adicional</p>
+                              <div className="flex gap-3 items-center">
+                                <input
+                                  type="text"
+                                  placeholder="Nome do documento..."
+                                  value={extraDocName}
+                                  onChange={(e) => setExtraDocName(e.target.value)}
+                                  className="flex-1 bg-zinc-800/50 border border-white/10 rounded-xl px-4 py-2 text-sm font-medium focus:outline-none focus:border-emerald-500"
+                                />
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  ref={extraDocInputRef}
+                                  onChange={(e) => {
+                                    if (extraDocName.trim()) handleDocumentUpload(e, extraDocName.trim());
+                                    else toast.error('Informe o nome do documento antes de enviar.');
+                                  }}
+                                />
+                                <button
+                                  onClick={() => {
+                                    if (!extraDocName.trim()) { toast.error('Informe o nome do documento.'); return; }
+                                    extraDocInputRef.current?.click();
+                                  }}
+                                  disabled={!!uploadingDoc}
+                                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 disabled:opacity-50"
+                                >
+                                  {uploadingDoc ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                  Enviar
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </>
@@ -471,6 +528,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                   {latestProcess.status === 'started' ? 'Aguardar Confirmação' : 
                    latestProcess.status === 'waiting_payment' ? (latestProcess.payment_status === 'proof_received' ? 'Aguardar Validação' : 'Confirmar Pagamento') :
                    latestProcess.status === 'payment_confirmed' ? 'Enviar Documentos' :
+                   (latestProcess.status === 'analyzing' && latestProcess.internal_status === 'documents_requested') ? 'Preencher e Enviar Documentos' :
                    latestProcess.status === 'analyzing' ? 'Revisão de Perfil' : 
                    latestProcess.status === 'final_phase' ? 'Fase Final' :
                    latestProcess.status === 'completed' ? 'Visto Aprovado!' : 'Acompanhar Processo'}
@@ -482,6 +540,8 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                         : 'Para dar continuidade ao seu processo, por favor anexe o comprovante de pagamento do seu plano.')
                     : latestProcess.status === 'payment_confirmed' 
                     ? 'Seu pagamento foi confirmado! Agora você pode preencher os formulários e enviar os documentos necessários.'
+                    : (latestProcess.status === 'analyzing' && latestProcess.internal_status === 'documents_requested')
+                    ? 'Seu consultor liberou esta etapa. Preencha os formulários abaixo e envie os documentos solicitados para continuar.'
                     : latestProcess.status === 'analyzing' 
                     ? 'Nossos especialistas estão analisando seu perfil e documentos. Fique atento ao chat para qualquer dúvida.'
                     : latestProcess.status === 'final_phase'

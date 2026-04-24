@@ -1251,7 +1251,7 @@ async function startServer() {
       await query('BEGIN', []);
       await query("UPDATE financials SET status = $1, confirmed_at = CURRENT_TIMESTAMP WHERE process_id = $2", [status, process_id]);
       if (status === 'confirmed') {
-        await query("UPDATE processes SET status = 'analyzing', internal_status = 'reviewing' WHERE id = $1", [process_id]);
+        await query("UPDATE processes SET status = 'analyzing', internal_status = 'documents_requested' WHERE id = $1", [process_id]);
       }
       await query('COMMIT', []);
       res.json({ success: true });
@@ -1515,7 +1515,8 @@ async function startServer() {
 
       await query(`
         UPDATE processes
-        SET visa_type_id = $1, consultant_id = $2, analyst_id = $3, status = $4, internal_status = $5
+        SET visa_type_id = $1, consultant_id = $2, analyst_id = $3, status = $4, internal_status = $5,
+            finished_at = CASE WHEN $4 = 'completed' AND finished_at IS NULL THEN CURRENT_TIMESTAMP ELSE finished_at END
         WHERE id = $6
       `, [
         visa_type_id !== undefined ? visa_type_id : existingProcess.visa_type_id,

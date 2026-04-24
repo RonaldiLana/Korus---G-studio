@@ -548,7 +548,7 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-4 sm:p-8 relative overflow-hidden">
       {/* Background Elements */}
       <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 blur-[120px] rounded-full" />
@@ -558,20 +558,20 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-3xl bg-zinc-900/40 backdrop-blur-2xl rounded-[40px] border border-white/5 p-8 sm:p-12 relative z-10 shadow-2xl"
+        className="w-full max-w-3xl bg-zinc-900/40 backdrop-blur-2xl rounded-[24px] sm:rounded-[40px] border border-white/5 p-5 sm:p-8 md:p-12 relative z-10 shadow-2xl"
       >
         {/* Progress Header */}
-        <div className="flex items-center justify-between mb-12">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
-              <ClipboardList className="text-emerald-400" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 sm:mb-12">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+              <ClipboardList className="text-emerald-400" size={20} />
             </div>
             <div>
-              <h2 className="text-2xl font-black tracking-tighter">Pré-formulário</h2>
+              <h2 className="text-xl sm:text-2xl font-black tracking-tighter">Pré-formulário</h2>
               <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest">Etapa {step} de {totalSteps}</p>
             </div>
           </div>
-          <div className="w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="w-full sm:w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
             <motion.div 
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
@@ -581,18 +581,18 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
         </div>
 
         {/* Form Body */}
-        <div className="min-h-[300px] mb-12">
+        <div className="min-h-[280px] sm:min-h-[300px] mb-8 sm:mb-12">
           <AnimatePresence mode="wait">
             {renderStep()}
           </AnimatePresence>
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between pt-8 border-t border-white/5">
+        <div className="flex items-center justify-between pt-6 sm:pt-8 border-t border-white/5">
           <button
             onClick={handleBack}
             disabled={step === 1}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
+            className={`flex items-center gap-2 px-4 sm:px-6 py-3 rounded-xl font-bold transition-all ${
               step === 1 ? 'opacity-0 pointer-events-none' : 'text-zinc-500 hover:bg-white/5'
             }`}
           >
@@ -601,7 +601,7 @@ export const ClientPreForm: React.FC<Props> = ({ onComplete, preFormQuestions, f
           </button>
           <button
             onClick={handleNext}
-            className="brand-gradient text-black px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:shadow-[0_0_30px_rgba(0,255,136,0.3)] transition-all group"
+            className="brand-gradient text-black px-6 sm:px-10 py-3 sm:py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:shadow-[0_0_30px_rgba(0,255,136,0.3)] transition-all group"
           >
             {step === totalSteps ? 'Finalizar Análise' : 'Próxima Etapa'}
             <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Home, LogOut, LayoutDashboard, User as UserIcon, Globe, Zap } from 'lucide-react';
+import { Home, LogOut, LayoutDashboard, User as UserIcon, Globe, Zap, Menu, X } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { ClientDestinationSelection } from './ClientDestinationSelection';
@@ -57,6 +57,7 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [formData, setFormData] = useState<any>(null);
   const [agencyCustomForms, setAgencyCustomForms] = useState<any[]>([]);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (user?.agency_id) {
@@ -157,24 +158,24 @@ export const ClientJourneyFlow: React.FC<Props> = ({
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col">
       {/* Client Navbar */}
-      <header className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-xl border-b border-white/5 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-xl border-b border-white/5 px-4 sm:px-6 py-3 sm:py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 sm:gap-8 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {agencyLogo ? (
                 <img 
                   src={agencyLogo} 
                   alt={agencyName} 
-                  className="h-8 w-auto object-contain"
+                  className="h-7 sm:h-8 w-auto object-contain flex-shrink-0"
                   referrerPolicy="no-referrer"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
               ) : (
-                <div className="w-8 h-8 brand-gradient rounded-lg flex items-center justify-center text-black font-black text-xs">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 brand-gradient rounded-lg flex items-center justify-center text-black font-black text-xs flex-shrink-0">
                   {agencyName?.charAt(0) || 'K'}
                 </div>
               )}
-              <span className="font-black tracking-tighter text-xl brand-text-gradient uppercase">
+              <span className="font-black tracking-tighter text-base sm:text-xl brand-text-gradient uppercase truncate">
                 {agencyName || 'KORUS'}
               </span>
             </div>
@@ -201,9 +202,9 @@ export const ClientJourneyFlow: React.FC<Props> = ({
             </nav>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/5 border border-white/5">
-              <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="hidden sm:flex items-center gap-3 px-3 sm:px-4 py-2 rounded-2xl bg-white/5 border border-white/5">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
                 {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
               </div>
               <div className="hidden sm:block text-left">
@@ -211,15 +212,57 @@ export const ClientJourneyFlow: React.FC<Props> = ({
                 <p className="text-[10px] text-emerald-400 uppercase font-black tracking-widest leading-none">Cliente Premium</p>
               </div>
             </div>
+
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-xl bg-white/5 border border-white/5 text-zinc-400"
+            >
+              {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+
             <button 
               onClick={onLogout}
-              className="p-3 rounded-2xl text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-all"
+              className="p-2 sm:p-3 rounded-2xl text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-all"
               title="Sair"
             >
-              <LogOut size={20} />
+              <LogOut size={18} />
             </button>
           </div>
         </div>
+
+        {/* Mobile nav dropdown */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-white/5 mt-3 pt-3 flex flex-col gap-1 px-4 pb-3">
+            <button 
+              onClick={() => { resetJourney(); setMobileMenuOpen(false); }}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all ${
+                currentStep === 'destination' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-white/5'
+              }`}
+            >
+              <Home size={16} />
+              Início
+            </button>
+            <button 
+              onClick={() => { setCurrentStep('dashboard'); setMobileMenuOpen(false); }}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all ${
+                currentStep === 'dashboard' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-white/5'
+              }`}
+            >
+              <LayoutDashboard size={16} />
+              Meu Processo
+            </button>
+            <div className="flex items-center gap-3 px-4 py-2 mt-2 border-t border-white/5">
+              <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
+                {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">{user.name}</p>
+                <p className="text-[10px] text-emerald-400 uppercase font-black tracking-widest">Cliente Premium</p>
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="flex-1 relative">

@@ -189,7 +189,7 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
   const PlanIcon = typeof displayPlan.icon === 'string' ? (ICON_MAP[displayPlan.icon] || Star) : (displayPlan.icon || Star);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-6 sm:p-12 relative overflow-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white p-4 sm:p-6 md:p-12 relative overflow-hidden">
       {/* Background Elements */}
       <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 blur-[120px] rounded-full" />
@@ -198,19 +198,19 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
 
       <div className="max-w-7xl mx-auto relative z-10">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-16">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10 md:mb-16">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
           >
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-black uppercase tracking-widest mb-6">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-black uppercase tracking-widest mb-4 sm:mb-6">
               <LayoutDashboard size={14} />
               Status do seu Processo
             </div>
-            <h1 className="text-4xl sm:text-6xl font-black tracking-tighter mb-4 leading-tight">
+            <h1 className="text-3xl sm:text-4xl md:text-6xl font-black tracking-tighter mb-3 sm:mb-4 leading-tight">
               Seu sonho para o <span className="brand-text-gradient">{displayDestination.name}</span> está em andamento.
             </h1>
-            <p className="text-zinc-400 text-lg font-medium">
+            <p className="text-zinc-400 text-base sm:text-lg font-medium">
               Acompanhe cada etapa da sua jornada internacional com a Korus.
             </p>
           </motion.div>
@@ -218,24 +218,24 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
           <motion.div 
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="flex gap-4"
+            className="flex gap-3 sm:gap-4 flex-wrap"
           >
-            <div className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl">
+            <div className="p-4 sm:p-6 rounded-2xl sm:rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl flex-1 min-w-[130px]">
               <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2">Destino</p>
-              <div className="flex items-center gap-2 text-xl font-black">
+              <div className="flex items-center gap-2 text-base sm:text-xl font-black">
                 {displayDestination.flag.length > 2 ? (
-                  <img src={displayDestination.flag} alt="" className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
+                  <img src={displayDestination.flag} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <span>{displayDestination.flag}</span>
                 )}
-                <span>{displayDestination.name}</span>
+                <span className="truncate">{displayDestination.name}</span>
               </div>
             </div>
-            <div className="p-6 rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl">
+            <div className="p-4 sm:p-6 rounded-2xl sm:rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-xl flex-1 min-w-[130px]">
               <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2">Plano</p>
-              <div className="flex items-center gap-2 text-xl font-black text-emerald-400">
-                <PlanIcon size={20} />
-                <span>{displayPlan.name}</span>
+              <div className="flex items-center gap-2 text-base sm:text-xl font-black text-emerald-400">
+                <PlanIcon size={18} />
+                <span className="truncate">{displayPlan.name}</span>
               </div>
             </div>
           </motion.div>

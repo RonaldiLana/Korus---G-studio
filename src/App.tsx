@@ -53,7 +53,8 @@ import {
   Target,
   Key,
   Trello,
-  X
+  X,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
@@ -378,6 +379,7 @@ export default function App() {
   const [clientResetHistory, setClientResetHistory] = useState<any[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isProcessingAgency, setIsProcessingAgency] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('korus-theme') as 'dark' | 'light';
@@ -3039,24 +3041,45 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] flex">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 z-40 lg:hidden" 
+          onClick={() => setSidebarOpen(false)} 
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-72 bg-[var(--bg-card)]/50 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col">
-        <div className="flex items-center gap-3 mb-10 px-2">
-          <div className="relative flex-shrink-0" style={{ width: 32, height: 32 }}>
-            <KorusLogo size={32} />
-            {!(user?.role === 'master') && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
-              <img 
-                src={resolveLogoUrl(agencySettings.logo_url)} 
-                alt={agencySettings.name} 
-                className="absolute inset-0 h-8 w-8 object-contain"
-                referrerPolicy="no-referrer"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
-            )}
+      <aside className={`
+        fixed lg:static inset-y-0 left-0 z-50
+        w-72 bg-[var(--bg-card)]/95 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col
+        transition-transform duration-300 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <div className="flex items-center justify-between gap-3 mb-10 px-2">
+          <div className="flex items-center gap-3">
+            <div className="relative flex-shrink-0" style={{ width: 32, height: 32 }}>
+              <KorusLogo size={32} />
+              {!(user?.role === 'master') && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
+                <img 
+                  src={resolveLogoUrl(agencySettings.logo_url)} 
+                  alt={agencySettings.name} 
+                  className="absolute inset-0 h-8 w-8 object-contain"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              )}
+            </div>
+            <span className="font-black text-2xl tracking-tighter brand-text-gradient">
+              {!(user?.role === 'master') && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
+            </span>
           </div>
-          <span className="font-black text-2xl tracking-tighter brand-text-gradient">
-            {!(user?.role === 'master') && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
-          </span>
+          <button 
+            onClick={() => setSidebarOpen(false)} 
+            className="lg:hidden p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)]"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <div className="mb-6 px-2">
@@ -3077,7 +3100,7 @@ export default function App() {
             icon={LayoutDashboard} 
             label="Dashboard" 
             active={view === 'dashboard'} 
-            onClick={() => setView('dashboard')} 
+            onClick={() => { setView('dashboard'); setSidebarOpen(false); }} 
           />
           
           {canAccessPipefyModule(user) && (user?.role === 'master' || agencyModules.pipefy) && (
@@ -3085,7 +3108,7 @@ export default function App() {
               icon={Trello} 
               label="Pipefy teste" 
               active={view === 'pipefy'} 
-              onClick={() => setView('pipefy')} 
+              onClick={() => { setView('pipefy'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3094,17 +3117,16 @@ export default function App() {
               icon={Users} 
               label="Processos" 
               active={view === 'clients'} 
-              onClick={() => setView('clients')} 
+              onClick={() => { setView('clients'); setSidebarOpen(false); }} 
             />
           )}
-
 
           {(user?.role === 'master') && (
             <SidebarItem 
               icon={Building2} 
               label="Agências" 
               active={view === 'agencies'} 
-              onClick={() => setView('agencies')} 
+              onClick={() => { setView('agencies'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3113,7 +3135,7 @@ export default function App() {
               icon={Users} 
               label="Equipe" 
               active={view === 'team'} 
-              onClick={() => setView('team')} 
+              onClick={() => { setView('team'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3122,7 +3144,7 @@ export default function App() {
               icon={ClipboardList}
               label="Formulários"
               active={view === 'forms'}
-              onClick={() => setView('forms')}
+              onClick={() => { setView('forms'); setSidebarOpen(false); }}
             />
           )}
 
@@ -3131,7 +3153,7 @@ export default function App() {
               icon={Contact} 
               label="Clientes" 
               active={view === 'leads'} 
-              onClick={() => setView('leads')} 
+              onClick={() => { setView('leads'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3140,7 +3162,7 @@ export default function App() {
               icon={DollarSign} 
               label="Financeiro" 
               active={view === 'finance'} 
-              onClick={() => setView('finance')} 
+              onClick={() => { setView('finance'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3149,7 +3171,7 @@ export default function App() {
               icon={Building2}
               label="Painel Agência"
               active={view === 'agency_panel'}
-              onClick={() => setView('agency_panel')}
+              onClick={() => { setView('agency_panel'); setSidebarOpen(false); }}
             />
           )}
 
@@ -3158,7 +3180,7 @@ export default function App() {
               icon={ShieldCheck} 
               label="Auditoria" 
               active={view === 'audit'} 
-              onClick={() => setView('audit')} 
+              onClick={() => { setView('audit'); setSidebarOpen(false); }} 
             />
           )}
 
@@ -3167,7 +3189,7 @@ export default function App() {
               icon={ClipboardList} 
               label="Configurações" 
               active={view === 'settings'} 
-              onClick={() => setView('settings')} 
+              onClick={() => { setView('settings'); setSidebarOpen(false); }} 
             />
           )}
         </nav>
@@ -3193,37 +3215,46 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-10 relative bg-[var(--bg-main)]">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 relative bg-[var(--bg-main)] min-w-0">
         <div className="absolute top-0 right-0 w-[30%] h-[30%] bg-emerald-500/5 blur-[100px] rounded-full pointer-events-none" />
         
-        <header className="flex justify-between items-center mb-10 relative z-10">
-          <div>
-            <h2 className="text-4xl font-black tracking-tighter">
-              {view === 'dashboard' && 'Dashboard'}
-              {view === 'clients' && 'Gestão de Processos'}
-              {view === 'agencies' && 'Gestão de Agências'}
-              {view === 'process_detail' && 'Detalhes do Processo'}
-              {view === 'finance' && 'Financeiro'}
-              {view === 'audit' && 'Logs de Auditoria'}
-              {view === 'settings' && 'Configurações'}
-              {view === 'leads' && 'Gestão de Clientes'}
-              {view === 'agency_panel' && 'Painel da Agência'}
-              {view === 'pipefy' && 'Pipefy teste'}
-            </h2>
-            <div className="flex items-center gap-2 text-[var(--text-muted)] mt-1">
-              <MapPin size={14} />
-              <span className="text-sm font-medium">Korus Central • {new Date().toLocaleDateString()}</span>
+        <header className="flex justify-between items-center mb-6 lg:mb-10 relative z-10 gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Hamburger menu button for mobile */}
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] flex-shrink-0"
+            >
+              <Menu size={20} />
+            </button>
+            <div className="min-w-0">
+              <h2 className="text-2xl sm:text-4xl font-black tracking-tighter truncate">
+                {view === 'dashboard' && 'Dashboard'}
+                {view === 'clients' && 'Processos'}
+                {view === 'agencies' && 'Agências'}
+                {view === 'process_detail' && 'Processo'}
+                {view === 'finance' && 'Financeiro'}
+                {view === 'audit' && 'Auditoria'}
+                {view === 'settings' && 'Configurações'}
+                {view === 'leads' && 'Clientes'}
+                {view === 'agency_panel' && 'Painel Agência'}
+                {view === 'pipefy' && 'Pipefy'}
+              </h2>
+              <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">
+                <MapPin size={14} />
+                <span className="text-sm font-medium">Korus Central • {new Date().toLocaleDateString()}</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="relative">
+          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+            <div className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
               <input 
                 data-testid="global-search-input"
                 type="text" 
                 placeholder="Buscar..." 
-                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-64 text-sm"
+                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-64 text-sm"
               />
             </div>
             {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user?.role === 'master' || user?.role === 'supervisor') && (
@@ -3241,20 +3272,20 @@ export default function App() {
                   });
                   setShowProcessModal(true);
                 }}
-                className="brand-gradient text-black px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow"
+                className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
-                <span>Novo Processo</span>
+                <span className="hidden sm:inline">Novo Processo</span>
               </button>
             )}
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
                 onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
-                className="brand-gradient text-black px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow"
+                className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
-                <span>Nova Agência</span>
+                <span className="hidden sm:inline">Nova Agência</span>
               </button>
             )}
           </div>

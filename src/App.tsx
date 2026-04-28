@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 // ===================== INTEGRAÇÃO API =====================
+// const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
 const API_URL =
   import.meta.env.VITE_API_URL?.trim() ||
-  'https://korus-backend-a55k.onrender.com';
+  'https://api.korus.me';
 
 // Resolve URLs relativas (/uploads/...) contra o backend
 const resolveFileUrl = (url: string | null | undefined): string => {

@@ -69,6 +69,7 @@ import { User, Process, Agency, Message, Document, VisaType, Financial, FormResp
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
 import { FormsPanel } from './features/FormsPanel';
+import { CRMPanel } from './features/crm/CRMPanel';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -177,6 +178,11 @@ const KorusLogo = ({ size = 32 }: { size?: number }) => (
 );
 
 const canAccessPipefyModule = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant';
+};
+
+const canAccessCRMModule = (user?: User | null): boolean => {
   if (!user) return false;
   return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant';
 };
@@ -366,6 +372,7 @@ export default function App() {
             chat: m.chat !== false,
             pipefy: m.pipefy !== false,
             leads: m.leads !== false,
+            crm: m.crm !== false,
           });
         } catch {}
       }
@@ -380,7 +387,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
@@ -651,6 +658,7 @@ export default function App() {
     has_finance: true, 
     has_pipefy: true,
     has_leads: true,
+    has_crm: true,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -959,7 +967,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean }>({ finance: true, chat: true, pipefy: true, leads: true });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -1105,6 +1113,7 @@ export default function App() {
             chat: m.chat !== false,
             pipefy: m.pipefy !== false,
             leads: m.leads !== false,
+            crm: m.crm !== false,
           });
         } catch {}
       }
@@ -1286,11 +1295,11 @@ export default function App() {
       const agencyData = Array.isArray(data) ? data[0] : data;
       if (!agencyData) return;
       
-      let parsedModules = { finance: true, chat: true, pipefy: true, leads: true };
+      let parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
       try {
         parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
       } catch {
-        parsedModules = { finance: true, chat: true, pipefy: true, leads: true };
+        parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
       }
 
       setAgencyModules({
@@ -1298,6 +1307,7 @@ export default function App() {
         chat: parsedModules.chat !== false,
         pipefy: parsedModules.pipefy !== false,
         leads: parsedModules.leads !== false,
+        crm: (parsedModules as any).crm !== false,
       });
 
       let destinations = [];
@@ -1434,6 +1444,7 @@ export default function App() {
           has_finance: true,
           has_pipefy: true,
           has_leads: true,
+          has_crm: true,
           admin_name: '',
           admin_email: '',
           admin_password: '',
@@ -3175,6 +3186,15 @@ export default function App() {
             />
           )}
 
+          {canAccessCRMModule(user) && (user?.role === 'master' || agencyModules.crm) && (
+            <SidebarItem 
+              icon={Trello} 
+              label="CRM" 
+              active={view === 'crm'} 
+              onClick={() => { setView('crm'); setSidebarOpen(false); }} 
+            />
+          )}
+
           {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Users} 
@@ -3302,6 +3322,7 @@ export default function App() {
                 {view === 'leads' && 'Clientes'}
                 {view === 'agency_panel' && 'Painel Agência'}
                 {view === 'pipefy' && 'Pipefy'}
+                {view === 'crm' && 'CRM'}
               </h2>
               <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">
                 <MapPin size={14} />
@@ -3344,7 +3365,7 @@ export default function App() {
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
+                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
                 className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
@@ -3742,6 +3763,7 @@ export default function App() {
                             has_finance: modules.finance,
                             has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
                             has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
+                            has_crm: modules.crm !== undefined ? modules.crm : true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
@@ -3952,6 +3974,24 @@ export default function App() {
                 clients={agencyUsers}
                 onUpdateStatus={handleUpdateProcessStatus}
                 onSelectProcess={(process) => fetchProcessDetail(process.id)}
+              />
+            </motion.div>
+          )}
+
+          {view === 'crm' && (
+            <motion.div
+              key="crm"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="h-full"
+            >
+              <CRMPanel
+                processes={processes}
+                clients={agencyUsers}
+                onUpdateStatus={handleUpdateProcessStatus}
+                onSelectProcess={(process) => fetchProcessDetail(process.id)}
+                agencyId={getScopedAgencyId() ?? 0}
+                user={user!}
               />
             </motion.div>
           )}
@@ -6022,6 +6062,18 @@ export default function App() {
                               />
                               <label htmlFor="has_leads" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 Módulo Leads Habilitado
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_crm"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={newAgency.has_crm}
+                                onChange={e => setNewAgency({ ...newAgency, has_crm: e.target.checked })}
+                              />
+                              <label htmlFor="has_crm" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                CRM Habilitado
                               </label>
                             </div>
                           </div>

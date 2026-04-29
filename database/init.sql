@@ -255,3 +255,18 @@ CREATE TABLE IF NOT EXISTS process_forms (
   FOREIGN KEY (assigned_by) REFERENCES users(id),
   UNIQUE(process_id, form_id)
 );
+
+CREATE TABLE IF NOT EXISTS crm_automation_rules (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT true,
+  trigger_type TEXT NOT NULL,
+  trigger_config TEXT DEFAULT '{}',
+  action_type TEXT NOT NULL,
+  action_config TEXT DEFAULT '{}',
+  created_by INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);

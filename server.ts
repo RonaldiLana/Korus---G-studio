@@ -719,7 +719,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -759,7 +759,8 @@ async function startServer() {
     console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
     const { name, slug, has_finance, has_pipefy } = req.body;
     const has_leads = req.body.has_leads !== undefined ? req.body.has_leads : true;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads });
+    const has_crm = req.body.has_crm !== undefined ? req.body.has_crm : true;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });
@@ -1780,8 +1781,103 @@ async function startServer() {
     }
   });
 
+  // ─── CRM Automation Rules ───────────────────────────────────────────────────
+  app.get("/api/crm-automation-rules", async (req, res) => {
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      const result = await query(
+        "SELECT * FROM crm_automation_rules WHERE agency_id = $1 ORDER BY created_at DESC",
+        [agency_id]
+      );
+      res.json(result.rows);
+    } catch (e) {
+      console.error('[CRM RULES GET]', e);
+      res.status(500).json({ error: "Erro ao buscar regras" });
+    }
+  });
+
+  app.post("/api/crm-automation-rules", async (req, res) => {
+    const { agency_id, name, trigger_type, trigger_config, action_type, action_config, created_by } = req.body;
+    if (!agency_id || !name || !trigger_type || !action_type) {
+      return res.status(400).json({ error: "Campos obrigatórios: agency_id, name, trigger_type, action_type" });
+    }
+    try {
+      const result = await query(
+        `INSERT INTO crm_automation_rules (agency_id, name, trigger_type, trigger_config, action_type, action_config, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [
+          agency_id,
+          name,
+          trigger_type,
+          JSON.stringify(trigger_config || {}),
+          action_type,
+          JSON.stringify(action_config || {}),
+          created_by || null,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (e) {
+      console.error('[CRM RULES POST]', e);
+      res.status(500).json({ error: "Erro ao criar regra" });
+    }
+  });
+
+  app.put("/api/crm-automation-rules/:id", async (req, res) => {
+    const { id } = req.params;
+    const { name, is_active, trigger_type, trigger_config, action_type, action_config, agency_id } = req.body;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      // Valida ownership — regra deve pertencer à agência informada
+      const check = await query("SELECT id FROM crm_automation_rules WHERE id = $1 AND agency_id = $2", [id, agency_id]);
+      if (!check.rows.length) return res.status(403).json({ error: "Regra não encontrada ou acesso negado" });
+
+      const result = await query(
+        `UPDATE crm_automation_rules
+         SET name = COALESCE($1, name),
+             is_active = COALESCE($2, is_active),
+             trigger_type = COALESCE($3, trigger_type),
+             trigger_config = COALESCE($4, trigger_config),
+             action_type = COALESCE($5, action_type),
+             action_config = COALESCE($6, action_config)
+         WHERE id = $7 RETURNING *`,
+        [
+          name,
+          is_active,
+          trigger_type,
+          trigger_config !== undefined ? JSON.stringify(trigger_config) : undefined,
+          action_type,
+          action_config !== undefined ? JSON.stringify(action_config) : undefined,
+          id,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (e) {
+      console.error('[CRM RULES PUT]', e);
+      res.status(500).json({ error: "Erro ao atualizar regra" });
+    }
+  });
+
+  app.delete("/api/crm-automation-rules/:id", async (req, res) => {
+    const { id } = req.params;
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      const check = await query("SELECT id FROM crm_automation_rules WHERE id = $1 AND agency_id = $2", [id, agency_id]);
+      if (!check.rows.length) return res.status(403).json({ error: "Regra não encontrada ou acesso negado" });
+
+      await query("DELETE FROM crm_automation_rules WHERE id = $1", [id]);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[CRM RULES DELETE]', e);
+      res.status(500).json({ error: "Erro ao remover regra" });
+    }
+  });
+  // ────────────────────────────────────────────────────────────────────────────
+
   app.get("/api/leads", async (req, res) => {
     const { agency_id } = req.query;
+
 
     try {
       let sql = `

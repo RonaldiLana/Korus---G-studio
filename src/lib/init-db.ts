@@ -126,6 +126,8 @@ async function applyMigrations() {
       FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
       FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
     )`,
+    // agencies: coluna para configuração SMTP por agência (armazenada como JSON)
+    `ALTER TABLE agencies ADD COLUMN IF NOT EXISTS smtp_config TEXT DEFAULT '{}'`,
   ];
 
   for (const sql of migrations) {

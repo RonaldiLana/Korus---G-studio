@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import fs from "fs";
+import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,6 +100,45 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
     return false;
   }
 }
+
+// ─── Helpers de e-mail SMTP ──────────────────────────────────────────────────
+
+function substituteEmailVariables(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+async function sendAgencyEmail(agencyId: number, to: string, subject: string, fromName: string, htmlBody: string) {
+  const agencyResult = await query("SELECT smtp_config, name FROM agencies WHERE id = $1", [agencyId]);
+  if (!agencyResult.rows[0]) throw new Error('Agência não encontrada');
+
+  let smtpConfig: Record<string, any> = {};
+  try {
+    smtpConfig = JSON.parse(agencyResult.rows[0].smtp_config || '{}');
+  } catch { /* sem config */ }
+
+  if (!smtpConfig.smtp_host || !smtpConfig.smtp_user || !smtpConfig.smtp_pass) {
+    throw new Error('SMTP não configurado para esta agência');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.smtp_host,
+    port: Number(smtpConfig.smtp_port || 587),
+    secure: Number(smtpConfig.smtp_port || 587) === 465,
+    auth: {
+      user: smtpConfig.smtp_user,
+      pass: smtpConfig.smtp_pass,
+    },
+  });
+
+  await transporter.sendMail({
+    from: `"${fromName || smtpConfig.smtp_from_name || agencyResult.rows[0].name}" <${smtpConfig.smtp_from_email || smtpConfig.smtp_user}>`,
+    to,
+    subject,
+    html: htmlBody,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Insere dados padrão para uma agência (destinos, tipos de visto, formulários,
@@ -872,6 +912,62 @@ async function startServer() {
     }
   });
 
+  // GET configuração SMTP de uma agência
+  app.get("/api/agencies/:id/smtp", async (req, res) => {
+    try {
+      const result = await query("SELECT smtp_config FROM agencies WHERE id = $1", [req.params.id]);
+      if (!result.rows[0]) return res.status(404).json({ error: 'Agência não encontrada' });
+      let smtpConfig: Record<string, any> = {};
+      try { smtpConfig = JSON.parse(result.rows[0].smtp_config || '{}'); } catch {}
+      // Não retorna a senha
+      const { smtp_pass, ...publicConfig } = smtpConfig;
+      res.json({ smtp_config: publicConfig, has_password: Boolean(smtp_pass) });
+    } catch (e) {
+      console.error('Error fetching SMTP config:', e);
+      res.status(500).json({ error: 'Failed to fetch SMTP config' });
+    }
+  });
+
+  // PUT configuração SMTP de uma agência
+  app.put("/api/agencies/:id/smtp", async (req, res) => {
+    const { smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name } = req.body;
+    try {
+      // Preserva a senha existente se não for enviada nova
+      const existing = await query("SELECT smtp_config FROM agencies WHERE id = $1", [req.params.id]);
+      let currentConfig: Record<string, any> = {};
+      try { currentConfig = JSON.parse(existing.rows[0]?.smtp_config || '{}'); } catch {}
+
+      const newConfig: Record<string, any> = {
+        smtp_host: smtp_host || currentConfig.smtp_host || '',
+        smtp_port: smtp_port || currentConfig.smtp_port || 587,
+        smtp_user: smtp_user || currentConfig.smtp_user || '',
+        smtp_from_email: smtp_from_email || currentConfig.smtp_from_email || '',
+        smtp_from_name: smtp_from_name || currentConfig.smtp_from_name || '',
+        smtp_pass: smtp_pass || currentConfig.smtp_pass || '',
+      };
+
+      await query("UPDATE agencies SET smtp_config = $1 WHERE id = $2", [JSON.stringify(newConfig), req.params.id]);
+      const auditUserId = await getAuditUserId(req.params.id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "smtp_config_updated", "Configuração SMTP atualizada"]);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error updating SMTP config:', e);
+      res.status(500).json({ error: 'Failed to update SMTP config' });
+    }
+  });
+
+  // POST - Testar configuração SMTP
+  app.post("/api/agencies/:id/smtp/test", async (req, res) => {
+    const { test_email } = req.body;
+    if (!test_email) return res.status(400).json({ error: 'E-mail de teste obrigatório' });
+    try {
+      await sendAgencyEmail(Number(req.params.id), test_email, 'Teste SMTP — Korus', 'Korus', '<p>Configuração SMTP funcionando corretamente! 🎉</p>');
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Falha ao enviar e-mail de teste' });
+    }
+  });
+
   // Destinations CRUD
   app.get("/api/destinations", async (req, res) => {
     const { agency_id } = req.query;
@@ -1602,6 +1698,67 @@ async function startServer() {
           }
         } catch (e) {
           console.error('[CRM NOTIF TRIGGER]', e);
+        }
+
+        // Disparar regras email_client quando status mudar
+        try {
+          const emailRulesResult = await query(
+            `SELECT * FROM crm_automation_rules
+             WHERE agency_id = $1 AND is_active = true
+               AND trigger_type = 'stage_change' AND action_type = 'email_client'`,
+            [existingProcess.agency_id]
+          );
+          if (emailRulesResult.rows.length > 0) {
+            // Buscar dados completos do processo para substituição de variáveis
+            const processDataResult = await query(
+              `SELECT p.id, p.status, p.client_name, p.client_email,
+                      d.name as destination_name,
+                      u.name as consultant_name,
+                      a.name as agency_name
+               FROM processes p
+               LEFT JOIN destinations d ON d.id = p.destination_id
+               LEFT JOIN users u ON u.id = p.consultant_id
+               LEFT JOIN agencies a ON a.id = p.agency_id
+               WHERE p.id = $1`,
+              [req.params.id]
+            );
+            const proc = processDataResult.rows[0];
+            if (proc && proc.client_email) {
+              const vars: Record<string, string> = {
+                client_name: proc.client_name || '',
+                destination: proc.destination_name || '',
+                process_status: newStatus || '',
+                consultant_name: proc.consultant_name || '',
+                agency_name: proc.agency_name || '',
+              };
+
+              for (const rule of emailRulesResult.rows) {
+                let triggerCfg: Record<string, any> = {};
+                let actionCfg: Record<string, any> = {};
+                try { triggerCfg = typeof rule.trigger_config === 'string' ? JSON.parse(rule.trigger_config) : (rule.trigger_config || {}); } catch {}
+                try { actionCfg = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {}); } catch {}
+
+                const fromStage = triggerCfg.from_stage || '';
+                const toStage = triggerCfg.to_stage || '';
+                const fromMatch = !fromStage || fromStage === existingProcess.status;
+                const toMatch = !toStage || toStage === newStatus;
+
+                if (fromMatch && toMatch && actionCfg.subject) {
+                  const subject = substituteEmailVariables(actionCfg.subject, vars);
+                  const body = substituteEmailVariables(actionCfg.body || '', vars);
+                  const fromName = actionCfg.from_name || '';
+                  try {
+                    await sendAgencyEmail(existingProcess.agency_id, proc.client_email, subject, fromName, body);
+                    console.log(`[EMAIL TRIGGER] Regra "${rule.name}" → enviado para ${proc.client_email}`);
+                  } catch (emailErr: any) {
+                    console.error(`[EMAIL TRIGGER] Falha na regra "${rule.name}":`, emailErr.message);
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[CRM EMAIL TRIGGER]', e);
         }
       }
 

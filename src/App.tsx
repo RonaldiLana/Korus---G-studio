@@ -62,7 +62,9 @@ import {
   Key,
   Trello,
   X,
-  Menu
+  Menu,
+  Mail,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
@@ -706,7 +708,13 @@ export default function App() {
     pre_form_questions: []
   });
   const [agencyTab, setAgencyTab] = useState<'geral' | 'configuracoes' | 'clientes'>('geral');
-  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos'>('destinos');
+  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos' | 'email'>('destinos');
+  const [smtpConfig, setSmtpConfig] = useState({ smtp_host: '', smtp_port: '587', smtp_user: '', smtp_pass: '', smtp_from_email: '', smtp_from_name: '' });
+  const [smtpHasPassword, setSmtpHasPassword] = useState(false);
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpTestEmail, setSmtpTestEmail] = useState('');
+  const [smtpMessage, setSmtpMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [forms, setForms] = useState<Form[]>([]);
   const [showVisaTypeModal, setShowVisaTypeModal] = useState(false);
   const [editingVisaType, setEditingVisaType] = useState<VisaType | null>(null);
@@ -1370,8 +1378,73 @@ export default function App() {
         destinations,
         pre_form_questions,
       });
+
+      // Carregar configuração SMTP junto com os dados da agência
+      if (agencyData.id) {
+        try {
+          const smtpRes = await fetch(`${API_URL}/api/agencies/${agencyData.id}/smtp`, {
+            headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+          });
+          if (smtpRes.ok) {
+            const smtpData = await smtpRes.json();
+            setSmtpConfig({
+              smtp_host: smtpData.smtp_config?.smtp_host || '',
+              smtp_port: String(smtpData.smtp_config?.smtp_port || '587'),
+              smtp_user: smtpData.smtp_config?.smtp_user || '',
+              smtp_pass: '',
+              smtp_from_email: smtpData.smtp_config?.smtp_from_email || '',
+              smtp_from_name: smtpData.smtp_config?.smtp_from_name || '',
+            });
+            setSmtpHasPassword(smtpData.has_password || false);
+          }
+        } catch { /* silencioso */ }
+      }
     } catch (err) {
       console.error('[FETCH] fetchAgencySettings error:', err);
+    }
+  };
+
+  const handleSaveSmtp = async () => {
+    const agencyId = agencySettings.id;
+    if (!agencyId) return;
+    setSmtpSaving(true);
+    setSmtpMessage(null);
+    try {
+      const res = await fetch(`${API_URL}/api/agencies/${agencyId}/smtp`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+        body: JSON.stringify(smtpConfig),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSmtpMessage({ type: 'success', text: 'Configuração SMTP salva com sucesso!' });
+      if (smtpConfig.smtp_pass) setSmtpHasPassword(true);
+    } catch (e: any) {
+      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao salvar configuração SMTP.' });
+    } finally {
+      setSmtpSaving(false);
+    }
+  };
+
+  const handleTestSmtp = async () => {
+    const agencyId = agencySettings.id;
+    if (!agencyId || !smtpTestEmail) return;
+    setSmtpTesting(true);
+    setSmtpMessage(null);
+    try {
+      const res = await fetch(`${API_URL}/api/agencies/${agencyId}/smtp/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ test_email: smtpTestEmail }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Falha no teste');
+      }
+      setSmtpMessage({ type: 'success', text: `E-mail de teste enviado para ${smtpTestEmail}!` });
+    } catch (e: any) {
+      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao enviar e-mail de teste.' });
+    } finally {
+      setSmtpTesting(false);
     }
   };
 
@@ -4639,6 +4712,7 @@ export default function App() {
                       { id: 'vistos', label: 'Tipos de Visto', icon: ShieldCheck },
                       { id: 'formularios', label: 'Form Builder', icon: FileText },
                       { id: 'planos', label: 'Planos', icon: DollarSign },
+                      { id: 'email', label: 'E-mail SMTP', icon: Mail },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -5203,6 +5277,139 @@ export default function App() {
                             )}
                           </tbody>
                         </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {configSubTab === 'email' && (
+                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                      <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
+                        <div>
+                          <h3 className="font-black text-lg uppercase tracking-tighter">Configuração SMTP</h3>
+                          <p className="text-xs text-[var(--text-muted)] mt-1">Configure o servidor de e-mail para envio automático de notificações aos clientes via regras de automação CRM.</p>
+                        </div>
+                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${smtpHasPassword ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                          {smtpHasPassword ? <Check size={12} /> : <AlertCircle size={12} />}
+                          {smtpHasPassword ? 'Configurado' : 'Não configurado'}
+                        </div>
+                      </div>
+
+                      <div className="p-6 space-y-6">
+                        {smtpMessage && (
+                          <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 ${smtpMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                            {smtpMessage.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
+                            {smtpMessage.text}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Servidor SMTP (Host)</label>
+                            <input
+                              type="text"
+                              placeholder="smtp.gmail.com"
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_host}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_host: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Porta</label>
+                            <input
+                              type="number"
+                              placeholder="587"
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_port}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_port: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Usuário (E-mail)</label>
+                            <input
+                              type="email"
+                              placeholder="seuagencia@gmail.com"
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_user}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_user: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">
+                              Senha / App Password
+                              {smtpHasPassword && <span className="ml-2 text-emerald-400">(configurada — deixe em branco para manter)</span>}
+                            </label>
+                            <input
+                              type="password"
+                              placeholder={smtpHasPassword ? '••••••••••••••••' : 'App Password do Gmail'}
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_pass}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_pass: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">E-mail Remetente</label>
+                            <input
+                              type="email"
+                              placeholder="noreply@suaagencia.com"
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_from_email}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_from_email: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Nome Remetente</label>
+                            <input
+                              type="text"
+                              placeholder="Sua Agência"
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpConfig.smtp_from_name}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_from_name: e.target.value })}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                          <button
+                            onClick={handleSaveSmtp}
+                            disabled={smtpSaving}
+                            className="flex-1 brand-gradient text-black font-black py-3 rounded-2xl hover:opacity-90 transition-all shadow-lg uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60"
+                          >
+                            {smtpSaving ? <Clock size={14} className="animate-spin" /> : <Check size={14} />}
+                            {smtpSaving ? 'Salvando...' : 'Salvar Configuração SMTP'}
+                          </button>
+                        </div>
+
+                        <div className="border-t border-[var(--border-color)] pt-6 space-y-4">
+                          <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)]">Teste de Envio</h4>
+                          <p className="text-xs text-[var(--text-muted)]">Envie um e-mail de teste para verificar se a configuração está correta.</p>
+                          <div className="flex gap-3">
+                            <input
+                              type="email"
+                              placeholder="seu@email.com"
+                              className="flex-1 px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
+                              value={smtpTestEmail}
+                              onChange={(e) => setSmtpTestEmail(e.target.value)}
+                            />
+                            <button
+                              onClick={handleTestSmtp}
+                              disabled={smtpTesting || !smtpTestEmail}
+                              className="px-6 py-3 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 font-black rounded-2xl uppercase tracking-widest text-xs flex items-center gap-2 transition-all disabled:opacity-50"
+                            >
+                              {smtpTesting ? <Clock size={14} className="animate-spin" /> : <Send size={14} />}
+                              {smtpTesting ? 'Enviando...' : 'Testar'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl p-4 space-y-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Configuração Gmail (App Password)</p>
+                          <ul className="text-xs text-[var(--text-muted)] space-y-1 list-disc list-inside">
+                            <li>Host: <span className="text-[var(--text-main)] font-bold">smtp.gmail.com</span></li>
+                            <li>Porta: <span className="text-[var(--text-main)] font-bold">587</span></li>
+                            <li>Usuário: seu e-mail Gmail completo</li>
+                            <li>Senha: App Password gerada em <span className="text-violet-400">myaccount.google.com → Segurança → Senhas de apps</span></li>
+                          </ul>
+                        </div>
                       </div>
                     </div>
                   )}

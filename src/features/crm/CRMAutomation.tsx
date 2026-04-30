@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Edit3, X, Check } from 'lucide-react';
+import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Edit3, X, Check, Bell, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AutomationRule {
@@ -28,8 +28,8 @@ const TRIGGER_OPTIONS = [
   { value: 'inactivity', label: 'Inatividade por N dias' },
 ];
 
-const ACTION_OPTIONS = [
-  { value: 'notify_team', label: 'Notificar Equipe' },
+const INTERNAL_ACTION_OPTIONS = [
+  { value: 'notify_team', label: 'Notificar Equipe (Pop-up)' },
   { value: 'advance_stage', label: 'Avançar Etapa' },
   { value: 'create_task', label: 'Criar Tarefa' },
 ];
@@ -51,9 +51,10 @@ const TRIGGER_LABELS: Record<string, string> = {
 };
 
 const ACTION_LABELS: Record<string, string> = {
-  notify_team: 'Notificar Equipe',
+  notify_team: 'Notif. Equipe',
   advance_stage: 'Avançar Etapa',
   create_task: 'Criar Tarefa',
+  email_client: 'E-mail ao Cliente',
 };
 
 const emptyForm = {
@@ -66,6 +67,9 @@ const emptyForm = {
   action_message: '',
   action_stage: '',
   action_task: '',
+  action_subject: '',
+  action_from_name: '',
+  action_email_body: '',
 };
 
 export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token }) => {
@@ -77,6 +81,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
   const [saving, setSaving] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState<number | null>(null);
   const [error, setError] = React.useState('');
+  const [activeSection, setActiveSection] = React.useState<'internal' | 'email'>('internal');
 
   const headers = React.useMemo(
     () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
@@ -101,7 +106,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
 
   const openCreate = () => {
     setEditingRule(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, action_type: activeSection === 'email' ? 'email_client' : 'notify_team' });
     setError('');
     setShowModal(true);
   };
@@ -118,6 +123,9 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
       action_message: rule.action_config?.message || '',
       action_stage: rule.action_config?.stage || '',
       action_task: rule.action_config?.task_title || '',
+      action_subject: rule.action_config?.subject || '',
+      action_from_name: rule.action_config?.from_name || '',
+      action_email_body: rule.action_config?.body || '',
     });
     setError('');
     setShowModal(true);
@@ -141,11 +149,17 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
         ? { stage: form.action_stage }
         : form.action_type === 'create_task'
         ? { task_title: form.action_task }
+        : form.action_type === 'email_client'
+        ? { subject: form.action_subject, from_name: form.action_from_name, body: form.action_email_body }
         : {},
   });
 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('Nome da regra é obrigatório'); return; }
+    if (form.action_type === 'email_client' && !form.action_subject.trim()) {
+      setError('Assunto do e-mail é obrigatório');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -195,6 +209,10 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
     }
   };
 
+  const filteredRules = rules.filter((r) =>
+    activeSection === 'email' ? r.action_type === 'email_client' : r.action_type !== 'email_client'
+  );
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -206,7 +224,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
           <div>
             <h2 className="text-xl font-black uppercase tracking-tighter">Automações</h2>
             <p className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
-              {rules.length} regra{rules.length !== 1 ? 's' : ''} configurada{rules.length !== 1 ? 's' : ''}
+              {filteredRules.length} regra{filteredRules.length !== 1 ? 's' : ''} configurada{filteredRules.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -219,6 +237,32 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
         </button>
       </div>
 
+      {/* Section switcher */}
+      <div className="flex gap-1 p-1 bg-[var(--bg-input)] rounded-2xl">
+        <button
+          onClick={() => setActiveSection('internal')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+            activeSection === 'internal'
+              ? 'bg-[var(--bg-card)] text-emerald-400 shadow-sm'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+          }`}
+        >
+          <Bell size={12} />
+          Notif. Interna (Pop-up)
+        </button>
+        <button
+          onClick={() => setActiveSection('email')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+            activeSection === 'email'
+              ? 'bg-[var(--bg-card)] text-violet-400 shadow-sm'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+          }`}
+        >
+          <Mail size={12} />
+          Notif. Cliente (E-mail)
+        </button>
+      </div>
+
       {error && (
         <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 font-bold">
           {error}
@@ -228,20 +272,28 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
       {/* Lista de regras */}
       {loading ? (
         <div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div>
-      ) : rules.length === 0 ? (
+      ) : filteredRules.length === 0 ? (
         <div className="text-center py-16 space-y-3">
           <div className="w-16 h-16 mx-auto bg-[var(--bg-input)] rounded-2xl flex items-center justify-center">
-            <Zap size={28} className="text-[var(--text-muted)]" />
+            {activeSection === 'email'
+              ? <Mail size={28} className="text-[var(--text-muted)]" />
+              : <Zap size={28} className="text-[var(--text-muted)]" />}
           </div>
-          <p className="text-sm font-bold text-[var(--text-muted)]">Nenhuma regra configurada</p>
-          <p className="text-xs text-[var(--text-muted)]">Crie regras para automatizar tarefas repetitivas</p>
+          <p className="text-sm font-bold text-[var(--text-muted)]">
+            {activeSection === 'email' ? 'Nenhuma regra de e-mail configurada' : 'Nenhuma regra interna configurada'}
+          </p>
+          <p className="text-xs text-[var(--text-muted)]">
+            {activeSection === 'email'
+              ? 'Crie regras para notificar clientes automaticamente por e-mail'
+              : 'Crie regras para notificar a equipe automaticamente'}
+          </p>
           <button onClick={openCreate} className="mt-2 brand-gradient text-black px-4 py-2 rounded-xl text-sm font-bold hover:opacity-90 transition-all">
             Criar primeira regra
           </button>
         </div>
       ) : (
         <div className="space-y-3">
-          {rules.map((rule) => (
+          {filteredRules.map((rule) => (
             <motion.div
               key={rule.id}
               layout
@@ -277,8 +329,12 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
                       {TRIGGER_LABELS[rule.trigger_type] || rule.trigger_type}
                     </span>
                     <span className="text-[var(--text-muted)] text-xs">→</span>
-                    <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-black text-emerald-400 uppercase tracking-widest">
-                      <Check size={10} />
+                    <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                      rule.action_type === 'email_client'
+                        ? 'bg-violet-500/10 border border-violet-500/20 text-violet-400'
+                        : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                    }`}>
+                      {rule.action_type === 'email_client' ? <Mail size={10} /> : <Check size={10} />}
                       {ACTION_LABELS[rule.action_type] || rule.action_type}
                     </span>
                   </div>
@@ -291,6 +347,16 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
                   {rule.trigger_type === 'inactivity' && (
                     <p className="text-[10px] text-[var(--text-muted)] mt-1.5">
                       Após {rule.trigger_config?.days || 7} dias sem atividade
+                    </p>
+                  )}
+                  {rule.action_type === 'email_client' && rule.action_config?.subject && (
+                    <p className="text-[10px] text-[var(--text-muted)] mt-1.5">
+                      Assunto: {rule.action_config.subject}
+                    </p>
+                  )}
+                  {rule.action_type === 'email_client' && rule.action_config?.from_name && (
+                    <p className="text-[10px] text-[var(--text-muted)]">
+                      Remetente: {rule.action_config.from_name}
                     </p>
                   )}
                 </div>
@@ -353,9 +419,14 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
               <div className="w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-color)] rounded-3xl shadow-2xl overflow-hidden">
                 {/* Modal header */}
                 <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
-                  <h3 className="text-base font-black tracking-tighter">
-                    {editingRule ? 'Editar Regra' : 'Nova Regra de Automação'}
-                  </h3>
+                  <div>
+                    <h3 className="text-base font-black tracking-tighter">
+                      {editingRule ? 'Editar Regra' : 'Nova Regra de Automação'}
+                    </h3>
+                    <p className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest mt-0.5">
+                      {form.action_type === 'email_client' ? 'Notificação de Cliente (E-mail)' : 'Notificação Interna (Pop-up)'}
+                    </p>
+                  </div>
                   <button
                     onClick={() => setShowModal(false)}
                     className="p-2 hover:bg-[var(--bg-input)] rounded-xl text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
@@ -445,61 +516,119 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
                     </div>
                   )}
 
-                  {/* Ação */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
-                      Ação (O quê?)
-                    </label>
-                    <select
-                      value={form.action_type}
-                      onChange={(e) => setForm({ ...form, action_type: e.target.value })}
-                      className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    >
-                      {ACTION_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Ação - apenas para regras internas */}
+                  {form.action_type !== 'email_client' && (
+                    <>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+                          Ação (O quê?)
+                        </label>
+                        <select
+                          value={form.action_type}
+                          onChange={(e) => setForm({ ...form, action_type: e.target.value })}
+                          className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
+                        >
+                          {INTERNAL_ACTION_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
 
-                  {/* Config da ação */}
-                  {form.action_type === 'notify_team' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Mensagem</label>
-                      <textarea
-                        value={form.action_message}
-                        onChange={(e) => setForm({ ...form, action_message: e.target.value })}
-                        placeholder="Ex: Atenção: processo avançou para análise"
-                        rows={2}
-                        className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50 resize-none"
-                      />
-                    </div>
+                      {form.action_type === 'notify_team' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Mensagem</label>
+                          <textarea
+                            value={form.action_message}
+                            onChange={(e) => setForm({ ...form, action_message: e.target.value })}
+                            placeholder="Ex: Atenção: processo avançou para análise"
+                            rows={2}
+                            className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50 resize-none"
+                          />
+                        </div>
+                      )}
+
+                      {form.action_type === 'advance_stage' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Avançar Para</label>
+                          <select
+                            value={form.action_stage}
+                            onChange={(e) => setForm({ ...form, action_stage: e.target.value })}
+                            className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          >
+                            <option value="">Selecionar etapa</option>
+                            {STAGE_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                          </select>
+                        </div>
+                      )}
+
+                      {form.action_type === 'create_task' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Título da Tarefa</label>
+                          <input
+                            type="text"
+                            value={form.action_task}
+                            onChange={(e) => setForm({ ...form, action_task: e.target.value })}
+                            placeholder="Ex: Verificar documentação do cliente"
+                            className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
 
-                  {form.action_type === 'advance_stage' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Avançar Para</label>
-                      <select
-                        value={form.action_stage}
-                        onChange={(e) => setForm({ ...form, action_stage: e.target.value })}
-                        className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
-                      >
-                        <option value="">Selecionar etapa</option>
-                        {STAGE_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                      </select>
-                    </div>
-                  )}
-
-                  {form.action_type === 'create_task' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Título da Tarefa</label>
-                      <input
-                        type="text"
-                        value={form.action_task}
-                        onChange={(e) => setForm({ ...form, action_task: e.target.value })}
-                        placeholder="Ex: Verificar documentação do cliente"
-                        className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
-                      />
-                    </div>
+                  {/* Campos de e-mail - apenas para regras de cliente */}
+                  {form.action_type === 'email_client' && (
+                    <>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+                          Remetente
+                        </label>
+                        <input
+                          type="text"
+                          value={form.action_from_name}
+                          onChange={(e) => setForm({ ...form, action_from_name: e.target.value })}
+                          placeholder="Korus@NomeDaAgencia"
+                          className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+                          Assunto do E-mail *
+                        </label>
+                        <input
+                          type="text"
+                          value={form.action_subject}
+                          onChange={(e) => setForm({ ...form, action_subject: e.target.value })}
+                          placeholder="Ex: Atualização do seu processo"
+                          className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
+                          Modelo do E-mail
+                        </label>
+                        <p className="text-[10px] text-[var(--text-muted)] leading-relaxed">
+                          Variáveis:{' '}
+                          {['{{client_name}}', '{{destination}}', '{{process_status}}', '{{consultant_name}}', '{{agency_name}}'].map((v) => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => setForm((f) => ({ ...f, action_email_body: f.action_email_body + v }))}
+                              className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded font-mono text-[9px] hover:bg-violet-500/20 transition-all cursor-pointer"
+                            >
+                              {v}
+                            </button>
+                          ))}
+                        </p>
+                        <textarea
+                          value={form.action_email_body}
+                          onChange={(e) => setForm({ ...form, action_email_body: e.target.value })}
+                          placeholder="Olá {{client_name}}, seu processo foi atualizado para {{process_status}}..."
+                          rows={5}
+                          className="w-full px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-500/50 resize-none"
+                        />
+                      </div>
+                    </>
                   )}
                 </div>
 

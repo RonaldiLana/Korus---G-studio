@@ -709,7 +709,7 @@ export default function App() {
   });
   const [agencyTab, setAgencyTab] = useState<'geral' | 'configuracoes' | 'clientes'>('geral');
   const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos' | 'email'>('destinos');
-  const [smtpConfig, setSmtpConfig] = useState({ smtp_host: '', smtp_port: '587', smtp_user: '', smtp_pass: '', smtp_from_email: '', smtp_from_name: '' });
+  const [smtpConfig, setSmtpConfig] = useState({ api_key: '', from_email: '', from_name: '' });
   const [smtpHasPassword, setSmtpHasPassword] = useState(false);
   const [smtpSaving, setSmtpSaving] = useState(false);
   const [smtpTesting, setSmtpTesting] = useState(false);
@@ -1379,7 +1379,7 @@ export default function App() {
         pre_form_questions,
       });
 
-      // Carregar configuração SMTP junto com os dados da agência
+      // Carregar configuração Resend junto com os dados da agência
       if (agencyData.id) {
         try {
           const smtpRes = await fetch(`${API_URL}/api/agencies/${agencyData.id}/smtp`, {
@@ -1388,14 +1388,11 @@ export default function App() {
           if (smtpRes.ok) {
             const smtpData = await smtpRes.json();
             setSmtpConfig({
-              smtp_host: smtpData.smtp_config?.smtp_host || '',
-              smtp_port: String(smtpData.smtp_config?.smtp_port || '587'),
-              smtp_user: smtpData.smtp_config?.smtp_user || '',
-              smtp_pass: '',
-              smtp_from_email: smtpData.smtp_config?.smtp_from_email || '',
-              smtp_from_name: smtpData.smtp_config?.smtp_from_name || '',
+              api_key: '',
+              from_email: smtpData.resend_config?.from_email || '',
+              from_name: smtpData.resend_config?.from_name || '',
             });
-            setSmtpHasPassword(smtpData.has_password || false);
+            setSmtpHasPassword(smtpData.has_api_key || false);
           }
         } catch { /* silencioso */ }
       }
@@ -1416,10 +1413,12 @@ export default function App() {
         body: JSON.stringify(smtpConfig),
       });
       if (!res.ok) throw new Error(await res.text());
-      setSmtpMessage({ type: 'success', text: 'Configuração SMTP salva com sucesso!' });
-      if (smtpConfig.smtp_pass) setSmtpHasPassword(true);
+      setSmtpMessage({ type: 'success', text: 'Configuração salva com sucesso!' });
+      if (smtpConfig.api_key) setSmtpHasPassword(true);
+      // Limpa campo de API key após salvar
+      setSmtpConfig(prev => ({ ...prev, api_key: '' }));
     } catch (e: any) {
-      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao salvar configuração SMTP.' });
+      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao salvar.' });
     } finally {
       setSmtpSaving(false);
     }
@@ -5285,8 +5284,8 @@ export default function App() {
                     <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                       <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
                         <div>
-                          <h3 className="font-black text-lg uppercase tracking-tighter">Configuração SMTP</h3>
-                          <p className="text-xs text-[var(--text-muted)] mt-1">Configure o servidor de e-mail para envio automático de notificações aos clientes via regras de automação CRM.</p>
+                          <h3 className="font-black text-lg uppercase tracking-tighter">E-mail via Resend</h3>
+                          <p className="text-xs text-[var(--text-muted)] mt-1">Configure o Resend para envio automático de e-mails aos clientes via regras de automação CRM. Funciona em qualquer servidor de hospedagem.</p>
                         </div>
                         <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${smtpHasPassword ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
                           {smtpHasPassword ? <Check size={12} /> : <AlertCircle size={12} />}
@@ -5303,47 +5302,17 @@ export default function App() {
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Servidor SMTP (Host)</label>
-                            <input
-                              type="text"
-                              placeholder="smtp.gmail.com"
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_host}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_host: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Porta</label>
-                            <input
-                              type="number"
-                              placeholder="587"
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_port}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_port: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Usuário (E-mail)</label>
-                            <input
-                              type="email"
-                              placeholder="seuagencia@gmail.com"
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_user}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_user: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
+                          <div className="md:col-span-2 space-y-2">
                             <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">
-                              Senha / App Password
+                              API Key do Resend
                               {smtpHasPassword && <span className="ml-2 text-emerald-400">(configurada — deixe em branco para manter)</span>}
                             </label>
                             <input
                               type="password"
-                              placeholder={smtpHasPassword ? '••••••••••••••••' : 'App Password do Gmail'}
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_pass}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_pass: e.target.value })}
+                              placeholder={smtpHasPassword ? 're_••••••••••••••••••••••••••••••••' : 're_xxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
+                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium font-mono"
+                              value={smtpConfig.api_key}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, api_key: e.target.value })}
                             />
                           </div>
                           <div className="space-y-2">
@@ -5352,9 +5321,10 @@ export default function App() {
                               type="email"
                               placeholder="noreply@suaagencia.com"
                               className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_from_email}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_from_email: e.target.value })}
+                              value={smtpConfig.from_email}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, from_email: e.target.value })}
                             />
+                            <p className="text-[10px] text-[var(--text-muted)] ml-1">Deve ser de um domínio verificado no Resend.</p>
                           </div>
                           <div className="space-y-2">
                             <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Nome Remetente</label>
@@ -5362,26 +5332,23 @@ export default function App() {
                               type="text"
                               placeholder="Sua Agência"
                               className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.smtp_from_name}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, smtp_from_name: e.target.value })}
+                              value={smtpConfig.from_name}
+                              onChange={(e) => setSmtpConfig({ ...smtpConfig, from_name: e.target.value })}
                             />
                           </div>
                         </div>
 
-                        <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                          <button
-                            onClick={handleSaveSmtp}
-                            disabled={smtpSaving}
-                            className="flex-1 brand-gradient text-black font-black py-3 rounded-2xl hover:opacity-90 transition-all shadow-lg uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60"
-                          >
-                            {smtpSaving ? <Clock size={14} className="animate-spin" /> : <Check size={14} />}
-                            {smtpSaving ? 'Salvando...' : 'Salvar Configuração SMTP'}
-                          </button>
-                        </div>
+                        <button
+                          onClick={handleSaveSmtp}
+                          disabled={smtpSaving}
+                          className="w-full brand-gradient text-black font-black py-3 rounded-2xl hover:opacity-90 transition-all shadow-lg uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60"
+                        >
+                          {smtpSaving ? <Clock size={14} className="animate-spin" /> : <Check size={14} />}
+                          {smtpSaving ? 'Salvando...' : 'Salvar Configuração'}
+                        </button>
 
                         <div className="border-t border-[var(--border-color)] pt-6 space-y-4">
                           <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)]">Teste de Envio</h4>
-                          <p className="text-xs text-[var(--text-muted)]">Envie um e-mail de teste para verificar se a configuração está correta.</p>
                           <div className="flex gap-3">
                             <input
                               type="email"
@@ -5402,12 +5369,15 @@ export default function App() {
                         </div>
 
                         <div className="bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl p-4 space-y-2">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Configuração Gmail (App Password)</p>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] flex items-center gap-2">
+                            <Mail size={12} />
+                            Por que Resend?
+                          </p>
                           <ul className="text-xs text-[var(--text-muted)] space-y-1 list-disc list-inside">
-                            <li>Host: <span className="text-[var(--text-main)] font-bold">smtp.gmail.com</span></li>
-                            <li>Porta: <span className="text-[var(--text-main)] font-bold">587</span></li>
-                            <li>Usuário: seu e-mail Gmail completo</li>
-                            <li>Senha: App Password gerada em <span className="text-violet-400">myaccount.google.com → Segurança → Senhas de apps</span></li>
+                            <li>Funciona via HTTPS — sem bloqueio de porta SMTP no servidor</li>
+                            <li>Plano gratuito: <span className="text-[var(--text-main)] font-bold">3.000 e-mails/mês</span></li>
+                            <li>Alta entregabilidade e suporte a domínio próprio</li>
+                            <li>Cadastro em <span className="text-violet-400 font-bold">resend.com</span> com e-mail ou GitHub</li>
                           </ul>
                         </div>
                       </div>

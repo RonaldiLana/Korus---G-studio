@@ -7,7 +7,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import fs from "fs";
-import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,7 +100,7 @@ async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null
   }
 }
 
-// ─── Helpers de e-mail SMTP ──────────────────────────────────────────────────
+// ─── Helpers de e-mail via Resend ───────────────────────────────────────────
 
 function substituteEmailVariables(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
@@ -111,31 +110,26 @@ async function sendAgencyEmail(agencyId: number, to: string, subject: string, fr
   const agencyResult = await query("SELECT smtp_config, name FROM agencies WHERE id = $1", [agencyId]);
   if (!agencyResult.rows[0]) throw new Error('Agência não encontrada');
 
-  let smtpConfig: Record<string, any> = {};
-  try {
-    smtpConfig = JSON.parse(agencyResult.rows[0].smtp_config || '{}');
-  } catch { /* sem config */ }
+  let cfg: Record<string, any> = {};
+  try { cfg = JSON.parse(agencyResult.rows[0].smtp_config || '{}'); } catch {}
 
-  if (!smtpConfig.smtp_host || !smtpConfig.smtp_user || !smtpConfig.smtp_pass) {
-    throw new Error('SMTP não configurado para esta agência');
-  }
+  if (!cfg.api_key) throw new Error('Resend não configurado para esta agência. Adicione a API Key em Configurações → E-mail SMTP.');
 
-  const transporter = nodemailer.createTransport({
-    host: smtpConfig.smtp_host,
-    port: Number(smtpConfig.smtp_port || 587),
-    secure: Number(smtpConfig.smtp_port || 587) === 465,
-    auth: {
-      user: smtpConfig.smtp_user,
-      pass: smtpConfig.smtp_pass,
+  const fromAddress = `${fromName || cfg.from_name || agencyResult.rows[0].name} <${cfg.from_email || 'onboarding@resend.dev'}>`;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${cfg.api_key}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ from: fromAddress, to, subject, html: htmlBody }),
   });
 
-  await transporter.sendMail({
-    from: `"${fromName || smtpConfig.smtp_from_name || agencyResult.rows[0].name}" <${smtpConfig.smtp_from_email || smtpConfig.smtp_user}>`,
-    to,
-    subject,
-    html: htmlBody,
-  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as any).message || `Resend error ${response.status}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -913,55 +907,53 @@ async function startServer() {
   });
 
   // GET configuração SMTP de uma agência
+  // GET configuração Resend de uma agência
   app.get("/api/agencies/:id/smtp", async (req, res) => {
     try {
       const result = await query("SELECT smtp_config FROM agencies WHERE id = $1", [req.params.id]);
       if (!result.rows[0]) return res.status(404).json({ error: 'Agência não encontrada' });
-      let smtpConfig: Record<string, any> = {};
-      try { smtpConfig = JSON.parse(result.rows[0].smtp_config || '{}'); } catch {}
-      // Não retorna a senha
-      const { smtp_pass, ...publicConfig } = smtpConfig;
-      res.json({ smtp_config: publicConfig, has_password: Boolean(smtp_pass) });
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(result.rows[0].smtp_config || '{}'); } catch {}
+      // Não retorna a API key
+      const { api_key, ...publicConfig } = cfg;
+      res.json({ resend_config: publicConfig, has_api_key: Boolean(api_key) });
     } catch (e) {
-      console.error('Error fetching SMTP config:', e);
-      res.status(500).json({ error: 'Failed to fetch SMTP config' });
+      console.error('Error fetching Resend config:', e);
+      res.status(500).json({ error: 'Failed to fetch email config' });
     }
   });
 
-  // PUT configuração SMTP de uma agência
+  // PUT configuração Resend de uma agência
   app.put("/api/agencies/:id/smtp", async (req, res) => {
-    const { smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name } = req.body;
+    const { api_key, from_email, from_name } = req.body;
     try {
-      // Preserva a senha existente se não for enviada nova
+      // Preserva a API key existente se não for enviada nova
       const existing = await query("SELECT smtp_config FROM agencies WHERE id = $1", [req.params.id]);
-      let currentConfig: Record<string, any> = {};
-      try { currentConfig = JSON.parse(existing.rows[0]?.smtp_config || '{}'); } catch {}
+      let current: Record<string, any> = {};
+      try { current = JSON.parse(existing.rows[0]?.smtp_config || '{}'); } catch {}
 
       const newConfig: Record<string, any> = {
-        smtp_host: smtp_host || currentConfig.smtp_host || '',
-        smtp_port: smtp_port || currentConfig.smtp_port || 587,
-        smtp_user: smtp_user || currentConfig.smtp_user || '',
-        smtp_from_email: smtp_from_email || currentConfig.smtp_from_email || '',
-        smtp_from_name: smtp_from_name || currentConfig.smtp_from_name || '',
-        smtp_pass: smtp_pass || currentConfig.smtp_pass || '',
+        api_key: api_key || current.api_key || '',
+        from_email: from_email || current.from_email || '',
+        from_name: from_name || current.from_name || '',
       };
 
       await query("UPDATE agencies SET smtp_config = $1 WHERE id = $2", [JSON.stringify(newConfig), req.params.id]);
       const auditUserId = await getAuditUserId(req.params.id);
-      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "smtp_config_updated", "Configuração SMTP atualizada"]);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "email_config_updated", "Configuração Resend atualizada"]);
       res.json({ success: true });
     } catch (e) {
-      console.error('Error updating SMTP config:', e);
-      res.status(500).json({ error: 'Failed to update SMTP config' });
+      console.error('Error updating Resend config:', e);
+      res.status(500).json({ error: 'Failed to update email config' });
     }
   });
 
-  // POST - Testar configuração SMTP
+  // POST - Testar configuração Resend
   app.post("/api/agencies/:id/smtp/test", async (req, res) => {
     const { test_email } = req.body;
     if (!test_email) return res.status(400).json({ error: 'E-mail de teste obrigatório' });
     try {
-      await sendAgencyEmail(Number(req.params.id), test_email, 'Teste SMTP — Korus', 'Korus', '<p>Configuração SMTP funcionando corretamente! 🎉</p>');
+      await sendAgencyEmail(Number(req.params.id), test_email, 'Teste de E-mail — Korus', 'Korus', '<p style="font-family:sans-serif">Configuração de e-mail funcionando corretamente! 🎉</p><p style="font-family:sans-serif;color:#6b7280;font-size:13px">Este e-mail foi enviado via Resend pela plataforma Korus.</p>');
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message || 'Falha ao enviar e-mail de teste' });

@@ -270,3 +270,15 @@ CREATE TABLE IF NOT EXISTS crm_automation_rules (
   FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS crm_notifications (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL,
+  rule_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  process_id INTEGER,
+  is_read BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+  FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
+);

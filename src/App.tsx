@@ -70,6 +70,7 @@ import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
 import { FormsPanel } from './features/FormsPanel';
 import { CRMPanel } from './features/crm/CRMPanel';
+import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -420,6 +421,7 @@ export default function App() {
   const [visaTypes, setVisaTypes] = useState<VisaType[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [processNotifications, setProcessNotifications] = useState<any[]>([]);
+  const [crmNotifications, setCrmNotifications] = useState<CrmNotification[]>([]);
   const [selectedProcess, setSelectedProcess] = useState<any>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
@@ -1208,6 +1210,46 @@ export default function App() {
         headers: { 'Authorization': token ? `Bearer ${token}` : '' },
       });
       setProcessNotifications(Array.isArray(data) ? data : []);
+    } catch (_) {}
+  };
+
+  const fetchCrmNotifications = async () => {
+    if (!user) return;
+    const role = user.role;
+    if (!['supervisor', 'consultant', 'analyst', 'gerente_financeiro'].includes(role)) return;
+    const agencyId = user.agency_id;
+    if (!agencyId) return;
+    try {
+      const res = await fetch(`${API_URL}/api/crm-notifications?agency_id=${agencyId}`, {
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCrmNotifications(Array.isArray(data) ? data : []);
+      }
+    } catch (_) {}
+  };
+
+  const handleDismissNotification = async (id: number) => {
+    setCrmNotifications((prev) => prev.filter((n) => n.id !== id));
+    try {
+      await fetch(`${API_URL}/api/crm-notifications/${id}/read`, {
+        method: 'PATCH',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+    } catch (_) {}
+  };
+
+  const handleDismissAllNotifications = async () => {
+    const agencyId = user?.agency_id;
+    if (!agencyId) return;
+    setCrmNotifications([]);
+    try {
+      await fetch(`${API_URL}/api/crm-notifications/read-all`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ agency_id: agencyId }),
+      });
     } catch (_) {}
   };
 
@@ -2255,7 +2297,19 @@ export default function App() {
     if (!isClient(user) && user.agency_id) {
       fetchProcessNotifications();
       const notifInterval = setInterval(fetchProcessNotifications, 30000);
-      return () => clearInterval(notifInterval);
+
+      // CRM pop-up notifications para equipe (supervisor, consultor, analista, financeiro)
+      const isTeamMember = ['supervisor', 'consultant', 'analyst', 'gerente_financeiro'].includes(user.role);
+      let crmNotifInterval: ReturnType<typeof setInterval> | null = null;
+      if (isTeamMember) {
+        fetchCrmNotifications();
+        crmNotifInterval = setInterval(fetchCrmNotifications, 30000);
+      }
+
+      return () => {
+        clearInterval(notifInterval);
+        if (crmNotifInterval) clearInterval(crmNotifInterval);
+      };
     }
   }, [user]);
 
@@ -2563,6 +2617,11 @@ export default function App() {
 
   const renderGlobalOverlays = () => (
     <>
+      <NotificationPopup
+        notifications={crmNotifications}
+        onDismiss={handleDismissNotification}
+        onDismissAll={handleDismissAllNotifications}
+      />
       <div
         data-testid="global-toast-container"
         className="fixed top-4 right-4 z-[120] w-full max-w-sm px-4 space-y-3 pointer-events-none"

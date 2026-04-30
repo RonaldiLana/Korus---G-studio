@@ -114,6 +114,18 @@ async function applyMigrations() {
     // visa_types: adicionar colunas base_price e required_docs (usadas pelo servidor)
     `ALTER TABLE visa_types ADD COLUMN IF NOT EXISTS base_price DECIMAL DEFAULT 0`,
     `ALTER TABLE visa_types ADD COLUMN IF NOT EXISTS required_docs TEXT DEFAULT '[]'`,
+    // crm_notifications: tabela de notificações internas geradas pelas regras de automação
+    `CREATE TABLE IF NOT EXISTS crm_notifications (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL,
+      rule_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      process_id INTEGER,
+      is_read BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+      FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
+    )`,
   ];
 
   for (const sql of migrations) {

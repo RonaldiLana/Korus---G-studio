@@ -1570,6 +1570,41 @@ async function startServer() {
         } catch (_) {}
       }
 
+      // Disparar regras de automação notify_team quando status mudar
+      if (statusChanged) {
+        try {
+          const rulesResult = await query(
+            `SELECT * FROM crm_automation_rules
+             WHERE agency_id = $1 AND is_active = true
+               AND trigger_type = 'stage_change' AND action_type = 'notify_team'`,
+            [existingProcess.agency_id]
+          );
+          for (const rule of rulesResult.rows) {
+            let triggerCfg: Record<string, any> = {};
+            let actionCfg: Record<string, any> = {};
+            try { triggerCfg = typeof rule.trigger_config === 'string' ? JSON.parse(rule.trigger_config) : (rule.trigger_config || {}); } catch {}
+            try { actionCfg = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {}); } catch {}
+
+            const fromStage = triggerCfg.from_stage || '';
+            const toStage = triggerCfg.to_stage || '';
+            const fromMatch = !fromStage || fromStage === existingProcess.status;
+            const toMatch = !toStage || toStage === newStatus;
+
+            if (fromMatch && toMatch) {
+              const message = actionCfg.message
+                ? actionCfg.message
+                : `Processo #${req.params.id} mudou para ${newStatus}`;
+              await query(
+                `INSERT INTO crm_notifications (agency_id, rule_name, message, process_id) VALUES ($1, $2, $3, $4)`,
+                [existingProcess.agency_id, rule.name, message, req.params.id]
+              );
+            }
+          }
+        } catch (e) {
+          console.error('[CRM NOTIF TRIGGER]', e);
+        }
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1871,6 +1906,46 @@ async function startServer() {
     } catch (e) {
       console.error('[CRM RULES DELETE]', e);
       res.status(500).json({ error: "Erro ao remover regra" });
+    }
+  });
+  // ────────────────────────────────────────────────────────────────────────────
+
+  // ─── CRM Notifications (pop-up interno) ─────────────────────────────────────
+  app.get("/api/crm-notifications", async (req, res) => {
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      const result = await query(
+        `SELECT * FROM crm_notifications WHERE agency_id = $1 AND is_read = false ORDER BY created_at DESC LIMIT 50`,
+        [agency_id]
+      );
+      res.json(result.rows);
+    } catch (e) {
+      console.error('[CRM NOTIF GET]', e);
+      res.status(500).json({ error: "Erro ao buscar notificações" });
+    }
+  });
+
+  app.patch("/api/crm-notifications/:id/read", async (req, res) => {
+    const { id } = req.params;
+    try {
+      await query(`UPDATE crm_notifications SET is_read = true WHERE id = $1`, [id]);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[CRM NOTIF PATCH]', e);
+      res.status(500).json({ error: "Erro ao marcar notificação como lida" });
+    }
+  });
+
+  app.patch("/api/crm-notifications/read-all", async (req, res) => {
+    const { agency_id } = req.body;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      await query(`UPDATE crm_notifications SET is_read = true WHERE agency_id = $1 AND is_read = false`, [agency_id]);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[CRM NOTIF PATCH ALL]', e);
+      res.status(500).json({ error: "Erro ao marcar notificações como lidas" });
     }
   });
   // ────────────────────────────────────────────────────────────────────────────

@@ -2467,6 +2467,32 @@ export default function App() {
     }
   }, [view, user, agencySettings?.id]);
 
+  // Smart prefetch: após login, antecipa dados das abas mais prováveis em background.
+  // Aguarda 2 s para não competir com os dados críticos do boot.
+  useEffect(() => {
+    if (!user?.id || !user?.role) return;
+    const timer = setTimeout(() => {
+      const scopedAgencyId = getScopedAgencyId();
+      const cachePrefix = `${user.id}:${user.role}:${scopedAgencyId ?? 'global'}`;
+      const markAndLoad = (name: string, loader: () => void) => {
+        const key = `${cachePrefix}:${name}`;
+        if (lazyLoadTrackerRef.current[key]) return;
+        lazyLoadTrackerRef.current[key] = true;
+        loader();
+      };
+      // Leads: pré-carrega para supervisor/master antes de navegarem ao CRM
+      if (user.role === 'master' || user.role === 'supervisor') {
+        markAndLoad('leads', fetchLeads);
+      }
+      // Financeiro: pré-carrega para quem tem acesso ao módulo
+      if (user.role === 'supervisor' || user.role === 'gerente_financeiro') {
+        markAndLoad('expenses', fetchExpenses);
+        markAndLoad('revenues', fetchRevenues);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [user?.id]);
+
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [publicMode, setPublicMode] = useState<'login' | 'register'>('register');

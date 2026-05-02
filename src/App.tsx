@@ -428,6 +428,7 @@ export default function App() {
   const [processNotifications, setProcessNotifications] = useState<any[]>([]);
   const [crmNotifications, setCrmNotifications] = useState<CrmNotification[]>([]);
   const [selectedProcess, setSelectedProcess] = useState<any>(null);
+  const [clientsSearchTerm, setClientsSearchTerm] = useState('');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
   const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
@@ -3588,11 +3589,13 @@ export default function App() {
           <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
             <div className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
-              <input 
+              <input
                 data-testid="global-search-input"
-                type="text" 
-                placeholder="Buscar..." 
-                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-64 text-sm"
+                type="text"
+                value={view === 'leads' ? clientsSearchTerm : ''}
+                onChange={e => { if (view === 'leads') setClientsSearchTerm(e.target.value); }}
+                placeholder={view === 'leads' ? 'Buscar por nome, e-mail ou telefone...' : 'Buscar...'}
+                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-80 text-sm"
               />
             </div>
             {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user?.role === 'master' || user?.role === 'supervisor') && (
@@ -4289,15 +4292,41 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
-                      {leads.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="px-6 py-20 text-center">
-                            <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
-                            <p className="text-[var(--text-muted)] font-bold">Nenhum lead encontrado.</p>
-                          </td>
-                        </tr>
-                      )}
-                      {leads.map((lead, idx) => (
+                      {(() => {
+                        const term = clientsSearchTerm.trim().toLowerCase();
+                        const normalize = (s: string) => (s || '').replace(/\D/g, '');
+                        const filteredLeads = term
+                          ? leads.filter(lead =>
+                              (lead.name || '').toLowerCase().includes(term) ||
+                              (lead.email || '').toLowerCase().includes(term) ||
+                              normalize(lead.phone || '').includes(normalize(term))
+                            )
+                          : leads;
+
+                        if (leads.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={7} className="px-6 py-20 text-center">
+                                <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
+                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente cadastrado.</p>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        if (filteredLeads.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={7} className="px-6 py-20 text-center">
+                                <Search className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
+                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente encontrado para <span className="text-emerald-400">"{clientsSearchTerm}"</span>.</p>
+                                <p className="text-[var(--text-muted)] text-xs mt-1">Tente buscar por nome, e-mail ou telefone.</p>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return filteredLeads.map((lead, idx) => (
                         <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
@@ -4362,7 +4391,8 @@ export default function App() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      ));
+                      })()}
                     </tbody>
                   </table>
                 </div>

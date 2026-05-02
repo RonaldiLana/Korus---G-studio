@@ -68,7 +68,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
 import { FormsPanel } from './features/FormsPanel';
@@ -396,7 +396,7 @@ export default function App() {
   const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [leads, setLeads] = useState<any[]>([]);
+  const [leads, setLeads] = useState<ClientOverview[]>([]);
   const [clientResetHistory, setClientResetHistory] = useState<any[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isProcessingAgency, setIsProcessingAgency] = useState(false);
@@ -2408,13 +2408,35 @@ export default function App() {
     }
   };
 
+  const openProcessEditById = async (id: number) => {
+    if (!(user?.id && user?.role)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/processes/${id}`, {
+        method: 'GET',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data?.id) {
+        openProcessEditModal(data as Process);
+      }
+    } catch (error) {
+      console.error('[AUTH] openProcessEditById error:', error);
+    }
+  };
+
   const fetchLeads = async () => {
     if (!(user?.id && user?.role)) return;
     if (!(user?.role === 'master' || user?.role === 'supervisor')) return;
     const agencyId = getScopedAgencyId();
     const url = agencyId
-      ? `${API_URL}/api/leads?agency_id=${agencyId}`
-      : `${API_URL}/api/leads`;
+      ? `${API_URL}/api/clients/overview?agency_id=${agencyId}`
+      : `${API_URL}/api/clients/overview`;
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -4457,7 +4479,7 @@ export default function App() {
             >
               <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                 <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
-                  <h3 className="font-black text-lg uppercase tracking-tighter">Leads da Agência</h3>
+                  <h3 className="font-black text-lg uppercase tracking-tighter">Clientes da Agência</h3>
                   <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {leads.length}</p>
                 </div>
                 <div className="overflow-x-auto">
@@ -4469,6 +4491,7 @@ export default function App() {
                         <th className="px-6 py-4">Telefone</th>
                         <th className="px-6 py-4">Data Cadastro</th>
                         <th className="px-6 py-4">Status Processo</th>
+                        <th className="px-6 py-4">Formulário Atual</th>
                         <th className="px-6 py-4">Status Interno</th>
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
@@ -4488,7 +4511,7 @@ export default function App() {
                         if (leads.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={7} className="px-6 py-20 text-center">
+                              <td colSpan={8} className="px-6 py-20 text-center">
                                 <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
                                 <p className="text-[var(--text-muted)] font-bold">Nenhum cliente cadastrado.</p>
                               </td>
@@ -4499,7 +4522,7 @@ export default function App() {
                         if (filteredLeads.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={7} className="px-6 py-20 text-center">
+                              <td colSpan={8} className="px-6 py-20 text-center">
                                 <Search className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
                                 <p className="text-[var(--text-muted)] font-bold">Nenhum cliente encontrado para <span className="text-emerald-400">"{clientsSearchTerm}"</span>.</p>
                                 <p className="text-[var(--text-muted)] text-xs mt-1">Tente buscar por nome, e-mail ou telefone.</p>
@@ -4508,8 +4531,8 @@ export default function App() {
                           );
                         }
 
-                        return filteredLeads.map((lead, idx) => (
-                        <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-[var(--bg-input)] transition-colors group">
+                        return filteredLeads.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
@@ -4528,6 +4551,18 @@ export default function App() {
                               <StatusBadge status={lead.process_status} />
                             ) : (
                               <span className="text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-400/10 px-2 py-1 rounded-md">Não Iniciado</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {lead.latest_form_title ? (
+                              <div>
+                                <p className="text-xs font-bold text-[var(--text-main)] leading-tight">{lead.latest_form_title}</p>
+                                <p className="text-[10px] text-[var(--text-muted)] mt-1">
+                                  {lead.latest_form_updated_at ? new Date(lead.latest_form_updated_at).toLocaleDateString() : '-'}
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Sem resposta</span>
                             )}
                           </td>
                           <td className="px-6 py-4">
@@ -4553,8 +4588,7 @@ export default function App() {
                                 <>
                                   <button 
                                     onClick={() => {
-                                      const proc = processes.find(p => p.id === lead.process_id);
-                                      if (proc) openProcessEditModal(proc);
+                                      if (lead.process_id) openProcessEditById(lead.process_id);
                                     }}
                                     className="p-2 hover:bg-blue-500/20 rounded-lg transition-all text-blue-400"
                                     title="Editar Processo"

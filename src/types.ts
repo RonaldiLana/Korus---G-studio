@@ -10,6 +10,24 @@ export interface User {
   created_at: string;
 }
 
+export interface ClientOverview {
+  id: number;
+  name: string;
+  email: string;
+  phone?: string | null;
+  created_at: string;
+  process_id?: number | null;
+  process_status?: Process['status'] | null;
+  process_internal_status?: Process['internal_status'] | null;
+  process_created_at?: string | null;
+  process_visa_name?: string | null;
+  process_consultant_name?: string | null;
+  latest_form_id?: number | null;
+  latest_form_title?: string | null;
+  latest_form_status?: FormResponse['status'] | null;
+  latest_form_updated_at?: string | null;
+}
+
 export interface Agency {
   id: number;
   name: string;

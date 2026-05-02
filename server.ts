@@ -2120,6 +2120,93 @@ async function startServer() {
   });
   // ────────────────────────────────────────────────────────────────────────────
 
+  app.get("/api/clients/overview", async (req, res) => {
+    const { agency_id } = req.query;
+
+    try {
+      const params: any[] = [];
+      const agencyFilter = agency_id && agency_id !== ''
+        ? `AND u.agency_id = $1`
+        : '';
+
+      if (agencyFilter) {
+        params.push(agency_id);
+      }
+
+      const sql = `
+        WITH scoped_clients AS (
+          SELECT u.id, u.name, u.email, u.phone, u.created_at
+          FROM users u
+          WHERE u.role = 'client'
+          ${agencyFilter}
+        ),
+        latest_active_process AS (
+          SELECT
+            p.id,
+            p.client_id,
+            p.status,
+            p.internal_status,
+            p.created_at,
+            p.visa_type_id,
+            p.consultant_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY p.client_id
+              ORDER BY p.created_at DESC, p.id DESC
+            ) AS rn
+          FROM processes p
+          WHERE p.status <> 'completed'
+        ),
+        latest_form_response AS (
+          SELECT
+            fr.id,
+            fr.process_id,
+            fr.form_id,
+            fr.status AS response_status,
+            fr.updated_at,
+            f.title AS form_title,
+            ROW_NUMBER() OVER (
+              PARTITION BY fr.process_id
+              ORDER BY fr.updated_at DESC NULLS LAST, fr.id DESC
+            ) AS rn
+          FROM form_responses fr
+          LEFT JOIN forms f ON f.id = fr.form_id
+          WHERE fr.form_id IS NOT NULL
+        )
+        SELECT
+          c.id,
+          c.name,
+          c.email,
+          c.phone,
+          c.created_at,
+          p.id AS process_id,
+          p.status AS process_status,
+          p.internal_status AS process_internal_status,
+          p.created_at AS process_created_at,
+          vt.name AS process_visa_name,
+          cu.name AS process_consultant_name,
+          fr.form_id AS latest_form_id,
+          fr.form_title AS latest_form_title,
+          fr.response_status AS latest_form_status,
+          fr.updated_at AS latest_form_updated_at
+        FROM scoped_clients c
+        LEFT JOIN latest_active_process p
+          ON p.client_id = c.id AND p.rn = 1
+        LEFT JOIN visa_types vt
+          ON vt.id = p.visa_type_id
+        LEFT JOIN users cu
+          ON cu.id = p.consultant_id
+        LEFT JOIN latest_form_response fr
+          ON fr.process_id = p.id AND fr.rn = 1
+        ORDER BY c.created_at DESC
+      `;
+
+      const result = await query(sql, params);
+      res.json(result.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/leads", async (req, res) => {
     const { agency_id } = req.query;
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 // ===================== INTEGRAÇÃO API =====================
 // const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
 const API_URL =
@@ -429,6 +429,12 @@ export default function App() {
   const [crmNotifications, setCrmNotifications] = useState<CrmNotification[]>([]);
   const [selectedProcess, setSelectedProcess] = useState<any>(null);
   const [clientsSearchTerm, setClientsSearchTerm] = useState('');
+  const [clientsProcessSearchTerm, setClientsProcessSearchTerm] = useState('');
+  const [showClientsFilters, setShowClientsFilters] = useState(false);
+  const [clientsProcessStatusFilter, setClientsProcessStatusFilter] = useState('');
+  const [clientsProcessInternalStatusFilter, setClientsProcessInternalStatusFilter] = useState('');
+  const [clientsProcessConsultantFilter, setClientsProcessConsultantFilter] = useState('');
+  const [clientsProcessPaymentFilter, setClientsProcessPaymentFilter] = useState('');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
   const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
@@ -468,6 +474,61 @@ export default function App() {
     order: 0,
     destination_id: null as number | null
   });
+
+  const clientsProcessConsultantOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (Array.isArray(processes) ? processes : [])
+            .map((p) => p?.consultant_name)
+            .filter(Boolean)
+        )
+      ) as string[],
+    [processes]
+  );
+
+  const clientsProcessInternalStatusOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (Array.isArray(processes) ? processes : [])
+            .map((p) => p?.internal_status)
+            .filter(Boolean)
+        )
+      ) as string[],
+    [processes]
+  );
+
+  const filteredClientProcesses = useMemo(() => {
+    const source = Array.isArray(processes) ? processes : [];
+    const term = clientsProcessSearchTerm.trim().toLowerCase();
+
+    return source.filter((process) => {
+      const matchSearch =
+        !term ||
+        (process?.client_name || '').toLowerCase().includes(term) ||
+        (process?.visa_name || '').toLowerCase().includes(term) ||
+        (process?.consultant_name || '').toLowerCase().includes(term) ||
+        (process?.internal_status || '').toLowerCase().includes(term) ||
+        String(process?.id || '').includes(term);
+
+      const matchStatus = !clientsProcessStatusFilter || process?.status === clientsProcessStatusFilter;
+      const matchInternalStatus =
+        !clientsProcessInternalStatusFilter || process?.internal_status === clientsProcessInternalStatusFilter;
+      const matchConsultant =
+        !clientsProcessConsultantFilter || process?.consultant_name === clientsProcessConsultantFilter;
+      const matchPayment = !clientsProcessPaymentFilter || process?.payment_status === clientsProcessPaymentFilter;
+
+      return matchSearch && matchStatus && matchInternalStatus && matchConsultant && matchPayment;
+    });
+  }, [
+    processes,
+    clientsProcessSearchTerm,
+    clientsProcessStatusFilter,
+    clientsProcessInternalStatusFilter,
+    clientsProcessConsultantFilter,
+    clientsProcessPaymentFilter,
+  ]);
 
   // ========== HELPER: Determine scoped agency ID for API calls ==========
   const getScopedAgencyId = (): number | null => {
@@ -3592,9 +3653,18 @@ export default function App() {
               <input
                 data-testid="global-search-input"
                 type="text"
-                value={view === 'leads' ? clientsSearchTerm : ''}
-                onChange={e => { if (view === 'leads') setClientsSearchTerm(e.target.value); }}
-                placeholder={view === 'leads' ? 'Buscar por nome, e-mail ou telefone...' : 'Buscar...'}
+                value={view === 'leads' ? clientsSearchTerm : view === 'clients' ? clientsProcessSearchTerm : ''}
+                onChange={e => {
+                  if (view === 'leads') setClientsSearchTerm(e.target.value);
+                  if (view === 'clients') setClientsProcessSearchTerm(e.target.value);
+                }}
+                placeholder={
+                  view === 'leads'
+                    ? 'Buscar por nome, e-mail ou telefone...'
+                    : view === 'clients'
+                    ? 'Buscar por cliente, visto, consultor ou ID...'
+                    : 'Buscar...'
+                }
                 className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-80 text-sm"
               />
             </div>
@@ -3631,6 +3701,29 @@ export default function App() {
             )}
           </div>
         </header>
+
+        {(view === 'clients' || view === 'leads') && (
+          <div className="md:hidden mb-6 relative z-10">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
+              <input
+                data-testid="global-search-input-mobile"
+                type="text"
+                value={view === 'leads' ? clientsSearchTerm : clientsProcessSearchTerm}
+                onChange={e => {
+                  if (view === 'leads') setClientsSearchTerm(e.target.value);
+                  if (view === 'clients') setClientsProcessSearchTerm(e.target.value);
+                }}
+                placeholder={
+                  view === 'leads'
+                    ? 'Buscar por nome, e-mail ou telefone...'
+                    : 'Buscar por cliente, visto, consultor ou ID...'
+                }
+                className="w-full pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
+              />
+            </div>
+          </div>
+        )}
 
         <AnimatePresence mode="wait">
           {view === 'dashboard' && (
@@ -4150,6 +4243,88 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden"
             >
+              <div className="p-6 border-b border-[var(--border-color)] bg-white/5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">
+                    Exibindo: {filteredClientProcesses.length} de {(Array.isArray(processes) ? processes : []).length} processos
+                  </p>
+                  <button
+                    onClick={() => setShowClientsFilters((prev) => !prev)}
+                    className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-2 ${
+                      showClientsFilters
+                        ? 'brand-gradient text-black border-transparent'
+                        : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                    }`}
+                  >
+                    <Filter size={14} />
+                    Filtros
+                  </button>
+                </div>
+
+                {showClientsFilters && (
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <select
+                      value={clientsProcessStatusFilter}
+                      onChange={(e) => setClientsProcessStatusFilter(e.target.value)}
+                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                      <option value="">Todos status</option>
+                      <option value="started">Iniciado</option>
+                      <option value="waiting_payment">Aguard. Pagamento</option>
+                      <option value="payment_confirmed">Pgto Confirmado</option>
+                      <option value="analyzing">Em Análise</option>
+                      <option value="final_phase">Fase Final</option>
+                      <option value="completed">Concluído</option>
+                    </select>
+
+                    <select
+                      value={clientsProcessInternalStatusFilter}
+                      onChange={(e) => setClientsProcessInternalStatusFilter(e.target.value)}
+                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                      <option value="">Todos status internos</option>
+                      {clientsProcessInternalStatusOptions.map((status) => (
+                        <option key={status} value={status}>{STATUS_LABELS[status] || status}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={clientsProcessConsultantFilter}
+                      onChange={(e) => setClientsProcessConsultantFilter(e.target.value)}
+                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                      <option value="">Todos consultores</option>
+                      {clientsProcessConsultantOptions.map((consultant) => (
+                        <option key={consultant} value={consultant}>{consultant}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={clientsProcessPaymentFilter}
+                      onChange={(e) => setClientsProcessPaymentFilter(e.target.value)}
+                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
+                    >
+                      <option value="">Todos pagamentos</option>
+                      <option value="pending">Pendente</option>
+                      <option value="proof_received">Comprovante</option>
+                      <option value="confirmed">Confirmado</option>
+                    </select>
+
+                    <button
+                      onClick={() => {
+                        setClientsProcessSearchTerm('');
+                        setClientsProcessStatusFilter('');
+                        setClientsProcessInternalStatusFilter('');
+                        setClientsProcessConsultantFilter('');
+                        setClientsProcessPaymentFilter('');
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
+                    >
+                      Limpar filtros
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
@@ -4164,7 +4339,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
-                    {(Array.isArray(processes) ? processes : []).map((process: any, idx: number) => (
+                    {filteredClientProcesses.map((process: any, idx: number) => (
                       <tr key={process?.id ?? `proc-${idx}`} onClick={() => process?.id && fetchProcessDetail(process.id)} className="hover:bg-[var(--bg-input)] transition-all cursor-pointer">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
@@ -4211,6 +4386,13 @@ export default function App() {
                     {(Array.isArray(processes) ? processes : []).length === 0 && (
                       <tr>
                         <td colSpan={isConsultantSupervisorOrMaster(user) ? 7 : 6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
+                      </tr>
+                    )}
+                    {(Array.isArray(processes) ? processes : []).length > 0 && filteredClientProcesses.length === 0 && (
+                      <tr>
+                        <td colSpan={isConsultantSupervisorOrMaster(user) ? 7 : 6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">
+                          Nenhum processo encontrado com os filtros atuais
+                        </td>
                       </tr>
                     )}
                   </tbody>

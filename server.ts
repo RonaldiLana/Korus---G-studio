@@ -1724,11 +1724,13 @@ async function startServer() {
           if (emailRulesResult.rows.length > 0) {
             // Buscar dados completos do processo para substituição de variáveis
             const processDataResult = await query(
-              `SELECT p.id, p.status, p.client_name, p.client_email,
+              `SELECT p.id, p.status,
+                      c.name as client_name, c.email as client_email,
                       d.name as destination_name,
                       u.name as consultant_name,
                       a.name as agency_name
                FROM processes p
+               LEFT JOIN users c ON c.id = p.client_id
                LEFT JOIN destinations d ON d.id = p.destination_id
                LEFT JOIN users u ON u.id = p.consultant_id
                LEFT JOIN agencies a ON a.id = p.agency_id

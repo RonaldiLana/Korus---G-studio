@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 // ===================== INTEGRAÇÃO API =====================
 // const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
 const API_URL =
@@ -317,6 +317,8 @@ const resolveLogoUrl = (url: string | null | undefined): string => {
 };
 
 export default function App() {
+  const lazyLoadTrackerRef = useRef<Record<string, boolean>>({});
+
   const clearInvalidAuthData = () => {
     localStorage.removeItem('korus-token');
     localStorage.removeItem('korus-user');
@@ -2393,38 +2395,10 @@ export default function App() {
   useEffect(() => {
     if (!user?.id || !user?.role) return;
 
-    let isActive = true;
-    const deferredFetchTimers: ReturnType<typeof setTimeout>[] = [];
-
-    const scheduleDeferredFetch = (callback: () => void, delayMs: number) => {
-      const timerId = window.setTimeout(() => {
-        if (!isActive) return;
-        callback();
-      }, delayMs);
-      deferredFetchTimers.push(timerId);
-    };
-
     // Dados críticos para liberar a tela inicial rapidamente
     fetchProcesses();
     fetchAgencyUsers();
     fetchAgencySettings();
-
-    // Dados não críticos são carregados de forma escalonada para reduzir pico inicial de requests
-    scheduleDeferredFetch(fetchVisaTypes, 60);
-    scheduleDeferredFetch(fetchTasks, 100);
-    scheduleDeferredFetch(fetchDestinations, 140);
-    scheduleDeferredFetch(fetchPlans, 180);
-    scheduleDeferredFetch(fetchFormFields, 220);
-    scheduleDeferredFetch(fetchExpenses, 260);
-    scheduleDeferredFetch(fetchRevenues, 300);
-    scheduleDeferredFetch(fetchLeads, 340);
-
-    // Master-only data
-    if (user.role === 'master') {
-      scheduleDeferredFetch(fetchAgencies, 380);
-      scheduleDeferredFetch(fetchAuditLogs, 420);
-      scheduleDeferredFetch(fetchGlobalUsers, 460);
-    }
 
     // Notificações de processos para não-clientes (polling a cada 30s)
     let notifInterval: ReturnType<typeof setInterval> | null = null;
@@ -2443,12 +2417,55 @@ export default function App() {
     }
 
     return () => {
-      isActive = false;
-      deferredFetchTimers.forEach((timerId) => clearTimeout(timerId));
       if (notifInterval) clearInterval(notifInterval);
       if (crmNotifInterval) clearInterval(crmNotifInterval);
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user?.id || !user?.role) return;
+
+    const scopedAgencyId = getScopedAgencyId();
+    const cachePrefix = `${user.id}:${user.role}:${scopedAgencyId ?? 'global'}`;
+    const loadOnce = (name: string, loader: () => void) => {
+      const cacheKey = `${cachePrefix}:${name}`;
+      if (lazyLoadTrackerRef.current[cacheKey]) return;
+      lazyLoadTrackerRef.current[cacheKey] = true;
+      loader();
+    };
+
+    if (view === 'dashboard' || view === 'clients' || view === 'pipefy') {
+      loadOnce('visaTypes', fetchVisaTypes);
+      loadOnce('tasks', fetchTasks);
+      loadOnce('destinations', fetchDestinations);
+    }
+
+    if (view === 'forms' || view === 'agency_panel') {
+      loadOnce('visaTypes', fetchVisaTypes);
+      loadOnce('tasks', fetchTasks);
+      loadOnce('destinations', fetchDestinations);
+      loadOnce('plans', fetchPlans);
+      loadOnce('formFields', fetchFormFields);
+    }
+
+    if (view === 'finance') {
+      loadOnce('expenses', fetchExpenses);
+      loadOnce('revenues', fetchRevenues);
+    }
+
+    if (view === 'dashboard' || view === 'leads' || view === 'crm') {
+      loadOnce('leads', fetchLeads);
+    }
+
+    if (user.role === 'master' && view === 'agencies') {
+      loadOnce('agencies', fetchAgencies);
+      loadOnce('globalUsers', fetchGlobalUsers);
+    }
+
+    if (user.role === 'master' && view === 'audit') {
+      loadOnce('auditLogs', fetchAuditLogs);
+    }
+  }, [view, user, agencySettings?.id]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);

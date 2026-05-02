@@ -64,7 +64,8 @@ import {
   X,
   Menu,
   Mail,
-  Send
+  Send,
+  ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
@@ -6506,6 +6507,17 @@ export default function App() {
                 <div className="bg-[var(--bg-card)]/50 p-8 rounded-3xl border border-[var(--border-color)] shadow-xl">
                   <div className="flex justify-between items-start mb-8">
                     <div>
+                      <button
+                        onClick={() => {
+                          setSelectedProcess(null);
+                          setView('clients');
+                        }}
+                        className="flex items-center gap-1.5 text-[var(--text-muted)] hover:text-emerald-400 transition-colors text-xs font-bold uppercase tracking-widest mb-3"
+                        title="Voltar para lista de processos"
+                      >
+                        <ArrowLeft size={14} />
+                        Voltar aos Processos
+                      </button>
                       <h3 className="text-3xl font-black tracking-tight">{selectedProcess.client_name}</h3>
                       <p className="text-[var(--text-muted)] font-bold uppercase text-[10px] tracking-widest mt-1">
                         {selectedProcess.visa_name} • ID: #{selectedProcess.id}

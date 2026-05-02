@@ -2468,6 +2468,20 @@ export default function App() {
     }
   }, [view, user, agencySettings?.id]);
 
+  useEffect(() => {
+    if (view !== 'process_detail' || !selectedProcess) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedProcess(null);
+        setView('clients');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, selectedProcess]);
+
   // Smart prefetch: após login, antecipa dados das abas mais prováveis em background.
   // Aguarda 2 s para não competir com os dados críticos do boot.
   useEffect(() => {
@@ -6512,7 +6526,7 @@ export default function App() {
                           setSelectedProcess(null);
                           setView('clients');
                         }}
-                        className="flex items-center gap-1.5 text-[var(--text-muted)] hover:text-emerald-400 transition-colors text-xs font-bold uppercase tracking-widest mb-3"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-xl transition-all text-blue-400 border border-blue-500/20 text-xs font-black uppercase tracking-widest mb-3"
                         title="Voltar para lista de processos"
                       >
                         <ArrowLeft size={14} />

@@ -14,12 +14,7 @@ export const pool = new Pool({
 });
 
 export async function query(text: string, params?: any[]): Promise<QueryResult> {
-    const client = await pool.connect();
-    try {
-        return await client.query(text, params);
-    } finally {
-        client.release();
-    }
+    return pool.query(text, params);
 }
 
 export async function testConnection(): Promise<boolean> {

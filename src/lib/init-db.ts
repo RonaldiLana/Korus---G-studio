@@ -128,6 +128,13 @@ async function applyMigrations() {
     )`,
     // agencies: coluna para configuração SMTP por agência (armazenada como JSON)
     `ALTER TABLE agencies ADD COLUMN IF NOT EXISTS smtp_config TEXT DEFAULT '{}'`,
+    // índices para reduzir latência no login e nos principais filtros por agência
+    `CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email))`,
+    `CREATE INDEX IF NOT EXISTS idx_users_agency_id ON users (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_processes_agency_id ON processes (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_logs_agency_created_at ON audit_logs (agency_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_destinations_agency_order ON destinations (agency_id, "order")`,
+    `CREATE INDEX IF NOT EXISTS idx_visa_types_agency_id ON visa_types (agency_id)`,
   ];
 
   for (const sql of migrations) {

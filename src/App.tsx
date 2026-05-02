@@ -1047,6 +1047,8 @@ export default function App() {
   };
 
   useEffect(() => {
+    const targetSelector = 'button, a, input, select, textarea, [role="button"]';
+
     const buildTestId = (element: HTMLElement, index: number) => {
       const baseText = (
         element.getAttribute('aria-label') ||
@@ -1066,15 +1068,30 @@ export default function App() {
       return `auto-${element.tagName.toLowerCase()}-${baseText || index}`;
     };
 
-    const applyAutoTestIds = () => {
-      const elements = document.querySelectorAll<HTMLElement>('button, a, input, select, textarea, [role="button"]');
-      const seen = new Set<string>();
+    const applyAutoTestIds = (root: ParentNode = document) => {
+      const elements = root.querySelectorAll<HTMLElement>(targetSelector);
+      if (elements.length === 0) return;
 
-      elements.forEach((element, index) => {
-        let testId = element.getAttribute('data-testid') || buildTestId(element, index);
+      const seen = new Set<string>();
+      document.querySelectorAll<HTMLElement>('[data-testid]').forEach((el) => {
+        const existingId = el.getAttribute('data-testid');
+        if (existingId) seen.add(existingId);
+      });
+
+      let generatedCount = 0;
+
+      elements.forEach((element) => {
+        const existing = element.getAttribute('data-testid');
+        if (existing) {
+          seen.add(existing);
+          return;
+        }
+
+        const baseTestId = buildTestId(element, generatedCount++);
+        let testId = baseTestId;
         let suffix = 1;
         while (seen.has(testId)) {
-          testId = `${buildTestId(element, index)}-${suffix}`;
+          testId = `${baseTestId}-${suffix}`;
           suffix += 1;
         }
         seen.add(testId);
@@ -1082,11 +1099,42 @@ export default function App() {
       });
     };
 
-    applyAutoTestIds();
-    const observer = new MutationObserver(() => applyAutoTestIds());
+    const pendingRoots = new Set<ParentNode>();
+    let rafId: number | null = null;
+
+    const scheduleApply = (root?: ParentNode) => {
+      if (root) pendingRoots.add(root);
+      if (rafId !== null) return;
+
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        if (pendingRoots.size === 0) {
+          applyAutoTestIds(document);
+          return;
+        }
+
+        const roots = Array.from(pendingRoots);
+        pendingRoots.clear();
+        roots.forEach((currentRoot) => applyAutoTestIds(currentRoot));
+      });
+    };
+
+    applyAutoTestIds(document);
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) {
+            scheduleApply(node);
+          }
+        });
+      });
+    });
     observer.observe(document.body, { childList: true, subtree: true });
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+    };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -2345,44 +2393,61 @@ export default function App() {
   useEffect(() => {
     if (!user?.id || !user?.role) return;
 
-    // Core data
+    let isActive = true;
+    const deferredFetchTimers: ReturnType<typeof setTimeout>[] = [];
+
+    const scheduleDeferredFetch = (callback: () => void, delayMs: number) => {
+      const timerId = window.setTimeout(() => {
+        if (!isActive) return;
+        callback();
+      }, delayMs);
+      deferredFetchTimers.push(timerId);
+    };
+
+    // Dados críticos para liberar a tela inicial rapidamente
     fetchProcesses();
     fetchAgencyUsers();
     fetchAgencySettings();
-    fetchVisaTypes();
-    fetchTasks();
-    fetchDestinations();
-    fetchPlans();
-    fetchFormFields();
-    fetchExpenses();
-    fetchRevenues();
-    fetchLeads();
+
+    // Dados não críticos são carregados de forma escalonada para reduzir pico inicial de requests
+    scheduleDeferredFetch(fetchVisaTypes, 60);
+    scheduleDeferredFetch(fetchTasks, 100);
+    scheduleDeferredFetch(fetchDestinations, 140);
+    scheduleDeferredFetch(fetchPlans, 180);
+    scheduleDeferredFetch(fetchFormFields, 220);
+    scheduleDeferredFetch(fetchExpenses, 260);
+    scheduleDeferredFetch(fetchRevenues, 300);
+    scheduleDeferredFetch(fetchLeads, 340);
 
     // Master-only data
     if (user.role === 'master') {
-      fetchAgencies();
-      fetchAuditLogs();
-      fetchGlobalUsers();
+      scheduleDeferredFetch(fetchAgencies, 380);
+      scheduleDeferredFetch(fetchAuditLogs, 420);
+      scheduleDeferredFetch(fetchGlobalUsers, 460);
     }
 
     // Notificações de processos para não-clientes (polling a cada 30s)
+    let notifInterval: ReturnType<typeof setInterval> | null = null;
+    let crmNotifInterval: ReturnType<typeof setInterval> | null = null;
+
     if (!isClient(user) && user.agency_id) {
       fetchProcessNotifications();
-      const notifInterval = setInterval(fetchProcessNotifications, 30000);
+      notifInterval = setInterval(fetchProcessNotifications, 30000);
 
       // CRM pop-up notifications para equipe (supervisor, consultor, analista, financeiro)
       const isTeamMember = ['supervisor', 'consultant', 'analyst', 'gerente_financeiro'].includes(user.role);
-      let crmNotifInterval: ReturnType<typeof setInterval> | null = null;
       if (isTeamMember) {
         fetchCrmNotifications();
         crmNotifInterval = setInterval(fetchCrmNotifications, 30000);
       }
-
-      return () => {
-        clearInterval(notifInterval);
-        if (crmNotifInterval) clearInterval(crmNotifInterval);
-      };
     }
+
+    return () => {
+      isActive = false;
+      deferredFetchTimers.forEach((timerId) => clearTimeout(timerId));
+      if (notifInterval) clearInterval(notifInterval);
+      if (crmNotifInterval) clearInterval(crmNotifInterval);
+    };
   }, [user]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);

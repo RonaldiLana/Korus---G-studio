@@ -3906,6 +3906,44 @@ export default function App() {
                         if (hrs < 24) return `${hrs}h atrás`;
                         return `${Math.floor(hrs / 24)}d atrás`;
                       })();
+                      const STATUS_PT: Record<string, string> = {
+                        started: 'Iniciado',
+                        waiting_payment: 'Aguardando Pagamento',
+                        payment_confirmed: 'Pagamento Confirmado',
+                        analyzing: 'Em Análise',
+                        final_phase: 'Fase Final',
+                        completed: 'Concluído',
+                        pending: 'Pendente',
+                        proof_received: 'Comprovante Enviado',
+                        documents_requested: 'Documentos Solicitados',
+                        reviewing: 'Em Revisão',
+                        submitted: 'Submetido',
+                        confirmed: 'Confirmado',
+                      };
+                      const formatNotifText = (details: string, action: string, processId?: number): string => {
+                        if (!details) {
+                          if (action === 'process_created') return 'Novo processo criado';
+                          if (action === 'process_started') return 'Processo iniciado pelo cliente';
+                          return 'Atividade registrada';
+                        }
+                        // Remove prefixo "Processo #N:"
+                        let text = details.replace(/^Processo #\d+:\s*/, '').trim();
+                        // Consultor assumiu
+                        if (text.includes('consultor assumiu')) return 'Consultor assumiu o processo';
+                        // Pre-form editado
+                        if (action === 'pre_form_edited') return 'Pré-formulário editado pela equipe';
+                        // Traduz tokens de status no texto
+                        text = text.replace(/status_interno\s+([\w_]+)\s*→\s*([\w_]+)/g, (_: string, from: string, to: string) =>
+                          `Etapa interna: ${STATUS_PT[from] || from} → ${STATUS_PT[to] || to}`
+                        );
+                        text = text.replace(/status\s+([\w_]+)\s*→\s*([\w_]+)/g, (_: string, from: string, to: string) =>
+                          `Status: ${STATUS_PT[from] || from} → ${STATUS_PT[to] || to}`
+                        );
+                        // Se ainda sobrou algo técnico como "Process ID: N"
+                        if (/^process id:/i.test(text)) return `Processo #${processId || ''} atualizado`;
+                        return text;
+                      };
+                      const notifText = formatNotifText(notif.details, notif.action, notif.process_id);
                       return (
                         <div key={`notif-${notif.id}-${i}`} className="flex gap-4 group cursor-pointer">
                           <div className={`mt-1 flex-shrink-0 ${color}`}>
@@ -3913,7 +3951,7 @@ export default function App() {
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-emerald-400 transition-colors leading-snug">
-                              {notif.details?.replace(`Processo #${notif.process_id}:`, '').trim() || notif.action}
+                              {notifText}
                             </p>
                             {notif.client_name && (
                               <p className="text-[10px] text-emerald-400 font-bold mt-0.5">{notif.client_name}</p>

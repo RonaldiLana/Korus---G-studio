@@ -1081,6 +1081,8 @@ export default function App() {
   const [formEditData, setFormEditData] = useState<any>({});
   const [showPreFormEditModal, setShowPreFormEditModal] = useState(false);
   const [preFormEditData, setPreFormEditData] = useState<Record<string, any>>({});
+  const [showFinancialAmountModal, setShowFinancialAmountModal] = useState(false);
+  const [financialAmountInput, setFinancialAmountInput] = useState('');
 
   // Process forms (assignment + staff editing)
   const [availableFormsForProcess, setAvailableFormsForProcess] = useState<any[]>([]);
@@ -2003,6 +2005,29 @@ export default function App() {
       }
     } catch {
       notify('Erro de conexão ao atualizar pré-formulário', 'error');
+    }
+  };
+
+  const handleSaveFinancialAmount = async () => {
+    if (!selectedProcess || user?.role !== 'master') return;
+    const parsed = parseFloat(financialAmountInput.replace(',', '.'));
+    if (isNaN(parsed) || parsed < 0) { notify('Valor inválido.', 'error'); return; }
+    try {
+      const res = await fetch(`${API_URL}/api/financials/${selectedProcess.id}/amount`, {
+        method: 'PATCH',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: parsed, user_id: user.id, role: user.role }),
+      });
+      if (res.ok) {
+        notify('Valor atualizado com sucesso!', 'success');
+        setShowFinancialAmountModal(false);
+        fetchProcessDetail(selectedProcess.id);
+      } else {
+        const data = await res.json().catch(() => null);
+        notify(data?.error || 'Erro ao atualizar valor.', 'error');
+      }
+    } catch {
+      notify('Erro de conexão.', 'error');
     }
   };
 

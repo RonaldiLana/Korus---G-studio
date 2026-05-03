@@ -1389,6 +1389,39 @@ async function startServer() {
     }
   });
 
+  // PATCH /api/financials/:processId/amount — corrige o valor pelo master
+  app.patch("/api/financials/:processId/amount", async (req, res) => {
+    const { amount, user_id, role } = req.body;
+
+    if (role !== 'master') {
+      return res.status(403).json({ error: 'Apenas o usuário master pode corrigir o valor.' });
+    }
+    const parsed = parseFloat(amount);
+    if (isNaN(parsed) || parsed < 0) {
+      return res.status(400).json({ error: 'Valor inválido.' });
+    }
+
+    try {
+      const existing = await query(
+        "SELECT f.id, p.agency_id FROM financials f JOIN processes p ON p.id = f.process_id WHERE f.process_id = $1",
+        [req.params.processId]
+      );
+      if (existing.rows.length === 0) return res.status(404).json({ error: 'Financeiro não encontrado.' });
+
+      await query("UPDATE financials SET amount = $1 WHERE process_id = $2", [parsed, req.params.processId]);
+      await query("UPDATE processes SET amount = $1 WHERE id = $2", [parsed, req.params.processId]);
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [existing.rows[0].agency_id, user_id || null, 'financial_amount_edited', `Valor do processo #${req.params.processId} corrigido para R$ ${parsed.toFixed(2)}`]
+        );
+      } catch (_) {}
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/documents/validate", async (req, res) => {
     const { id, status, rejection_reason } = req.body;
     try {

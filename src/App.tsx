@@ -7101,7 +7101,18 @@ export default function App() {
                   {/* Financial Section */}
                   {isConsultantSupervisorOrMaster(user) && selectedProcess.financial && (
                     <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                      <h4 className="font-black uppercase tracking-widest text-xs mb-6">Financeiro & Pagamento</h4>
+                      <div className="flex justify-between items-center mb-6">
+                        <h4 className="font-black uppercase tracking-widest text-xs">Financeiro & Pagamento</h4>
+                        {user?.role === 'master' && (
+                          <button
+                            onClick={() => { setFinancialAmountInput(String(selectedProcess.financial.amount ?? '')); setShowFinancialAmountModal(true); }}
+                            className="text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-amber-300 flex items-center gap-2 transition-colors"
+                          >
+                            <Pencil size={12} />
+                            CORRIGIR VALOR
+                          </button>
+                        )}
+                      </div>
                       <div className="p-6 bg-[var(--bg-input)]/50 rounded-3xl border border-[var(--border-color)]">
                         <div className="flex items-center justify-between mb-6">
                           <div>
@@ -7628,6 +7639,52 @@ export default function App() {
                       className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-500/20"
                     >
                       Salvar Alterações
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* Financial Amount Edit Modal (master only) */}
+          <AnimatePresence>
+            {showFinancialAmountModal && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                <motion.div
+                  key="financial-amount-modal"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="bg-[var(--bg-card)] w-full max-w-sm rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
+                >
+                  <h3 className="text-xl font-black mb-2 uppercase tracking-tight">Corrigir Valor do Processo</h3>
+                  <p className="text-xs text-[var(--text-muted)] font-bold mb-6">Ação restrita ao perfil Master. Será registrado em auditoria.</p>
+                  <div className="mb-6">
+                    <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Valor (R$)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-lg font-black"
+                      value={financialAmountInput}
+                      onChange={e => setFinancialAmountInput(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowFinancialAmountModal(false)}
+                      className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveFinancialAmount}
+                      className="flex-1 bg-amber-500 text-black py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-amber-500/20"
+                    >
+                      Salvar Valor
                     </button>
                   </div>
                 </motion.div>

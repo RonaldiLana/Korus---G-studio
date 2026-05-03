@@ -1079,6 +1079,8 @@ export default function App() {
   const [showFormEditModal, setShowFormEditModal] = useState(false);
   const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
   const [formEditData, setFormEditData] = useState<any>({});
+  const [showPreFormEditModal, setShowPreFormEditModal] = useState(false);
+  const [preFormEditData, setPreFormEditData] = useState<Record<string, any>>({});
 
   // Process forms (assignment + staff editing)
   const [availableFormsForProcess, setAvailableFormsForProcess] = useState<any[]>([]);
@@ -1973,6 +1975,34 @@ export default function App() {
     } catch (error) {
       console.error('[AUTH] handleFormEditSubmit error:', error);
       notify('Erro de conexão ao atualizar formulário', 'error');
+    }
+  };
+
+  const handleSavePreFormEdit = async () => {
+    if (!selectedProcess || !(user?.id && user?.role)) return;
+    try {
+      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/pre-form`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pre_form_data: preFormEditData,
+          changed_by_user_id: user.id,
+          role: user.role,
+        }),
+      });
+      if (res.ok) {
+        notify('Pré-formulário atualizado com sucesso!', 'success');
+        setShowPreFormEditModal(false);
+        fetchProcessDetail(selectedProcess.id);
+      } else {
+        const data = await res.json().catch(() => null);
+        notify(data?.error || 'Erro ao atualizar pré-formulário', 'error');
+      }
+    } catch {
+      notify('Erro de conexão ao atualizar pré-formulário', 'error');
     }
   };
 
@@ -6871,7 +6901,18 @@ export default function App() {
                     };
                     return (
                       <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                        <h4 className="font-black uppercase tracking-widest text-xs mb-4">Pré-Formulário do Cliente</h4>
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="font-black uppercase tracking-widest text-xs">Pré-Formulário do Cliente</h4>
+                          {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
+                            <button
+                              onClick={() => { setPreFormEditData({ ...preData }); setShowPreFormEditModal(true); }}
+                              className="text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-2 transition-colors"
+                            >
+                              <Pencil size={12} />
+                              EDITAR
+                            </button>
+                          )}
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
                           {Object.entries(preData).map(([key, value]) => {
                             if (key === 'dynamicResponses' || key === 'dependents') return null;
@@ -7418,6 +7459,114 @@ export default function App() {
                       </button>
                     </div>
                   </form>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* Pre-Form Edit Modal */}
+          <AnimatePresence>
+            {showPreFormEditModal && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+                <motion.div
+                  key="pre-form-edit-modal"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
+                >
+                  <h3 className="text-2xl font-black mb-6 uppercase tracking-tight">Editar Pré-Formulário do Cliente</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {[
+                      { key: 'fullName', label: 'Nome Completo', type: 'text' },
+                      { key: 'phone', label: 'Telefone', type: 'tel' },
+                      { key: 'email', label: 'E-mail', type: 'email' },
+                      { key: 'city', label: 'Cidade', type: 'text' },
+                      { key: 'travelDate', label: 'Data de Viagem', type: 'date' },
+                      { key: 'travelGoal', label: 'Objetivo', type: 'text' },
+                    ].map(({ key, label, type }) => (
+                      preFormEditData[key] !== undefined && (
+                        <div key={key}>
+                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">{label}</label>
+                          <input
+                            type={type}
+                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            value={preFormEditData[key] || ''}
+                            onChange={e => setPreFormEditData({ ...preFormEditData, [key]: e.target.value })}
+                          />
+                        </div>
+                      )
+                    ))}
+                    {preFormEditData.hasPassport !== undefined && (
+                      <div>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Possui Passaporte</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
+                          value={preFormEditData.hasPassport || ''}
+                          onChange={e => setPreFormEditData({ ...preFormEditData, hasPassport: e.target.value })}
+                        >
+                          <option value="Sim">Sim</option>
+                          <option value="Não">Não</option>
+                        </select>
+                      </div>
+                    )}
+                    {preFormEditData.hasVisaDenied !== undefined && (
+                      <div>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Visto Negado Anteriormente</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
+                          value={preFormEditData.hasVisaDenied || ''}
+                          onChange={e => setPreFormEditData({ ...preFormEditData, hasVisaDenied: e.target.value })}
+                        >
+                          <option value="Sim">Sim</option>
+                          <option value="Não">Não</option>
+                        </select>
+                      </div>
+                    )}
+                    {preFormEditData.travelParty !== undefined && (
+                      <div>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Companhia de Viagem</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
+                          value={preFormEditData.travelParty || ''}
+                          onChange={e => setPreFormEditData({ ...preFormEditData, travelParty: e.target.value })}
+                        >
+                          <option value="Sozinho">Sozinho</option>
+                          <option value="Acompanhado">Acompanhado</option>
+                        </select>
+                      </div>
+                    )}
+                    {preFormEditData.dependentLevel !== undefined && (
+                      <div>
+                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo de Processo</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
+                          value={preFormEditData.dependentLevel || ''}
+                          onChange={e => setPreFormEditData({ ...preFormEditData, dependentLevel: e.target.value })}
+                        >
+                          <option value="Individual">Individual</option>
+                          <option value="Casal">Casal</option>
+                          <option value="Família">Família</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-3 pt-6">
+                    <button
+                      type="button"
+                      onClick={() => setShowPreFormEditModal(false)}
+                      className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePreFormEdit}
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-500/20"
+                    >
+                      Salvar Alterações
+                    </button>
+                  </div>
                 </motion.div>
               </div>
             )}

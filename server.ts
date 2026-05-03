@@ -1783,6 +1783,37 @@ async function startServer() {
     }
   });
 
+  // PATCH /api/processes/:id/pre-form — edição manual do pré-formulário por responsáveis
+  app.patch("/api/processes/:id/pre-form", async (req, res) => {
+    const { pre_form_data, changed_by_user_id, role } = req.body;
+
+    if (!['master', 'supervisor', 'consultant'].includes(role)) {
+      return res.status(403).json({ error: 'Acesso negado.' });
+    }
+    if (!pre_form_data || typeof pre_form_data !== 'object' || Array.isArray(pre_form_data)) {
+      return res.status(400).json({ error: 'Dados inválidos.' });
+    }
+
+    try {
+      const existing = await query("SELECT id, agency_id FROM processes WHERE id = $1", [req.params.id]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: 'Processo não encontrado.' });
+
+      await query(
+        "UPDATE processes SET pre_form_data = $1 WHERE id = $2",
+        [JSON.stringify(pre_form_data), req.params.id]
+      );
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [existing.rows[0].agency_id, changed_by_user_id || null, 'pre_form_edited', `Pré-formulário do processo #${req.params.id} editado manualmente`]
+        );
+      } catch (_) {}
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.delete("/api/processes/:id", async (req, res) => {
     try {
       const { user_id, role } = req.query;

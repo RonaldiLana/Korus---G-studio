@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Edit3, X, Check, Bell, Mail } from 'lucide-react';
+import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Edit3, X, Check, Bell, Mail, History, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AutomationRule {
@@ -12,6 +12,18 @@ interface AutomationRule {
   action_type: string;
   action_config: Record<string, any>;
   created_at: string;
+}
+
+interface EmailLog {
+  id: number;
+  process_id: number | null;
+  rule_id: number | null;
+  rule_name: string;
+  to_email: string;
+  subject: string;
+  status: 'sent' | 'failed';
+  error_message: string | null;
+  sent_at: string;
 }
 
 interface CRMAutomationProps {
@@ -81,7 +93,9 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
   const [saving, setSaving] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState<number | null>(null);
   const [error, setError] = React.useState('');
-  const [activeSection, setActiveSection] = React.useState<'internal' | 'email'>('internal');
+  const [activeSection, setActiveSection] = React.useState<'internal' | 'email' | 'logs'>('internal');
+  const [emailLogs, setEmailLogs] = React.useState<EmailLog[]>([]);
+  const [logsLoading, setLogsLoading] = React.useState(false);
 
   const headers = React.useMemo(
     () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
@@ -100,9 +114,25 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
     }
   }, [agencyId, headers]);
 
+  const fetchEmailLogs = React.useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/email-logs?agency_id=${agencyId}&limit=100`, { headers });
+      if (res.ok) setEmailLogs(await res.json());
+    } catch {
+      // silencioso
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [agencyId, headers]);
+
   React.useEffect(() => {
     fetchRules();
   }, [fetchRules]);
+
+  React.useEffect(() => {
+    if (activeSection === 'logs') fetchEmailLogs();
+  }, [activeSection, fetchEmailLogs]);
 
   const openCreate = () => {
     setEditingRule(null);
@@ -230,7 +260,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
         </div>
         <button
           onClick={openCreate}
-          className="brand-gradient text-black px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
+          className={`brand-gradient text-black px-4 py-2.5 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm ${activeSection === 'logs' ? 'invisible' : ''}`}
         >
           <Plus size={16} />
           Nova Regra
@@ -248,7 +278,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
           }`}
         >
           <Bell size={12} />
-          Notif. Interna (Pop-up)
+          Notif. Interna
         </button>
         <button
           onClick={() => setActiveSection('email')}
@@ -259,7 +289,18 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
           }`}
         >
           <Mail size={12} />
-          Notif. Cliente (E-mail)
+          E-mail Cliente
+        </button>
+        <button
+          onClick={() => setActiveSection('logs')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+            activeSection === 'logs'
+              ? 'bg-[var(--bg-card)] text-amber-400 shadow-sm'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+          }`}
+        >
+          <History size={12} />
+          Histórico
         </button>
       </div>
 
@@ -269,10 +310,80 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
         </div>
       )}
 
+      {/* Histórico de E-mails */}
+      {activeSection === 'logs' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Últimos 100 envios automáticos</p>
+            <button
+              onClick={fetchEmailLogs}
+              className="text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-amber-300 transition-colors"
+            >
+              Atualizar
+            </button>
+          </div>
+          {logsLoading ? (
+            <div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div>
+          ) : emailLogs.length === 0 ? (
+            <div className="text-center py-16 space-y-3">
+              <div className="w-16 h-16 mx-auto bg-[var(--bg-input)] rounded-2xl flex items-center justify-center">
+                <History size={28} className="text-[var(--text-muted)]" />
+              </div>
+              <p className="text-sm font-bold text-[var(--text-muted)]">Nenhum e-mail enviado ainda</p>
+              <p className="text-xs text-[var(--text-muted)]">Os envios automáticos aparecerão aqui</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {emailLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className={`p-3 rounded-xl border ${
+                    log.status === 'sent'
+                      ? 'bg-emerald-500/5 border-emerald-500/20'
+                      : 'bg-red-500/5 border-red-500/20'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex-shrink-0">
+                      {log.status === 'sent' ? (
+                        <CheckCircle2 size={14} className="text-emerald-400" />
+                      ) : (
+                        <AlertCircle size={14} className="text-red-400" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-black text-[var(--text-main)] truncate">{log.subject}</span>
+                        {log.process_id && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 bg-[var(--bg-input)] text-[var(--text-muted)] rounded">
+                            #{log.process_id}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                        Para: <span className="text-[var(--text-main)]">{log.to_email}</span>
+                        {' · '}
+                        Regra: <span className="text-[var(--text-main)]">{log.rule_name}</span>
+                      </p>
+                      {log.status === 'failed' && log.error_message && (
+                        <p className="text-[10px] text-red-400 mt-0.5">Erro: {log.error_message}</p>
+                      )}
+                      <p className="text-[9px] text-[var(--text-muted)] mt-0.5">
+                        {new Date(log.sent_at).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Lista de regras */}
-      {loading ? (
+      {activeSection !== 'logs' && loading ? (
         <div className="text-center py-12 text-[var(--text-muted)] text-sm">Carregando...</div>
-      ) : filteredRules.length === 0 ? (
+      ) : activeSection !== 'logs' && filteredRules.length === 0 ? (
         <div className="text-center py-16 space-y-3">
           <div className="w-16 h-16 mx-auto bg-[var(--bg-input)] rounded-2xl flex items-center justify-center">
             {activeSection === 'email'
@@ -291,7 +402,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
             Criar primeira regra
           </button>
         </div>
-      ) : (
+      ) : activeSection !== 'logs' ? (
         <div className="space-y-3">
           {filteredRules.map((rule) => (
             <motion.div
@@ -397,7 +508,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
             </motion.div>
           ))}
         </div>
-      )}
+      ) : null}
 
       {/* Modal criar/editar */}
       <AnimatePresence>
@@ -609,7 +720,7 @@ export const CRMAutomation: React.FC<CRMAutomationProps> = ({ agencyId, token })
                         </label>
                         <p className="text-[10px] text-[var(--text-muted)] leading-relaxed">
                           Variáveis:{' '}
-                          {['{{client_name}}', '{{destination}}', '{{process_status}}', '{{consultant_name}}', '{{agency_name}}'].map((v) => (
+                          {['{{client_name}}', '{{destination}}', '{{process_status}}', '{{internal_status}}', '{{consultant_name}}', '{{agency_name}}'].map((v) => (
                             <button
                               key={v}
                               type="button"

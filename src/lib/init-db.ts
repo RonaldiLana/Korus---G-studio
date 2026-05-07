@@ -128,6 +128,21 @@ async function applyMigrations() {
     )`,
     // agencies: coluna para configuração SMTP por agência (armazenada como JSON)
     `ALTER TABLE agencies ADD COLUMN IF NOT EXISTS smtp_config TEXT DEFAULT '{}'`,
+    // email_logs: histórico de envios de e-mail automáticos para clientes
+    `CREATE TABLE IF NOT EXISTS email_logs (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL,
+      process_id INTEGER,
+      rule_id INTEGER,
+      rule_name TEXT NOT NULL,
+      to_email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'sent',
+      error_message TEXT,
+      sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+      FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
+    )`,
     // índices para reduzir latência no login e nos principais filtros por agência
     `CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email))`,
     `CREATE INDEX IF NOT EXISTS idx_users_agency_id ON users (agency_id)`,

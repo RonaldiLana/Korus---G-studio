@@ -282,3 +282,18 @@ CREATE TABLE IF NOT EXISTS crm_notifications (
   FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
   FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS email_logs (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL,
+  process_id INTEGER,
+  rule_id INTEGER,
+  rule_name TEXT NOT NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent',
+  error_message TEXT,
+  sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+  FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
+);

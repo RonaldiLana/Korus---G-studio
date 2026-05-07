@@ -1712,41 +1712,44 @@ async function startServer() {
         } catch (_) {}
       }
 
-      // Disparar regras de automação notify_team quando status mudar
-      if (statusChanged) {
-        try {
-          const rulesResult = await query(
-            `SELECT * FROM crm_automation_rules
-             WHERE agency_id = $1 AND is_active = true
-               AND trigger_type = 'stage_change' AND action_type = 'notify_team'`,
-            [existingProcess.agency_id]
-          );
-          for (const rule of rulesResult.rows) {
-            let triggerCfg: Record<string, any> = {};
-            let actionCfg: Record<string, any> = {};
-            try { triggerCfg = typeof rule.trigger_config === 'string' ? JSON.parse(rule.trigger_config) : (rule.trigger_config || {}); } catch {}
-            try { actionCfg = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {}); } catch {}
+      // Disparar regras de automação quando status OU internal_status mudar
+      if (statusChanged || internalChanged) {
+        // Notificações internas (pop-up equipe) — apenas em mudança de status público
+        if (statusChanged) {
+          try {
+            const rulesResult = await query(
+              `SELECT * FROM crm_automation_rules
+               WHERE agency_id = $1 AND is_active = true
+                 AND trigger_type = 'stage_change' AND action_type = 'notify_team'`,
+              [existingProcess.agency_id]
+            );
+            for (const rule of rulesResult.rows) {
+              let triggerCfg: Record<string, any> = {};
+              let actionCfg: Record<string, any> = {};
+              try { triggerCfg = typeof rule.trigger_config === 'string' ? JSON.parse(rule.trigger_config) : (rule.trigger_config || {}); } catch {}
+              try { actionCfg = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {}); } catch {}
 
-            const fromStage = triggerCfg.from_stage || '';
-            const toStage = triggerCfg.to_stage || '';
-            const fromMatch = !fromStage || fromStage === existingProcess.status;
-            const toMatch = !toStage || toStage === newStatus;
+              const fromStage = triggerCfg.from_stage || '';
+              const toStage = triggerCfg.to_stage || '';
+              const fromMatch = !fromStage || fromStage === existingProcess.status;
+              const toMatch = !toStage || toStage === newStatus;
 
-            if (fromMatch && toMatch) {
-              const message = actionCfg.message
-                ? actionCfg.message
-                : `Processo #${req.params.id} mudou para ${newStatus}`;
-              await query(
-                `INSERT INTO crm_notifications (agency_id, rule_name, message, process_id) VALUES ($1, $2, $3, $4)`,
-                [existingProcess.agency_id, rule.name, message, req.params.id]
-              );
+              if (fromMatch && toMatch) {
+                const message = actionCfg.message
+                  ? actionCfg.message
+                  : `Processo #${req.params.id} mudou para ${newStatus}`;
+                await query(
+                  `INSERT INTO crm_notifications (agency_id, rule_name, message, process_id) VALUES ($1, $2, $3, $4)`,
+                  [existingProcess.agency_id, rule.name, message, req.params.id]
+                );
+              }
             }
+          } catch (e) {
+            console.error('[CRM NOTIF TRIGGER]', e);
           }
-        } catch (e) {
-          console.error('[CRM NOTIF TRIGGER]', e);
         }
 
-        // Disparar regras email_client quando status mudar
+        // Disparar regras email_client em qualquer mudança de status OU internal_status
         try {
           const emailRulesResult = await query(
             `SELECT * FROM crm_automation_rules
@@ -1757,7 +1760,7 @@ async function startServer() {
           if (emailRulesResult.rows.length > 0) {
             // Buscar dados completos do processo para substituição de variáveis
             const processDataResult = await query(
-              `SELECT p.id, p.status,
+              `SELECT p.id, p.status, p.internal_status,
                       c.name as client_name, c.email as client_email,
                       d.name as destination_name,
                       u.name as consultant_name,
@@ -1776,6 +1779,7 @@ async function startServer() {
                 client_name: proc.client_name || '',
                 destination: proc.destination_name || '',
                 process_status: newStatus || '',
+                internal_status: newInternalStatus || '',
                 consultant_name: proc.consultant_name || '',
                 agency_name: proc.agency_name || '',
               };
@@ -1788,19 +1792,36 @@ async function startServer() {
 
                 const fromStage = triggerCfg.from_stage || '';
                 const toStage = triggerCfg.to_stage || '';
-                const fromMatch = !fromStage || fromStage === existingProcess.status;
-                const toMatch = !toStage || toStage === newStatus;
+                // Verifica se a transição atual (status ou internal_status) satisfaz a regra
+                const fromMatchStatus = !fromStage || fromStage === existingProcess.status;
+                const fromMatchInternal = !fromStage || fromStage === existingProcess.internal_status;
+                const toMatchStatus = !toStage || toStage === newStatus;
+                const toMatchInternal = !toStage || toStage === newInternalStatus;
+                const fromMatch = fromMatchStatus || fromMatchInternal;
+                const toMatch = toMatchStatus || toMatchInternal;
 
                 if (fromMatch && toMatch && actionCfg.subject) {
                   const subject = substituteEmailVariables(actionCfg.subject, vars);
                   const body = substituteEmailVariables(actionCfg.body || '', vars);
                   const fromName = actionCfg.from_name || '';
+                  let emailStatus = 'sent';
+                  let emailError: string | null = null;
                   try {
                     await sendAgencyEmail(existingProcess.agency_id, proc.client_email, subject, fromName, body);
                     console.log(`[EMAIL TRIGGER] Regra "${rule.name}" → enviado para ${proc.client_email}`);
                   } catch (emailErr: any) {
+                    emailStatus = 'failed';
+                    emailError = emailErr.message || 'Erro desconhecido';
                     console.error(`[EMAIL TRIGGER] Falha na regra "${rule.name}":`, emailErr.message);
                   }
+                  // Registrar tentativa de envio no log
+                  try {
+                    await query(
+                      `INSERT INTO email_logs (agency_id, process_id, rule_id, rule_name, to_email, subject, status, error_message)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                      [existingProcess.agency_id, req.params.id, rule.id, rule.name, proc.client_email, subject, emailStatus, emailError]
+                    );
+                  } catch (_) {}
                 }
               }
             }
@@ -2182,6 +2203,33 @@ async function startServer() {
     } catch (e) {
       console.error('[CRM NOTIF PATCH ALL]', e);
       res.status(500).json({ error: "Erro ao marcar notificações como lidas" });
+    }
+  });
+
+  // GET /api/email-logs — histórico de envios de e-mail automáticos
+  app.get("/api/email-logs", async (req, res) => {
+    const { agency_id, process_id, limit = '100' } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id obrigatório" });
+    try {
+      const params: any[] = [agency_id];
+      let extraFilter = '';
+      if (process_id) {
+        params.push(process_id);
+        extraFilter = ` AND el.process_id = $${params.length}`;
+      }
+      const result = await query(
+        `SELECT el.id, el.process_id, el.rule_id, el.rule_name, el.to_email, el.subject,
+                el.status, el.error_message, el.sent_at
+         FROM email_logs el
+         WHERE el.agency_id = $1${extraFilter}
+         ORDER BY el.sent_at DESC
+         LIMIT $${params.length + 1}`,
+        [...params, parseInt(limit as string) || 100]
+      );
+      res.json(result.rows);
+    } catch (e) {
+      console.error('[EMAIL LOGS GET]', e);
+      res.status(500).json({ error: "Erro ao buscar logs de e-mail" });
     }
   });
   // ────────────────────────────────────────────────────────────────────────────

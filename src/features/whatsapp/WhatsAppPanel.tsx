@@ -82,6 +82,13 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
         setIntegration(prev => prev ? { ...prev, status: 'disconnected' } : null);
         return;
       }
+      if (data.status === 'connected') {
+        clearPolling();
+        setConnectionStatus('connected');
+        setQrCode(null);
+        fetchStatus(); // atualiza dados completos da integração
+        return;
+      }
       if (data.qr_code) setQrCode(data.qr_code);
     } catch {
       // ignore

@@ -2810,13 +2810,19 @@ async function startServer() {
       const createData: any = await createRes.json();
       console.log('[WHATSAPP CREATE RESPONSE]', JSON.stringify(createData).substring(0, 800));
 
-      const qrCode: string | null =
-        createData?.qrcode?.base64 ||
-        createData?.qr ||
-        createData?.base64 ||
-        null;
-
-      // QR é retornado pelo create ou obtido via polling (/api/whatsapp/qr) — sem delay aqui
+      // Chama /instance/connect UMA vez para iniciar geração do QR
+      let qrCode: string | null = null;
+      try {
+        await new Promise(resolve => setTimeout(resolve, 4000)); // aguarda Baileys inicializar
+        const connectRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+          headers: { apikey: EVOLUTION_API_KEY },
+        });
+        if (connectRes.ok) {
+          const connectData: any = await connectRes.json();
+          console.log('[WHATSAPP CONNECT ONCE]', JSON.stringify(connectData).substring(0, 400));
+          qrCode = connectData?.qrcode?.base64 || connectData?.base64 || connectData?.qr || null;
+        }
+      } catch { /* ignora — polling vai buscar depois */ }
 
       // Persiste/atualiza integração no DB
       const upsertResult = await query(
@@ -2850,31 +2856,44 @@ async function startServer() {
       if (!result.rows.length) return res.status(404).json({ error: 'Integração não encontrada' });
 
       const { instance_name } = result.rows[0];
-      const qrRes = await fetch(
-        `${EVOLUTION_API_URL}/instance/connect/${instance_name}`,
+
+      // USA fetchInstances (não /connect) para não reiniciar a sessão Baileys
+      const fetchRes = await fetch(
+        `${EVOLUTION_API_URL}/instance/fetchInstances?instanceName=${instance_name}`,
         { headers: { apikey: EVOLUTION_API_KEY } }
       );
 
-      if (!qrRes.ok) {
-        console.warn('[WHATSAPP QR] Evolution API retornou', qrRes.status, 'para', instance_name);
-        if (qrRes.status === 404) {
-          // Instância sumiu da Evolution API (restart/ephemeral) — reseta DB
-          await query(
-            `UPDATE whatsapp_integrations SET status = 'disconnected', updated_at = NOW() WHERE agency_id = $1`,
-            [agencyId]
-          );
-          return res.json({ qr_code: null, status: 'disconnected' });
-        }
+      if (!fetchRes.ok) {
+        console.warn('[WHATSAPP QR] fetchInstances retornou', fetchRes.status);
         return res.json({ qr_code: null });
       }
 
-      const qrData: any = await qrRes.json();
-      console.log('[WHATSAPP QR RESPONSE]', JSON.stringify(qrData).substring(0, 400));
+      const fetchData: any = await fetchRes.json();
+      console.log('[WHATSAPP FETCH RESPONSE]', JSON.stringify(fetchData).substring(0, 600));
+
+      const inst = Array.isArray(fetchData) ? fetchData[0] : fetchData;
+      const instanceStatus: string = inst?.instance?.status || inst?.status || '';
       const qrCode: string | null =
-        qrData?.base64 ||
-        qrData?.qrcode?.base64 ||
-        qrData?.qr ||
+        inst?.qrcode?.base64 ||
+        inst?.instance?.qrcode?.base64 ||
         null;
+
+      if (instanceStatus === 'open') {
+        const phone = inst?.instance?.profileName || inst?.instance?.wuid || null;
+        await query(
+          `UPDATE whatsapp_integrations SET status = 'connected', phone_number = $1, connected_at = NOW(), updated_at = NOW() WHERE agency_id = $2`,
+          [phone, agencyId]
+        );
+        return res.json({ qr_code: null, status: 'connected' });
+      }
+
+      if (!inst || instanceStatus === 'close' || instanceStatus === '') {
+        await query(
+          `UPDATE whatsapp_integrations SET status = 'disconnected', updated_at = NOW() WHERE agency_id = $1`,
+          [agencyId]
+        );
+        return res.json({ qr_code: null, status: 'disconnected' });
+      }
 
       res.json({ qr_code: qrCode });
     } catch (e) {

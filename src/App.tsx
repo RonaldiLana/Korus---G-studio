@@ -65,15 +65,17 @@ import {
   Menu,
   Mail,
   Send,
-  ArrowLeft
+  ArrowLeft,
+  Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
 import { FormsPanel } from './features/FormsPanel';
 import { CRMPanel } from './features/crm/CRMPanel';
 import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
+import { WhatsAppPanel } from './features/whatsapp/WhatsAppPanel';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -189,6 +191,11 @@ const canAccessPipefyModule = (user?: User | null): boolean => {
 const canAccessCRMModule = (user?: User | null): boolean => {
   if (!user) return false;
   return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant';
+};
+
+const canAccessWhatsAppModule = (user?: User | null): boolean => {
+  if (!user) return false;
+  return user.role !== 'client';
 };
 
 // Components
@@ -379,6 +386,7 @@ export default function App() {
             pipefy: m.pipefy !== false,
             leads: m.leads !== false,
             crm: m.crm !== false,
+            whatsapp: m.whatsapp === true,
           });
         } catch {}
       }
@@ -393,7 +401,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm' | 'whatsapp'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<ClientOverview[]>([]);
@@ -728,6 +736,7 @@ export default function App() {
     has_pipefy: true,
     has_leads: true,
     has_crm: true,
+    has_whatsapp: false,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -1042,7 +1051,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -1241,6 +1250,7 @@ export default function App() {
             pipefy: m.pipefy !== false,
             leads: m.leads !== false,
             crm: m.crm !== false,
+            whatsapp: m.whatsapp === true,
           });
         } catch {}
       }
@@ -1475,6 +1485,7 @@ export default function App() {
         pipefy: parsedModules.pipefy !== false,
         leads: parsedModules.leads !== false,
         crm: (parsedModules as any).crm !== false,
+        whatsapp: (parsedModules as any).whatsapp === true,
       });
 
       let destinations = [];
@@ -1676,6 +1687,7 @@ export default function App() {
           has_pipefy: true,
           has_leads: true,
           has_crm: true,
+          has_whatsapp: false,
           admin_name: '',
           admin_email: '',
           admin_password: '',
@@ -3588,6 +3600,15 @@ export default function App() {
             />
           )}
 
+          {canAccessWhatsAppModule(user) && (user?.role === 'master' || agencyModules.whatsapp) && (
+            <SidebarItem
+              icon={Smartphone}
+              label="WhatsApp"
+              active={view === 'whatsapp'}
+              onClick={() => { setView('whatsapp'); setSidebarOpen(false); }}
+            />
+          )}
+
           {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Users} 
@@ -3716,6 +3737,7 @@ export default function App() {
                 {view === 'agency_panel' && 'Painel Agência'}
                 {view === 'pipefy' && 'Pipefy'}
                 {view === 'crm' && 'CRM'}
+                {view === 'whatsapp' && 'WhatsApp'}
               </h2>
               <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">
                 <MapPin size={14} />
@@ -3769,7 +3791,7 @@ export default function App() {
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
+                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, has_whatsapp: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
                 className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
@@ -4229,6 +4251,7 @@ export default function App() {
                             has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
                             has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
                             has_crm: modules.crm !== undefined ? modules.crm : true,
+                            has_whatsapp: modules.whatsapp === true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
@@ -4550,6 +4573,21 @@ export default function App() {
             </motion.div>
           )}
 
+          {view === 'whatsapp' && (
+            <motion.div
+              key="whatsapp"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="h-full"
+            >
+              <WhatsAppPanel
+                agencyId={getScopedAgencyId() ?? 0}
+                user={user!}
+                token={token || ''}
+              />
+            </motion.div>
+          )}
+
           {view === 'forms' && (user?.role === 'master' || user?.role === 'supervisor') && (
             <motion.div
               key="forms"
@@ -4689,7 +4727,7 @@ export default function App() {
                                     <Pencil size={18} />
                                   </button>
                                   <button 
-                                    onClick={() => fetchProcessDetail(lead.process_id)}
+                                    onClick={() => lead.process_id != null && fetchProcessDetail(lead.process_id as number)}
                                     className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
                                     title="Ver Detalhes"
                                   >
@@ -6772,6 +6810,18 @@ export default function App() {
                               />
                               <label htmlFor="has_crm" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 CRM Habilitado
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_whatsapp"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={newAgency.has_whatsapp}
+                                onChange={e => setNewAgency({ ...newAgency, has_whatsapp: e.target.checked })}
+                              />
+                              <label htmlFor="has_whatsapp" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                WhatsApp Habilitado
                               </label>
                             </div>
                           </div>

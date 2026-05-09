@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS agencies (
   name TEXT NOT NULL,
   slug TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'active',
-  modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true, "leads": true}',
+  modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true, "leads": true, "whatsapp": false}',
   logo_url TEXT,
   pre_form_questions TEXT,
   destinations TEXT,
@@ -296,4 +296,17 @@ CREATE TABLE IF NOT EXISTS email_logs (
   sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
   FOREIGN KEY (process_id) REFERENCES processes(id) ON DELETE SET NULL
+);
+
+-- ─── WhatsApp Integration ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS whatsapp_integrations (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL UNIQUE,
+  instance_name TEXT NOT NULL,
+  status TEXT DEFAULT 'disconnected',
+  phone_number TEXT,
+  connected_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE
 );

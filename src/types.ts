@@ -241,3 +241,14 @@ export interface Task {
   is_active: boolean;
   created_at: string;
 }
+
+export interface WhatsAppIntegration {
+  id: number;
+  agency_id: number;
+  instance_name: string;
+  status: 'disconnected' | 'pending' | 'connected';
+  phone_number: string | null;
+  connected_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

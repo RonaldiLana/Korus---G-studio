@@ -774,7 +774,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -815,7 +815,8 @@ async function startServer() {
     const { name, slug, has_finance, has_pipefy } = req.body;
     const has_leads = req.body.has_leads !== undefined ? req.body.has_leads : true;
     const has_crm = req.body.has_crm !== undefined ? req.body.has_crm : true;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm });
+    const has_whatsapp = req.body.has_whatsapp === true;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });
@@ -2714,6 +2715,193 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ─── WhatsApp Integration (Evolution API proxy) ──────────────────────────
+  const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+  const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+
+  // GET /api/whatsapp/status/:agencyId — retorna integração da agência
+  app.get("/api/whatsapp/status/:agencyId", async (req, res) => {
+    const agencyId = parseInt(req.params.agencyId, 10);
+    if (!agencyId) return res.status(400).json({ error: 'agencyId inválido' });
+    try {
+      const result = await query(
+        'SELECT * FROM whatsapp_integrations WHERE agency_id = $1',
+        [agencyId]
+      );
+      if (!result.rows.length) return res.status(404).json({ error: 'Integração não encontrada' });
+
+      const integration = result.rows[0];
+
+      // Se a instância está pendente, consulta o Evolution API para verificar se já conectou
+      if (integration.status === 'pending' && EVOLUTION_API_URL) {
+        try {
+          const evRes = await fetch(
+            `${EVOLUTION_API_URL}/instance/connectionState/${integration.instance_name}`,
+            { headers: { apikey: EVOLUTION_API_KEY } }
+          );
+          if (evRes.ok) {
+            const evData: any = await evRes.json();
+            const state = evData?.instance?.state || evData?.state || '';
+            if (state === 'open') {
+              const phone = evData?.instance?.profileName || evData?.instance?.wuid || null;
+              await query(
+                `UPDATE whatsapp_integrations
+                 SET status = 'connected', phone_number = $1, connected_at = NOW(), updated_at = NOW()
+                 WHERE agency_id = $2`,
+                [phone, agencyId]
+              );
+              integration.status = 'connected';
+              integration.phone_number = phone;
+              integration.connected_at = new Date().toISOString();
+            }
+          }
+        } catch {
+          // Ignora falha ao consultar Evolution API; retorna estado atual do DB
+        }
+      }
+
+      res.json(integration);
+    } catch (e) {
+      console.error('[WHATSAPP STATUS]', e);
+      res.status(500).json({ error: 'Erro ao consultar status' });
+    }
+  });
+
+  // POST /api/whatsapp/connect/:agencyId — cria instância e retorna QR code
+  app.post("/api/whatsapp/connect/:agencyId", async (req, res) => {
+    const agencyId = parseInt(req.params.agencyId, 10);
+    if (!agencyId) return res.status(400).json({ error: 'agencyId inválido' });
+    if (!EVOLUTION_API_URL) {
+      return res.status(503).json({ error: 'Evolution API não configurada. Defina EVOLUTION_API_URL e EVOLUTION_API_KEY no servidor.' });
+    }
+
+    const instanceName = `agency_${agencyId}`;
+
+    try {
+      // Remove instância anterior se existir
+      try {
+        await fetch(`${EVOLUTION_API_URL}/instance/delete/${instanceName}`, {
+          method: 'DELETE',
+          headers: { apikey: EVOLUTION_API_KEY },
+        });
+      } catch { /* ignora */ }
+
+      // Cria nova instância
+      const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: EVOLUTION_API_KEY,
+        },
+        body: JSON.stringify({
+          instanceName,
+          qrcode: true,
+          integration: 'WHATSAPP-BAILEYS',
+        }),
+      });
+
+      if (!createRes.ok) {
+        const errText = await createRes.text();
+        console.error('[WHATSAPP CREATE]', errText);
+        return res.status(502).json({ error: 'Falha ao criar instância no Evolution API' });
+      }
+
+      const createData: any = await createRes.json();
+      const qrCode: string | null =
+        createData?.qrcode?.base64 ||
+        createData?.qr ||
+        createData?.base64 ||
+        null;
+
+      // Persiste/atualiza integração no DB
+      const upsertResult = await query(
+        `INSERT INTO whatsapp_integrations (agency_id, instance_name, status, updated_at)
+         VALUES ($1, $2, 'pending', NOW())
+         ON CONFLICT (agency_id) DO UPDATE
+           SET instance_name = $2, status = 'pending', phone_number = NULL,
+               connected_at = NULL, updated_at = NOW()
+         RETURNING *`,
+        [agencyId, instanceName]
+      );
+
+      res.json({ integration: upsertResult.rows[0], qr_code: qrCode });
+    } catch (e) {
+      console.error('[WHATSAPP CONNECT]', e);
+      res.status(500).json({ error: 'Erro ao iniciar conexão WhatsApp' });
+    }
+  });
+
+  // GET /api/whatsapp/qr/:agencyId — retorna QR code atualizado (polling)
+  app.get("/api/whatsapp/qr/:agencyId", async (req, res) => {
+    const agencyId = parseInt(req.params.agencyId, 10);
+    if (!agencyId) return res.status(400).json({ error: 'agencyId inválido' });
+    if (!EVOLUTION_API_URL) return res.status(503).json({ error: 'Evolution API não configurada' });
+
+    try {
+      const result = await query(
+        'SELECT instance_name FROM whatsapp_integrations WHERE agency_id = $1',
+        [agencyId]
+      );
+      if (!result.rows.length) return res.status(404).json({ error: 'Integração não encontrada' });
+
+      const { instance_name } = result.rows[0];
+      const qrRes = await fetch(
+        `${EVOLUTION_API_URL}/instance/connect/${instance_name}`,
+        { headers: { apikey: EVOLUTION_API_KEY } }
+      );
+
+      if (!qrRes.ok) return res.status(502).json({ error: 'Falha ao obter QR Code' });
+
+      const qrData: any = await qrRes.json();
+      const qrCode: string | null =
+        qrData?.base64 ||
+        qrData?.qrcode?.base64 ||
+        qrData?.qr ||
+        null;
+
+      res.json({ qr_code: qrCode });
+    } catch (e) {
+      console.error('[WHATSAPP QR]', e);
+      res.status(500).json({ error: 'Erro ao obter QR Code' });
+    }
+  });
+
+  // DELETE /api/whatsapp/disconnect/:agencyId — desconecta e remove instância
+  app.delete("/api/whatsapp/disconnect/:agencyId", async (req, res) => {
+    const agencyId = parseInt(req.params.agencyId, 10);
+    if (!agencyId) return res.status(400).json({ error: 'agencyId inválido' });
+
+    try {
+      const result = await query(
+        'SELECT instance_name FROM whatsapp_integrations WHERE agency_id = $1',
+        [agencyId]
+      );
+
+      if (result.rows.length && EVOLUTION_API_URL) {
+        const { instance_name } = result.rows[0];
+        try {
+          await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, {
+            method: 'DELETE',
+            headers: { apikey: EVOLUTION_API_KEY },
+          });
+        } catch { /* ignora falha ao deletar no Evolution API */ }
+      }
+
+      await query(
+        `UPDATE whatsapp_integrations
+         SET status = 'disconnected', phone_number = NULL, connected_at = NULL, updated_at = NOW()
+         WHERE agency_id = $1`,
+        [agencyId]
+      );
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[WHATSAPP DISCONNECT]', e);
+      res.status(500).json({ error: 'Erro ao desconectar WhatsApp' });
+    }
+  });
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Vite middleware for development only
   if (process.env.NODE_ENV !== "production") {

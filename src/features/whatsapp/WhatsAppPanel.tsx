@@ -74,6 +74,14 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
       });
       if (!res.ok) return;
       const data = await res.json();
+      if (data.status === 'disconnected') {
+        // Instância sumiu da Evolution API — para o spinner e mostra botão de reconectar
+        clearPolling();
+        setConnectionStatus('idle');
+        setQrCode(null);
+        setIntegration(prev => prev ? { ...prev, status: 'disconnected' } : null);
+        return;
+      }
       if (data.qr_code) setQrCode(data.qr_code);
     } catch {
       // ignore

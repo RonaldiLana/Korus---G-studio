@@ -2857,7 +2857,15 @@ async function startServer() {
 
       if (!qrRes.ok) {
         console.warn('[WHATSAPP QR] Evolution API retornou', qrRes.status, 'para', instance_name);
-        return res.json({ qr_code: null }); // 200 com null — polling continua
+        if (qrRes.status === 404) {
+          // Instância sumiu da Evolution API (restart/ephemeral) — reseta DB
+          await query(
+            `UPDATE whatsapp_integrations SET status = 'disconnected', updated_at = NOW() WHERE agency_id = $1`,
+            [agencyId]
+          );
+          return res.json({ qr_code: null, status: 'disconnected' });
+        }
+        return res.json({ qr_code: null });
       }
 
       const qrData: any = await qrRes.json();

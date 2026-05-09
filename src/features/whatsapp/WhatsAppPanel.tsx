@@ -121,6 +121,10 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
         setQrCode(data.qr_code);
         setConnectionStatus('qr_ready');
         startPolling();
+      } else if (data.integration?.status === 'pending') {
+        // Instância criada mas QR ainda não disponível — polling irá buscar
+        setConnectionStatus('qr_ready');
+        startPolling();
       } else {
         setConnectionStatus('error');
         setErrorMsg('Não foi possível gerar o QR Code.');

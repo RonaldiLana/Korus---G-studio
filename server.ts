@@ -2808,11 +2808,25 @@ async function startServer() {
       }
 
       const createData: any = await createRes.json();
-      const qrCode: string | null =
+      let qrCode: string | null =
         createData?.qrcode?.base64 ||
         createData?.qr ||
         createData?.base64 ||
         null;
+
+      // Se QR não veio no create, aguarda instância inicializar e busca no connect
+      if (!qrCode) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const qrRes2 = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+            headers: { apikey: EVOLUTION_API_KEY },
+          });
+          if (qrRes2.ok) {
+            const qrData2: any = await qrRes2.json();
+            qrCode = qrData2?.base64 || qrData2?.qrcode?.base64 || qrData2?.qr || null;
+          }
+        } catch { /* ignora */ }
+      }
 
       // Persiste/atualiza integração no DB
       const upsertResult = await query(

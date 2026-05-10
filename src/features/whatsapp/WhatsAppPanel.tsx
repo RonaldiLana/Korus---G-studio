@@ -14,7 +14,6 @@ interface WhatsAppPanelProps {
 type ConnectionStatus = 'idle' | 'loading' | 'qr_ready' | 'connected' | 'error';
 
 const POLLING_INTERVAL_MS = 4000;
-const QR_TIMEOUT_MS = 60000;
 
 export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, token }) => {
   const [integration, setIntegration] = useState<WhatsAppIntegration | null>(null);
@@ -113,13 +112,6 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
     pollingRef.current = setInterval(() => {
       qrFn();
     }, POLLING_INTERVAL_MS);
-
-    qrTimeoutRef.current = setTimeout(() => {
-      clearPolling();
-      setConnectionStatus('error');
-      setErrorMsg('O QR Code expirou. Tente conectar novamente.');
-      setQrCode(null);
-    }, QR_TIMEOUT_MS);
   };
 
   const handleConnect = async () => {

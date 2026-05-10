@@ -2729,6 +2729,8 @@ async function startServer() {
   const qrConnectLockUntil = new Map<number, number>(); // agencyId → performance.now() até quando está bloqueado
   // Registra quando recebemos close 401 — Baileys vai gerar QR automaticamente em seguida
   const close401ReceivedAt = new Map<number, number>();
+  // Rastreia quando o polling detectou 'connecting' pela 1ª vez (para timeout de 120s)
+  const connectingPolledAt = new Map<number, number>();
 
   // Handler do webhook WhatsApp (extraído para reutilizar em ambas as rotas)
   const handleWhatsappWebhook = async (req: any, res: any) => {
@@ -2767,6 +2769,7 @@ async function startServer() {
           qrCodeCache.set(agencyId, base64);
           connectedCache.delete(agencyId);
           qrConnectLockUntil.delete(agencyId); // libera lockout
+          connectingPolledAt.delete(agencyId); // QR chegou — ciclo completo
         }
       }
 
@@ -2784,6 +2787,7 @@ async function startServer() {
           connectedCache.add(agencyId);
           qrConnectLockUntil.delete(agencyId);
           close401ReceivedAt.delete(agencyId);
+          connectingPolledAt.delete(agencyId);
           const phone = body?.data?.instance?.profileName || body?.data?.instance?.wuid || null;
           try {
             await query(
@@ -2935,6 +2939,8 @@ async function startServer() {
       qrCodeCache.delete(agencyId);
       connectedCache.delete(agencyId);
       qrLastConnect.delete(agencyId);
+      connectingPolledAt.delete(agencyId);
+      close401ReceivedAt.delete(agencyId);
 
       // LOCKOUT DE 40 SEGUNDOS: bloqueia qualquer chamada a /instance/connect
       // Isso dá ao Baileys 40s para inicializar e gerar QR SEM ser reiniciado
@@ -3030,13 +3036,49 @@ async function startServer() {
             }
 
             if (state === 'connecting') {
-              // Baileys ainda está tentando autenticar com credenciais antigas do PostgreSQL.
-              // NÃO reiniciar — após receber 401 do WhatsApp, ele vai para 'close'
-              // e em seguida gera QR automaticamente (se qrcode=true na instância).
-              // Extende o lockout por mais 30s para aguardar esse processo.
-              console.log('[WHATSAPP QR] Estado "connecting" — aguardando Baileys autenticar/gerar QR (extendendo 30s)...');
-              qrConnectLockUntil.set(agencyId, performance.now() + 30000);
-              return res.json({ qr_code: null });
+              // Rastreia desde quando estamos vendo 'connecting' no polling
+              if (!connectingPolledAt.has(agencyId)) {
+                connectingPolledAt.set(agencyId, performance.now());
+              }
+              const msSinceConnecting = performance.now() - connectingPolledAt.get(agencyId)!;
+              if (msSinceConnecting < 120000) {
+                // Dentro da janela de 120s — aguarda o ciclo connecting→close401→QR
+                console.log('[WHATSAPP QR] "connecting" há', Math.round(msSinceConnecting / 1000), 's — aguardando close 401 do WhatsApp (lockout +20s)...');
+                qrConnectLockUntil.set(agencyId, performance.now() + 20000);
+                return res.json({ qr_code: null });
+              }
+              // "connecting" por mais de 120s sem QR ou close 401 → força delete+create
+              // (o delete limpa as credenciais do PostgreSQL para a próxima criação gerar QR direto)
+              console.log('[WHATSAPP QR] "connecting" por', Math.round(msSinceConnecting / 1000), 's sem QR — força restart (timeout 120s)');
+              connectingPolledAt.delete(agencyId);
+              close401ReceivedAt.delete(agencyId);
+              try {
+                await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+                await new Promise(r => setTimeout(r, 3000));
+                const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+                  body: JSON.stringify({
+                    instanceName: instance_name,
+                    qrcode: true,
+                    integration: 'WHATSAPP-BAILEYS',
+                    webhook: {
+                      url: `${BACKEND_URL}/api/whatsapp/webhook`,
+                      byEvents: false,
+                      base64: true,
+                      headers: {},
+                      events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+                    },
+                  }),
+                });
+                const reCreateBody = await reCreateRes.text();
+                console.log('[WHATSAPP QR RESTART from connecting-timeout] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
+                qrCodeCache.delete(agencyId);
+                connectedCache.delete(agencyId);
+                qrConnectLockUntil.set(agencyId, performance.now() + 45000);
+              } catch (restartErr) {
+                console.error('[WHATSAPP QR RESTART from connecting-timeout]', restartErr);
+              }
             }
 
             // Estado 'close' — verifica se houve close 401 recente
@@ -3052,6 +3094,7 @@ async function startServer() {
               // Restart seguro: nova instância vai direto ao QR sem ciclo connecting.
               console.log('[WHATSAPP QR] close 401 há', Math.round(ms401Ago / 1000), 's sem QR — restart limpo (creds já limpas)');
               close401ReceivedAt.delete(agencyId);
+              connectingPolledAt.delete(agencyId);
               try {
                 await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
                 await new Promise(r => setTimeout(r, 3000));
@@ -3082,6 +3125,7 @@ async function startServer() {
             } else {
               // Sem close 401 recente → restart completo (delete + create)
               console.log('[WHATSAPP QR] Estado:', state, '— restart completo (sem close 401 recente)');
+              connectingPolledAt.delete(agencyId);
               try {
                 await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
                 await new Promise(r => setTimeout(r, 3000));

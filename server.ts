@@ -2981,7 +2981,10 @@ async function startServer() {
 
       // Lockout expirou — Baileys teve tempo suficiente para gerar QR
       // IMPORTANTE: NÃO chamar /instance/connect — isso REINICIA o Baileys no v2.2.3!
-      // Em vez disso: lê o estado (read-only) e, se não houver QR, faz restart completo.
+      // Estratégia: lê o estado (read-only) e age conforme o estado:
+      //   - 'connecting': Baileys ainda está tentando usar credenciais antigas → aguardar mais 30s
+      //   - 'close': sessão encerrada definitivamente → restart completo (delete + create)
+      //   - 'open': já conectado → marcar como conectado
       const lastPerf = qrLastConnect.get(agencyId) ?? -100000;
       const elapsedMs = performance.now() - lastPerf;
       if (elapsedMs > 30000) {
@@ -2993,7 +2996,7 @@ async function startServer() {
           });
           if (stateRes.ok) {
             const stateData: any = await stateRes.json();
-            const state = stateData?.instance?.state || stateData?.state || '';
+            const state = (stateData?.instance?.state || stateData?.state || '').toLowerCase();
             console.log('[WHATSAPP QR STATE]', instance_name, '→', state);
 
             if (state === 'open') {
@@ -3008,14 +3011,26 @@ async function startServer() {
               return res.json({ qr_code: null, status: 'connected' });
             }
 
-            // Estado não-open e sem QR = Baileys está preso com credenciais antigas.
-            // Faz restart completo: logout (limpa credenciais) + delete + create
-            console.log('[WHATSAPP QR] Sem QR após lockout, estado:', state, '— reiniciando instância');
+            if (state === 'connecting') {
+              // Baileys ainda está tentando autenticar com credenciais antigas do PostgreSQL.
+              // NÃO reiniciar — após receber 401 do WhatsApp, ele vai para 'close'
+              // e em seguida gera QR automaticamente (se qrcode=true na instância).
+              // Extende o lockout por mais 30s para aguardar esse processo.
+              console.log('[WHATSAPP QR] Estado "connecting" — aguardando Baileys autenticar/gerar QR (extendendo 30s)...');
+              qrConnectLockUntil.set(agencyId, performance.now() + 30000);
+              return res.json({ qr_code: null });
+            }
+
+            // Estado 'close' (ou desconhecido) — sessão encerrada definitivamente.
+            // Restart completo: logout + delete + create com delays maiores.
+            console.log('[WHATSAPP QR] Estado:', state, '— fazendo restart completo da instância');
             try {
-              await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
-              await new Promise(r => setTimeout(r, 1000));
+              // Tenta logout (pode falhar se já fechado — ignorar)
+              try { await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
+              await new Promise(r => setTimeout(r, 2000));
+              // Delete com retry
               await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
-              await new Promise(r => setTimeout(r, 1500));
+              await new Promise(r => setTimeout(r, 3000)); // aguarda PostgreSQL processar delete
 
               const BACKEND_URL_INNER = (process.env.BACKEND_URL || '').replace(/\/$/, '');
               const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
@@ -3034,15 +3049,18 @@ async function startServer() {
                   },
                 }),
               });
-              console.log('[WHATSAPP QR RESTART] recriou instância:', reCreateRes.status);
+              const reCreateBody = await reCreateRes.text();
+              console.log('[WHATSAPP QR RESTART] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
+
+              // Novo lockout de 45s para o Baileys inicializar sem credenciais antigas
+              qrCodeCache.delete(agencyId);
+              connectedCache.delete(agencyId);
+              qrConnectLockUntil.set(agencyId, performance.now() + 45000);
             } catch (restartErr) {
               console.error('[WHATSAPP QR RESTART]', restartErr);
             }
-
-            // Novo lockout de 40s para o Baileys inicializar
-            qrCodeCache.delete(agencyId);
-            connectedCache.delete(agencyId);
-            qrConnectLockUntil.set(agencyId, performance.now() + 40000);
+          } else {
+            console.log('[WHATSAPP QR STATE] Falha ao consultar estado:', stateRes.status);
           }
         } catch (err) {
           console.error('[WHATSAPP QR STATE]', err);

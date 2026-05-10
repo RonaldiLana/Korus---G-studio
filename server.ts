@@ -3039,21 +3039,52 @@ async function startServer() {
               return res.json({ qr_code: null });
             }
 
-            // Estado 'close' (ou desconhecido) — verifica se é um close 401 recente
-            // (Baileys vai gerar QR automaticamente após close 401, basta aguardar)
+            // Estado 'close' — verifica se houve close 401 recente
             const last401 = close401ReceivedAt.get(agencyId) || 0;
             const ms401Ago = performance.now() - last401;
-            if (last401 > 0 && ms401Ago < 120000) {
-              // close 401 recente (< 2min) — Baileys gerará QR automaticamente, só aguardar
-              console.log('[WHATSAPP QR] close 401 há', Math.round(ms401Ago / 1000), 's — aguardando QR automático do Baileys (lockout +60s)');
-              qrConnectLockUntil.set(agencyId, performance.now() + 60000);
+            if (last401 > 0 && ms401Ago < 30000) {
+              // close 401 há menos de 30s — aguarda mais um pouco (janela de segurança)
+              console.log('[WHATSAPP QR] close 401 há', Math.round(ms401Ago / 1000), 's — aguardando (lockout +30s)');
+              qrConnectLockUntil.set(agencyId, performance.now() + 30000);
+            } else if (last401 > 0) {
+              // close 401 já ocorreu há 30s+ e QR não chegou via webhook.
+              // O Baileys já limpou as credenciais do PostgreSQL no close 401.
+              // Restart seguro: nova instância vai direto ao QR sem ciclo connecting.
+              console.log('[WHATSAPP QR] close 401 há', Math.round(ms401Ago / 1000), 's sem QR — restart limpo (creds já limpas)');
+              close401ReceivedAt.delete(agencyId);
+              try {
+                await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+                await new Promise(r => setTimeout(r, 3000));
+                const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+                  body: JSON.stringify({
+                    instanceName: instance_name,
+                    qrcode: true,
+                    integration: 'WHATSAPP-BAILEYS',
+                    webhook: {
+                      url: `${BACKEND_URL}/api/whatsapp/webhook`,
+                      byEvents: false,
+                      base64: true,
+                      headers: {},
+                      events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+                    },
+                  }),
+                });
+                const reCreateBody = await reCreateRes.text();
+                console.log('[WHATSAPP QR RESTART after close401] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
+                qrCodeCache.delete(agencyId);
+                connectedCache.delete(agencyId);
+                qrConnectLockUntil.set(agencyId, performance.now() + 45000);
+              } catch (restartErr) {
+                console.error('[WHATSAPP QR RESTART after close401]', restartErr);
+              }
             } else {
-              // Sem close 401 recente → restart completo (delete + create, SEM logout)
+              // Sem close 401 recente → restart completo (delete + create)
               console.log('[WHATSAPP QR] Estado:', state, '— restart completo (sem close 401 recente)');
               try {
                 await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
-                await new Promise(r => setTimeout(r, 3000)); // aguarda PostgreSQL processar delete
-
+                await new Promise(r => setTimeout(r, 3000));
                 const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -3072,11 +3103,8 @@ async function startServer() {
                 });
                 const reCreateBody = await reCreateRes.text();
                 console.log('[WHATSAPP QR RESTART] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
-
-                // Lockout de 90s para o Baileys inicializar
                 qrCodeCache.delete(agencyId);
                 connectedCache.delete(agencyId);
-                close401ReceivedAt.delete(agencyId);
                 qrConnectLockUntil.set(agencyId, performance.now() + 90000);
               } catch (restartErr) {
                 console.error('[WHATSAPP QR RESTART]', restartErr);

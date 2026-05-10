@@ -2877,11 +2877,41 @@ async function startServer() {
       const createData: any = await createRes.json();
       console.log('[WHATSAPP CREATE RESPONSE]', JSON.stringify(createData).substring(0, 800));
 
-      // Aguarda Baileys inicializar — QR chega via webhook /api/whatsapp/webhook
-      // Não chamamos /instance/connect aqui para não reiniciar sessão Baileys
-      // Aguarda brevemente para ver se webhook já entregou QR
-      await new Promise(r => setTimeout(r, 3000));
-      const qrCode: string | null = qrCodeCache.get(agencyId) || null;
+      // Configura webhook via endpoint dedicado (mais confiável que embed no create)
+      try {
+        const whReq = await fetch(`${EVOLUTION_API_URL}/webhook/set/${instanceName}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          body: JSON.stringify({
+            url: `${BACKEND_URL}/api/whatsapp/webhook`,
+            webhook_by_events: true,
+            webhook_base64: true,
+            events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+          }),
+        });
+        console.log('[WHATSAPP WEBHOOK SET]', whReq.status, await whReq.text());
+      } catch (e) {
+        console.warn('[WHATSAPP WEBHOOK SET] falhou:', e);
+      }
+
+      // Aguarda Baileys inicializar o WebSocket
+      await new Promise(r => setTimeout(r, 4000));
+
+      // Chama /instance/connect UMA vez para gerar o QR
+      let qrCode: string | null = qrCodeCache.get(agencyId) || null;
+      if (!qrCode) {
+        try {
+          const connRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+            headers: { apikey: EVOLUTION_API_KEY },
+          });
+          if (connRes.ok) {
+            const connData: any = await connRes.json();
+            console.log('[WHATSAPP CONNECT ONCE]', JSON.stringify(connData).substring(0, 400));
+            qrCode = connData?.code || connData?.base64 || connData?.qrcode?.base64 || null;
+            if (qrCode) qrCodeCache.set(agencyId, qrCode);
+          }
+        } catch { /* ignora — polling usa fallback */ }
+      }
 
       // Persiste/atualiza integração no DB
       const upsertResult = await query(
@@ -2901,6 +2931,9 @@ async function startServer() {
     }
   });
 
+  // Timestamp do último /instance/connect por agência (debounce para não reiniciar Baileys)
+  const qrLastConnect = new Map<number, number>();
+
   // GET /api/whatsapp/qr/:agencyId — retorna QR code atualizado (polling via webhook cache)
   app.get("/api/whatsapp/qr/:agencyId", async (req, res) => {
     const agencyId = parseInt(req.params.agencyId, 10);
@@ -2912,16 +2945,40 @@ async function startServer() {
         [agencyId]
       );
       if (!result.rows.length) return res.status(404).json({ error: 'Integração não encontrada' });
+      const { instance_name } = result.rows[0];
 
-      // Webhook já atualizou connectedCache/qrCodeCache em tempo real
+      // Webhook já atualizou connectedCache
       if (connectedCache.has(agencyId)) {
         connectedCache.delete(agencyId);
         return res.json({ qr_code: null, status: 'connected' });
       }
 
-      const qrCode: string | null = qrCodeCache.get(agencyId) || null;
-      console.log('[WHATSAPP QR POLL] agencyId', agencyId, 'qr:', qrCode ? 'presente' : 'aguardando webhook...');
+      let qrCode: string | null = qrCodeCache.get(agencyId) || null;
 
+      // Fallback: se não tem QR no cache, chama /instance/connect com debounce de 60s
+      if (!qrCode) {
+        const last = qrLastConnect.get(agencyId) || 0;
+        const now = Date.now();
+        if (now - last > 60000) {
+          qrLastConnect.set(agencyId, now);
+          try {
+            const connRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instance_name}`, {
+              headers: { apikey: EVOLUTION_API_KEY },
+            });
+            if (connRes.ok) {
+              const connData: any = await connRes.json();
+              console.log('[WHATSAPP QR FALLBACK]', JSON.stringify(connData).substring(0, 300));
+              const fresh = connData?.code || connData?.base64 || connData?.qrcode?.base64 || null;
+              if (fresh) {
+                qrCode = fresh;
+                qrCodeCache.set(agencyId, fresh);
+              }
+            }
+          } catch { /* ignora */ }
+        }
+      }
+
+      console.log('[WHATSAPP QR POLL] agencyId', agencyId, 'qr:', qrCode ? 'presente' : 'aguardando...');
       res.json({ qr_code: qrCode });
     } catch (e) {
       console.error('[WHATSAPP QR]', e);

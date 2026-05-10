@@ -2719,9 +2719,54 @@ async function startServer() {
   // ─── WhatsApp Integration (Evolution API proxy) ──────────────────────────
   const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
-  // Cache de QR por agência — evita chamar /instance/connect mais de 1x por minuto
-  const qrCodeCache = new Map<number, string>();   // agencyId → base64
-  const qrLastFetch  = new Map<number, number>();  // agencyId → timestamp ms
+  // Armazena o QR mais recente recebido via webhook (agencyId → base64)
+  const qrCodeCache = new Map<number, string>();
+  const connectedCache = new Set<number>(); // agências já conectadas no webhook
+
+  // POST /api/whatsapp/webhook — recebe eventos da Evolution API
+  app.post("/api/whatsapp/webhook", async (req, res) => {
+    try {
+      const body = req.body;
+      const event = body?.event || body?.type || '';
+      const instanceName: string = body?.instance || body?.sender || '';
+      console.log('[WHATSAPP WEBHOOK]', event, instanceName, JSON.stringify(body).substring(0, 400));
+
+      // Descobre agencyId a partir do instanceName (formato: agency_14)
+      const match = instanceName.match(/agency_(\d+)/);
+      if (!match) return res.json({ ok: true });
+      const agencyId = parseInt(match[1], 10);
+
+      if (event === 'qrcode.updated' || event === 'QRCODE_UPDATED') {
+        const base64 = body?.data?.qrcode?.base64 || body?.data?.base64 || body?.qrcode?.base64 || null;
+        if (base64) {
+          console.log('[WHATSAPP WEBHOOK] QR recebido para', instanceName);
+          qrCodeCache.set(agencyId, base64);
+          connectedCache.delete(agencyId);
+        }
+      } else if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
+        const state = body?.data?.state || body?.state || '';
+        if (state === 'open') {
+          console.log('[WHATSAPP WEBHOOK] Conectado:', instanceName);
+          qrCodeCache.delete(agencyId);
+          connectedCache.add(agencyId);
+          const phone = body?.data?.instance?.profileName || body?.data?.instance?.wuid || null;
+          try {
+            await query(
+              `UPDATE whatsapp_integrations SET status = 'connected', phone_number = $1, connected_at = NOW(), updated_at = NOW() WHERE agency_id = $2`,
+              [phone, agencyId]
+            );
+          } catch { /* ignora */ }
+        } else if (state === 'close') {
+          connectedCache.delete(agencyId);
+        }
+      }
+
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('[WHATSAPP WEBHOOK]', e);
+      res.json({ ok: true }); // sempre 200 para Evolution API não desativar webhook
+    }
+  });
 
   // GET /api/whatsapp/status/:agencyId — retorna integração da agência
   app.get("/api/whatsapp/status/:agencyId", async (req, res) => {
@@ -2796,7 +2841,19 @@ async function startServer() {
       let createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-        body: JSON.stringify({ instanceName, qrcode: true, integration: 'WHATSAPP-BAILEYS' }),
+        body: JSON.stringify({
+          instanceName,
+          qrcode: true,
+          integration: 'WHATSAPP-BAILEYS',
+          // Configura webhook para receber QR e eventos de conexão
+          webhook: {
+            url: `${BACKEND_URL}/api/whatsapp/webhook`,
+            byEvents: true,
+            base64: true,
+            headers: {},
+            events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+          },
+        }),
       });
 
       // Se retornar 403 "already in use", tenta force-delete e recria
@@ -2820,23 +2877,11 @@ async function startServer() {
       const createData: any = await createRes.json();
       console.log('[WHATSAPP CREATE RESPONSE]', JSON.stringify(createData).substring(0, 800));
 
-      // Aguarda Baileys inicializar e obtém primeiro QR
-      let qrCode: string | null = null;
-      try {
-        await new Promise(resolve => setTimeout(resolve, 5000)); // aguarda WebSocket do Baileys
-        const connectRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
-          headers: { apikey: EVOLUTION_API_KEY },
-        });
-        if (connectRes.ok) {
-          const connectData: any = await connectRes.json();
-          console.log('[WHATSAPP CONNECT ONCE]', JSON.stringify(connectData).substring(0, 400));
-          qrCode = connectData?.code || connectData?.base64 || connectData?.qrcode?.base64 || null;
-          if (qrCode) {
-            qrCodeCache.set(agencyId, qrCode);
-            qrLastFetch.set(agencyId, Date.now());
-          }
-        }
-      } catch { /* ignora — polling vai buscar depois */ }
+      // Aguarda Baileys inicializar — QR chega via webhook /api/whatsapp/webhook
+      // Não chamamos /instance/connect aqui para não reiniciar sessão Baileys
+      // Aguarda brevemente para ver se webhook já entregou QR
+      await new Promise(r => setTimeout(r, 3000));
+      const qrCode: string | null = qrCodeCache.get(agencyId) || null;
 
       // Persiste/atualiza integração no DB
       const upsertResult = await query(
@@ -2856,11 +2901,10 @@ async function startServer() {
     }
   });
 
-  // GET /api/whatsapp/qr/:agencyId — retorna QR code atualizado (polling)
+  // GET /api/whatsapp/qr/:agencyId — retorna QR code atualizado (polling via webhook cache)
   app.get("/api/whatsapp/qr/:agencyId", async (req, res) => {
     const agencyId = parseInt(req.params.agencyId, 10);
     if (!agencyId) return res.status(400).json({ error: 'agencyId inválido' });
-    if (!EVOLUTION_API_URL) return res.status(503).json({ error: 'Evolution API não configurada' });
 
     try {
       const result = await query(
@@ -2869,68 +2913,14 @@ async function startServer() {
       );
       if (!result.rows.length) return res.status(404).json({ error: 'Integração não encontrada' });
 
-      const { instance_name } = result.rows[0];
-
-      // USA fetchInstances (não /connect) para não reiniciar a sessão Baileys
-      const fetchRes = await fetch(
-        `${EVOLUTION_API_URL}/instance/fetchInstances?instanceName=${instance_name}`,
-        { headers: { apikey: EVOLUTION_API_KEY } }
-      );
-
-      if (!fetchRes.ok) {
-        console.warn('[WHATSAPP QR] fetchInstances retornou', fetchRes.status);
-        return res.json({ qr_code: null });
-      }
-
-      const fetchData: any = await fetchRes.json();
-      console.log('[WHATSAPP FETCH RESPONSE]', JSON.stringify(fetchData).substring(0, 600));
-
-      // fetchInstances retorna array de objetos com campo "connectionStatus" na raiz
-      const inst = Array.isArray(fetchData) ? fetchData[0] : fetchData;
-
-      if (!inst) {
-        // Instância não existe mais na Evolution API
-        await query(`UPDATE whatsapp_integrations SET status = 'disconnected', updated_at = NOW() WHERE agency_id = $1`, [agencyId]);
-        return res.json({ qr_code: null, status: 'disconnected' });
-      }
-
-      const connectionStatus: string = inst?.connectionStatus || '';
-      console.log('[WHATSAPP STATUS]', instance_name, connectionStatus);
-
-      if (connectionStatus === 'open') {
-        const phone = inst?.profileName || inst?.ownerJid || null;
-        await query(
-          `UPDATE whatsapp_integrations SET status = 'connected', phone_number = $1, connected_at = NOW(), updated_at = NOW() WHERE agency_id = $2`,
-          [phone, agencyId]
-        );
-        qrCodeCache.delete(agencyId);
-        qrLastFetch.delete(agencyId);
+      // Webhook já atualizou connectedCache/qrCodeCache em tempo real
+      if (connectedCache.has(agencyId)) {
+        connectedCache.delete(agencyId);
         return res.json({ qr_code: null, status: 'connected' });
       }
 
-      // "close" ou "connecting" = aguardando QR — NÃO é erro, continua spinner
-      // Busca QR via /instance/connect com debounce de 55s para não reiniciar Baileys
-      const now = Date.now();
-      const lastFetch = qrLastFetch.get(agencyId) || 0;
-      let qrCode: string | null = qrCodeCache.get(agencyId) || null;
-
-      if (now - lastFetch > 55000) {
-        qrLastFetch.set(agencyId, now);
-        try {
-          const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instance_name}`, {
-            headers: { apikey: EVOLUTION_API_KEY },
-          });
-          if (qrRes.ok) {
-            const qrData: any = await qrRes.json();
-            console.log('[WHATSAPP QR FRESH]', JSON.stringify(qrData).substring(0, 300));
-            const fresh = qrData?.code || qrData?.base64 || qrData?.qrcode?.base64 || null;
-            if (fresh) {
-              qrCode = fresh;
-              qrCodeCache.set(agencyId, fresh);
-            }
-          }
-        } catch { /* ignora */ }
-      }
+      const qrCode: string | null = qrCodeCache.get(agencyId) || null;
+      console.log('[WHATSAPP QR POLL] agencyId', agencyId, 'qr:', qrCode ? 'presente' : 'aguardando webhook...');
 
       res.json({ qr_code: qrCode });
     } catch (e) {

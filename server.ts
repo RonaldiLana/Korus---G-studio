@@ -2980,25 +2980,73 @@ async function startServer() {
       }
 
       // Lockout expirou — Baileys teve tempo suficiente para gerar QR
-      // Chama /instance/connect com debounce de 30s entre chamadas
+      // IMPORTANTE: NÃO chamar /instance/connect — isso REINICIA o Baileys no v2.2.3!
+      // Em vez disso: lê o estado (read-only) e, se não houver QR, faz restart completo.
       const lastPerf = qrLastConnect.get(agencyId) ?? -100000;
       const elapsedMs = performance.now() - lastPerf;
       if (elapsedMs > 30000) {
         qrLastConnect.set(agencyId, performance.now());
         try {
-          const connRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instance_name}`, {
+          // Lê o estado atual SEM reiniciar o Baileys
+          const stateRes = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instance_name}`, {
             headers: { apikey: EVOLUTION_API_KEY },
           });
-          if (connRes.ok) {
-            const connData: any = await connRes.json();
-            console.log('[WHATSAPP QR /instance/connect]', JSON.stringify(connData).substring(0, 400));
-            const fresh = connData?.base64 || connData?.qrcode?.base64 || null;
-            if (fresh) {
-              qrCodeCache.set(agencyId, fresh);
-              return res.json({ qr_code: fresh });
+          if (stateRes.ok) {
+            const stateData: any = await stateRes.json();
+            const state = stateData?.instance?.state || stateData?.state || '';
+            console.log('[WHATSAPP QR STATE]', instance_name, '→', state);
+
+            if (state === 'open') {
+              // Já conectado — atualiza DB e retorna
+              connectedCache.add(agencyId);
+              try {
+                await query(
+                  `UPDATE whatsapp_integrations SET status = 'connected', connected_at = NOW(), updated_at = NOW() WHERE agency_id = $1`,
+                  [agencyId]
+                );
+              } catch { /* ignora */ }
+              return res.json({ qr_code: null, status: 'connected' });
             }
+
+            // Estado não-open e sem QR = Baileys está preso com credenciais antigas.
+            // Faz restart completo: logout (limpa credenciais) + delete + create
+            console.log('[WHATSAPP QR] Sem QR após lockout, estado:', state, '— reiniciando instância');
+            try {
+              await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+              await new Promise(r => setTimeout(r, 1000));
+              await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+              await new Promise(r => setTimeout(r, 1500));
+
+              const BACKEND_URL_INNER = (process.env.BACKEND_URL || '').replace(/\/$/, '');
+              const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+                body: JSON.stringify({
+                  instanceName: instance_name,
+                  qrcode: true,
+                  integration: 'WHATSAPP-BAILEYS',
+                  webhook: {
+                    url: `${BACKEND_URL_INNER}/api/whatsapp/webhook`,
+                    byEvents: false,
+                    base64: true,
+                    headers: {},
+                    events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+                  },
+                }),
+              });
+              console.log('[WHATSAPP QR RESTART] recriou instância:', reCreateRes.status);
+            } catch (restartErr) {
+              console.error('[WHATSAPP QR RESTART]', restartErr);
+            }
+
+            // Novo lockout de 40s para o Baileys inicializar
+            qrCodeCache.delete(agencyId);
+            connectedCache.delete(agencyId);
+            qrConnectLockUntil.set(agencyId, performance.now() + 40000);
           }
-        } catch { /* ignora */ }
+        } catch (err) {
+          console.error('[WHATSAPP QR STATE]', err);
+        }
       }
 
       console.log('[WHATSAPP QR POLL] agencyId', agencyId, `aguardando (${Math.round(elapsedMs / 1000)}s desde último connect)...`);

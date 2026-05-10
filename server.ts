@@ -2727,8 +2727,8 @@ async function startServer() {
   // Lockout: após connect, bloqueia qualquer chamada a /instance/connect por N ms
   // Isso dá ao Baileys tempo para inicializar SEM ser reiniciado pelo polling
   const qrConnectLockUntil = new Map<number, number>(); // agencyId → performance.now() até quando está bloqueado
-  // Debounce para logout forçado: quando Baileys fica preso em "connecting" com credenciais antigas
-  const connectingForceLogoutAt = new Map<number, number>();
+  // Registra quando recebemos close 401 — Baileys vai gerar QR automaticamente em seguida
+  const close401ReceivedAt = new Map<number, number>();
 
   // Handler do webhook WhatsApp (extraído para reutilizar em ambas as rotas)
   const handleWhatsappWebhook = async (req: any, res: any) => {
@@ -2783,6 +2783,7 @@ async function startServer() {
           qrCodeCache.delete(agencyId);
           connectedCache.add(agencyId);
           qrConnectLockUntil.delete(agencyId);
+          close401ReceivedAt.delete(agencyId);
           const phone = body?.data?.instance?.profileName || body?.data?.instance?.wuid || null;
           try {
             await query(
@@ -2791,26 +2792,19 @@ async function startServer() {
             );
           } catch { /* ignora */ }
         } else if (state === 'connecting') {
-          // Baileys está em "connecting" com credenciais antigas do PostgreSQL.
-          // Se NÃO estamos em período de lockout (criação recente) E não há QR nem conexão,
-          // força logout para limpar as credenciais e provocar geração de QR fresco.
-          const lockUntil = qrConnectLockUntil.get(agencyId) || 0;
-          const inLockout = performance.now() < lockUntil;
-          const hasQr = qrCodeCache.has(agencyId);
-          const isConnected = connectedCache.has(agencyId);
-          if (!inLockout && !hasQr && !isConnected && EVOLUTION_API_URL) {
-            const lastForceLogout = connectingForceLogoutAt.get(agencyId) || 0;
-            if (performance.now() - lastForceLogout > 12000) { // máx 1x a cada 12s
-              connectingForceLogoutAt.set(agencyId, performance.now());
-              console.log('[WHATSAPP WEBHOOK] Baileys preso em "connecting" — forçando logout para limpar credenciais:', instanceName);
-              // Async: não bloqueia o webhook response
-              fetch(`${EVOLUTION_API_URL}/instance/logout/${instanceName}`, {
-                method: 'DELETE',
-                headers: { apikey: EVOLUTION_API_KEY },
-              }).then(() => {
-                console.log('[WHATSAPP WEBHOOK] Logout forçado enviado para:', instanceName);
-              }).catch(() => {});
-            }
+          // Baileys autenticando — NÃO interferir. O WhatsApp rejeitará (401) e o
+          // Baileys gerará QR automaticamente. Qualquer interferência quebra o ciclo.
+          console.log('[WHATSAPP WEBHOOK] connecting para', instanceName, '— aguardando (não interferir)');
+        } else if (state === 'close') {
+          const statusReason = body?.data?.statusReason || body?.statusReason || 0;
+          // close 401/428/403 = WhatsApp rejeitou credenciais → Baileys gerará QR em seguida
+          if (statusReason === 401 || statusReason === 428 || statusReason === 403) {
+            console.log('[WHATSAPP WEBHOOK] close', statusReason, 'para', instanceName, '— QR chegará via webhook em breve');
+            close401ReceivedAt.set(agencyId, performance.now());
+            // Estende lockout por 90s: tempo para Baileys gerar QR sem ser reiniciado
+            const newLock = performance.now() + 90000;
+            const currentLock = qrConnectLockUntil.get(agencyId) || 0;
+            if (newLock > currentLock) qrConnectLockUntil.set(agencyId, newLock);
           }
         }
       }
@@ -3045,42 +3039,48 @@ async function startServer() {
               return res.json({ qr_code: null });
             }
 
-            // Estado 'close' (ou desconhecido) — sessão encerrada definitivamente.
-            // Restart completo: logout + delete + create com delays maiores.
-            console.log('[WHATSAPP QR] Estado:', state, '— fazendo restart completo da instância');
-            try {
-              // Tenta logout (pode falhar se já fechado — ignorar)
-              try { await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
-              await new Promise(r => setTimeout(r, 2000));
-              // Delete com retry
-              await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
-              await new Promise(r => setTimeout(r, 3000)); // aguarda PostgreSQL processar delete
+            // Estado 'close' (ou desconhecido) — verifica se é um close 401 recente
+            // (Baileys vai gerar QR automaticamente após close 401, basta aguardar)
+            const last401 = close401ReceivedAt.get(agencyId) || 0;
+            const ms401Ago = performance.now() - last401;
+            if (last401 > 0 && ms401Ago < 120000) {
+              // close 401 recente (< 2min) — Baileys gerará QR automaticamente, só aguardar
+              console.log('[WHATSAPP QR] close 401 há', Math.round(ms401Ago / 1000), 's — aguardando QR automático do Baileys (lockout +60s)');
+              qrConnectLockUntil.set(agencyId, performance.now() + 60000);
+            } else {
+              // Sem close 401 recente → restart completo (delete + create, SEM logout)
+              console.log('[WHATSAPP QR] Estado:', state, '— restart completo (sem close 401 recente)');
+              try {
+                await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+                await new Promise(r => setTimeout(r, 3000)); // aguarda PostgreSQL processar delete
 
-              const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-                body: JSON.stringify({
-                  instanceName: instance_name,
-                  qrcode: true,
-                  integration: 'WHATSAPP-BAILEYS',
-                  webhook: {
-                    url: `${BACKEND_URL}/api/whatsapp/webhook`,
-                    byEvents: false,
-                    base64: true,
-                    headers: {},
-                    events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
-                  },
-                }),
-              });
-              const reCreateBody = await reCreateRes.text();
-              console.log('[WHATSAPP QR RESTART] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
+                const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+                  body: JSON.stringify({
+                    instanceName: instance_name,
+                    qrcode: true,
+                    integration: 'WHATSAPP-BAILEYS',
+                    webhook: {
+                      url: `${BACKEND_URL}/api/whatsapp/webhook`,
+                      byEvents: false,
+                      base64: true,
+                      headers: {},
+                      events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+                    },
+                  }),
+                });
+                const reCreateBody = await reCreateRes.text();
+                console.log('[WHATSAPP QR RESTART] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
 
-              // Novo lockout de 45s para o Baileys inicializar sem credenciais antigas
-              qrCodeCache.delete(agencyId);
-              connectedCache.delete(agencyId);
-              qrConnectLockUntil.set(agencyId, performance.now() + 45000);
-            } catch (restartErr) {
-              console.error('[WHATSAPP QR RESTART]', restartErr);
+                // Lockout de 90s para o Baileys inicializar
+                qrCodeCache.delete(agencyId);
+                connectedCache.delete(agencyId);
+                close401ReceivedAt.delete(agencyId);
+                qrConnectLockUntil.set(agencyId, performance.now() + 90000);
+              } catch (restartErr) {
+                console.error('[WHATSAPP QR RESTART]', restartErr);
+              }
             }
           } else if (stateRes.status === 404) {
             // Instância não existe na Evolution API (ex: servidor reiniciou, instância foi deletada)

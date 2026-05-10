@@ -22,6 +22,7 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [qrJustAppeared, setQrJustAppeared] = useState(false);
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qrTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,7 +90,14 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
         fetchStatus(); // atualiza dados completos da integração
         return;
       }
-      if (data.qr_code) setQrCode(data.qr_code);
+      if (data.qr_code) {
+        if (!qrCode) {
+          // QR apareceu pela primeira vez — mostra confirmação
+          setQrJustAppeared(true);
+          setTimeout(() => setQrJustAppeared(false), 4000);
+        }
+        setQrCode(data.qr_code);
+      }
     } catch {
       // ignore
     }
@@ -100,10 +108,10 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
     return () => clearPolling();
   }, [agencyId]);
 
-  const startPolling = () => {
+  const startPolling = (qrFn: () => Promise<void>) => {
     clearPolling();
     pollingRef.current = setInterval(() => {
-      fetchStatus();
+      qrFn();
     }, POLLING_INTERVAL_MS);
 
     qrTimeoutRef.current = setTimeout(() => {
@@ -135,11 +143,11 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
       if (data.qr_code) {
         setQrCode(data.qr_code);
         setConnectionStatus('qr_ready');
-        startPolling();
+        startPolling(fetchQr);
       } else if (data.integration?.status === 'pending') {
         // Instância criada mas QR ainda não disponível — polling irá buscar
         setConnectionStatus('qr_ready');
-        startPolling();
+        startPolling(fetchQr);
       } else {
         setConnectionStatus('error');
         setErrorMsg('Não foi possível gerar o QR Code.');
@@ -271,16 +279,25 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
               </p>
             </div>
             {qrCode ? (
-              <div className="p-4 bg-white rounded-2xl shadow-lg">
-                <img
-                  src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                  alt="QR Code WhatsApp"
-                  className="w-56 h-56 object-contain"
-                />
+              <div className="flex flex-col items-center gap-3">
+                {qrJustAppeared && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-bold animate-pulse">
+                    <CheckCircle2 size={16} />
+                    QR Code gerado! Escaneie agora com o WhatsApp
+                  </div>
+                )}
+                <div className="p-4 bg-white rounded-2xl shadow-lg ring-2 ring-emerald-400/30">
+                  <img
+                    src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                    alt="QR Code WhatsApp"
+                    className="w-56 h-56 object-contain"
+                  />
+                </div>
               </div>
             ) : (
-              <div className="w-64 h-64 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex items-center justify-center">
+              <div className="w-64 h-64 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex flex-col items-center justify-center gap-3">
                 <RefreshCw size={32} className="text-[var(--text-muted)] animate-spin" />
+                <p className="text-xs text-[var(--text-muted)]">Aguardando Baileys inicializar...</p>
               </div>
             )}
             <div className="flex items-center gap-2 text-amber-400 text-xs">

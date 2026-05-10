@@ -3059,6 +3059,37 @@ async function startServer() {
             } catch (restartErr) {
               console.error('[WHATSAPP QR RESTART]', restartErr);
             }
+          } else if (stateRes.status === 404) {
+            // Instância não existe na Evolution API (ex: servidor reiniciou, instância foi deletada)
+            // Cria a instância do zero automaticamente
+            console.log('[WHATSAPP QR] Instância não encontrada (404) — criando nova instância automaticamente');
+            try {
+              const BACKEND_URL_INNER = (process.env.BACKEND_URL || '').replace(/\/$/, '');
+              const autoCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+                body: JSON.stringify({
+                  instanceName: instance_name,
+                  qrcode: true,
+                  integration: 'WHATSAPP-BAILEYS',
+                  webhook: {
+                    url: `${BACKEND_URL_INNER}/api/whatsapp/webhook`,
+                    byEvents: false,
+                    base64: true,
+                    headers: {},
+                    events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
+                  },
+                }),
+              });
+              const autoCreateBody = await autoCreateRes.text();
+              console.log('[WHATSAPP QR AUTO-CREATE] status:', autoCreateRes.status, '| body:', autoCreateBody.substring(0, 200));
+              // Lockout de 45s para Baileys inicializar
+              qrCodeCache.delete(agencyId);
+              connectedCache.delete(agencyId);
+              qrConnectLockUntil.set(agencyId, performance.now() + 45000);
+            } catch (autoCreateErr) {
+              console.error('[WHATSAPP QR AUTO-CREATE]', autoCreateErr);
+            }
           } else {
             console.log('[WHATSAPP QR STATE] Falha ao consultar estado:', stateRes.status);
           }

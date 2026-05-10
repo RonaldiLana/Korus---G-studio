@@ -2728,14 +2728,17 @@ async function startServer() {
   // Isso dá ao Baileys tempo para inicializar SEM ser reiniciado pelo polling
   const qrConnectLockUntil = new Map<number, number>(); // agencyId → performance.now() até quando está bloqueado
 
-  // POST /api/whatsapp/webhook — recebe eventos da Evolution API
-  app.post("/api/whatsapp/webhook", async (req, res) => {
+  // Handler do webhook WhatsApp (extraído para reutilizar em ambas as rotas)
+  const handleWhatsappWebhook = async (req: any, res: any) => {
     try {
       const body = req.body;
       // Loga o corpo completo para diagnóstico
       console.log('[WHATSAPP WEBHOOK FULL]', JSON.stringify(body).substring(0, 800));
 
-      const event: string = (body?.event || body?.type || '').toLowerCase();
+      // Com byEvents:true a Evolution API appenda o nome do evento na URL
+      // (ex: /webhook/qrcode-updated). Normaliza pegando do path se ausente no body.
+      const eventFromPath = (req.params?.eventSuffix || '').toLowerCase().replace(/-/g, '_');
+      const event: string = (body?.event || body?.type || eventFromPath || '').toLowerCase();
       // Tenta extrair instanceName de vários campos possíveis
       const instanceName: string = (
         body?.instance ||
@@ -2793,7 +2796,13 @@ async function startServer() {
       console.error('[WHATSAPP WEBHOOK]', e);
       res.json({ ok: true });
     }
-  });
+  };
+
+  // POST /api/whatsapp/webhook — recebe eventos da Evolution API (byEvents:false)
+  app.post("/api/whatsapp/webhook", handleWhatsappWebhook);
+  // Rota de fallback: byEvents:true appenda o nome do evento na URL
+  // ex: /api/whatsapp/webhook/qrcode-updated, /api/whatsapp/webhook/connection-update
+  app.post("/api/whatsapp/webhook/:eventSuffix", handleWhatsappWebhook);
 
   // GET /api/whatsapp/status/:agencyId — retorna integração da agência
   app.get("/api/whatsapp/status/:agencyId", async (req, res) => {
@@ -2875,7 +2884,7 @@ async function startServer() {
           // Configura webhook para receber QR e eventos de conexão
           webhook: {
             url: `${BACKEND_URL}/api/whatsapp/webhook`,
-            byEvents: true,
+            byEvents: false,
             base64: true,
             headers: {},
             events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],

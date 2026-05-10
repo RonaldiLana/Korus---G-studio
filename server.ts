@@ -2727,6 +2727,8 @@ async function startServer() {
   // Lockout: após connect, bloqueia qualquer chamada a /instance/connect por N ms
   // Isso dá ao Baileys tempo para inicializar SEM ser reiniciado pelo polling
   const qrConnectLockUntil = new Map<number, number>(); // agencyId → performance.now() até quando está bloqueado
+  // Debounce para logout forçado: quando Baileys fica preso em "connecting" com credenciais antigas
+  const connectingForceLogoutAt = new Map<number, number>();
 
   // Handler do webhook WhatsApp (extraído para reutilizar em ambas as rotas)
   const handleWhatsappWebhook = async (req: any, res: any) => {
@@ -2788,6 +2790,28 @@ async function startServer() {
               [phone, agencyId]
             );
           } catch { /* ignora */ }
+        } else if (state === 'connecting') {
+          // Baileys está em "connecting" com credenciais antigas do PostgreSQL.
+          // Se NÃO estamos em período de lockout (criação recente) E não há QR nem conexão,
+          // força logout para limpar as credenciais e provocar geração de QR fresco.
+          const lockUntil = qrConnectLockUntil.get(agencyId) || 0;
+          const inLockout = performance.now() < lockUntil;
+          const hasQr = qrCodeCache.has(agencyId);
+          const isConnected = connectedCache.has(agencyId);
+          if (!inLockout && !hasQr && !isConnected && EVOLUTION_API_URL) {
+            const lastForceLogout = connectingForceLogoutAt.get(agencyId) || 0;
+            if (performance.now() - lastForceLogout > 12000) { // máx 1x a cada 12s
+              connectingForceLogoutAt.set(agencyId, performance.now());
+              console.log('[WHATSAPP WEBHOOK] Baileys preso em "connecting" — forçando logout para limpar credenciais:', instanceName);
+              // Async: não bloqueia o webhook response
+              fetch(`${EVOLUTION_API_URL}/instance/logout/${instanceName}`, {
+                method: 'DELETE',
+                headers: { apikey: EVOLUTION_API_KEY },
+              }).then(() => {
+                console.log('[WHATSAPP WEBHOOK] Logout forçado enviado para:', instanceName);
+              }).catch(() => {});
+            }
+          }
         }
       }
 
@@ -3032,7 +3056,6 @@ async function startServer() {
               await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
               await new Promise(r => setTimeout(r, 3000)); // aguarda PostgreSQL processar delete
 
-              const BACKEND_URL_INNER = (process.env.BACKEND_URL || '').replace(/\/$/, '');
               const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -3041,7 +3064,7 @@ async function startServer() {
                   qrcode: true,
                   integration: 'WHATSAPP-BAILEYS',
                   webhook: {
-                    url: `${BACKEND_URL_INNER}/api/whatsapp/webhook`,
+                    url: `${BACKEND_URL}/api/whatsapp/webhook`,
                     byEvents: false,
                     base64: true,
                     headers: {},
@@ -3064,7 +3087,6 @@ async function startServer() {
             // Cria a instância do zero automaticamente
             console.log('[WHATSAPP QR] Instância não encontrada (404) — criando nova instância automaticamente');
             try {
-              const BACKEND_URL_INNER = (process.env.BACKEND_URL || '').replace(/\/$/, '');
               const autoCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -3073,7 +3095,7 @@ async function startServer() {
                   qrcode: true,
                   integration: 'WHATSAPP-BAILEYS',
                   webhook: {
-                    url: `${BACKEND_URL_INNER}/api/whatsapp/webhook`,
+                    url: `${BACKEND_URL}/api/whatsapp/webhook`,
                     byEvents: false,
                     base64: true,
                     headers: {},

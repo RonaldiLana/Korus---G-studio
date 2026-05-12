@@ -16,10 +16,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "types": ["node", "vite/client", "react", "react-dom"],
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src", "server.ts", "src/lib"],

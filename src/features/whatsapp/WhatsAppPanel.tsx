@@ -89,9 +89,18 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
         fetchStatus(); // atualiza dados completos da integração
         return;
       }
+      if (data.status === 'error') {
+        clearPolling();
+        setConnectionStatus('error');
+        setErrorMsg(data.error || 'Falha ao gerar QR Code. Clique em "Gerar Novo QR" para tentar novamente.');
+        return;
+      }
       if (data.qr_code) {
+        if (qrTimeoutRef.current) {
+          clearTimeout(qrTimeoutRef.current);
+          qrTimeoutRef.current = null;
+        }
         if (!qrCode) {
-          // QR apareceu pela primeira vez — mostra confirmação
           setQrJustAppeared(true);
           setTimeout(() => setQrJustAppeared(false), 4000);
         }
@@ -112,6 +121,12 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({ agencyId, user, to
     pollingRef.current = setInterval(() => {
       qrFn();
     }, POLLING_INTERVAL_MS);
+    // Timeout de 60s: se QR não chegou, mostra erro com ação clara
+    qrTimeoutRef.current = setTimeout(() => {
+      clearPolling();
+      setConnectionStatus('error');
+      setErrorMsg('QR Code não foi gerado em 60 segundos. Clique em "Gerar Novo QR" para tentar novamente.');
+    }, 60000);
   };
 
   const handleConnect = async () => {

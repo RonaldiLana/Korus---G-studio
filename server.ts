@@ -2884,16 +2884,19 @@ async function startServer() {
 
     const instanceName = `agency_${agencyId}`;
 
-    // Helper: força deleção da instância (logout + delete)
+    // CRÍTICO: logout ANTES do delete + 2s de espera limpam as creds Baileys
+    // do banco interno da Evolution. Sem isso, nova instância herda creds antigas
+    // e fica presa em 'connecting' sem gerar QR — causa raiz do bug.
     const forceDeleteInstance = async (name: string) => {
-      try { await fetch(`${EVOLUTION_API_URL}/instance/logout/${name}`,  { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
-      try { await fetch(`${EVOLUTION_API_URL}/instance/delete/${name}`,  { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
+      try { await fetch(`${EVOLUTION_API_URL}/instance/logout/${name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
+      await new Promise(r => setTimeout(r, 2000)); // aguarda logout limpar creds
+      try { await fetch(`${EVOLUTION_API_URL}/instance/delete/${name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } }); } catch {}
     };
 
     try {
       // Remove instância anterior se existir
       await forceDeleteInstance(instanceName);
-      await new Promise(r => setTimeout(r, 1500)); // aguarda Evolution API processar o delete
+      await new Promise(r => setTimeout(r, 3000)); // aguarda Evolution API processar o delete
 
       // Cria nova instância
       let createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
@@ -3047,38 +3050,12 @@ async function startServer() {
                 qrConnectLockUntil.set(agencyId, performance.now() + 20000);
                 return res.json({ qr_code: null });
               }
-              // "connecting" por mais de 120s sem QR ou close 401 → força delete+create
-              // (o delete limpa as credenciais do PostgreSQL para a próxima criação gerar QR direto)
-              console.log('[WHATSAPP QR] "connecting" por', Math.round(msSinceConnecting / 1000), 's sem QR — força restart (timeout 120s)');
+              console.error('[WHATSAPP QR] "connecting" por', Math.round(msSinceConnecting / 1000), 's — timeout, retornando erro ao frontend');
               connectingPolledAt.delete(agencyId);
               close401ReceivedAt.delete(agencyId);
-              try {
-                await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
-                await new Promise(r => setTimeout(r, 3000));
-                const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-                  body: JSON.stringify({
-                    instanceName: instance_name,
-                    qrcode: true,
-                    integration: 'WHATSAPP-BAILEYS',
-                    webhook: {
-                      url: `${BACKEND_URL}/api/whatsapp/webhook`,
-                      byEvents: false,
-                      base64: true,
-                      headers: {},
-                      events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE'],
-                    },
-                  }),
-                });
-                const reCreateBody = await reCreateRes.text();
-                console.log('[WHATSAPP QR RESTART from connecting-timeout] status:', reCreateRes.status, '| body:', reCreateBody.substring(0, 200));
-                qrCodeCache.delete(agencyId);
-                connectedCache.delete(agencyId);
-                qrConnectLockUntil.set(agencyId, performance.now() + 45000);
-              } catch (restartErr) {
-                console.error('[WHATSAPP QR RESTART from connecting-timeout]', restartErr);
-              }
+              qrCodeCache.delete(agencyId);
+              try { await query(`UPDATE whatsapp_integrations SET status = 'error', updated_at = NOW() WHERE agency_id = $1`, [agencyId]); } catch {}
+              return res.json({ qr_code: null, status: 'error', error: 'Não foi possível gerar o QR Code. Clique em "Gerar Novo QR" para tentar novamente.' });
             }
 
             // Estado 'close' — verifica se houve close 401 recente
@@ -3096,6 +3073,8 @@ async function startServer() {
               close401ReceivedAt.delete(agencyId);
               connectingPolledAt.delete(agencyId);
               try {
+                await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+                await new Promise(r => setTimeout(r, 2000));
                 await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
                 await new Promise(r => setTimeout(r, 3000));
                 const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
@@ -3127,6 +3106,8 @@ async function startServer() {
               console.log('[WHATSAPP QR] Estado:', state, '— restart completo (sem close 401 recente)');
               connectingPolledAt.delete(agencyId);
               try {
+                await fetch(`${EVOLUTION_API_URL}/instance/logout/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
+                await new Promise(r => setTimeout(r, 2000));
                 await fetch(`${EVOLUTION_API_URL}/instance/delete/${instance_name}`, { method: 'DELETE', headers: { apikey: EVOLUTION_API_KEY } });
                 await new Promise(r => setTimeout(r, 3000));
                 const reCreateRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {

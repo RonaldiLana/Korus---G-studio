@@ -3096,6 +3096,36 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);
     console.log(`[BOOT] ✓ Ambiente: ${process.env.NODE_ENV || 'development'}`);
+
+    // Ao reiniciar (ex: Render free tier acordando), instâncias WhatsApp antigas ficam
+    // em 'connecting' na Evolution API e disparam webhooks em loop infinito.
+    // Limpamos todas as integrações 'pending'/'disconnected' ao boot para parar o spam.
+    if (EVOLUTION_API_URL) {
+      (async () => {
+        try {
+          const rows = await query(
+            `SELECT agency_id, instance_name FROM whatsapp_integrations WHERE status IN ('pending', 'disconnected') AND instance_name IS NOT NULL`
+          );
+          if (rows.rows.length === 0) return;
+          console.log(`[BOOT] Limpando ${rows.rows.length} instância(s) WhatsApp órfãs da Evolution API...`);
+          await Promise.allSettled(
+            rows.rows.map(async (r: any) => {
+              try {
+                await deleteInstance(r.instance_name);
+                console.log(`[BOOT] Instância deletada: ${r.instance_name}`);
+              } catch {}
+            })
+          );
+          await query(
+            `UPDATE whatsapp_integrations SET status = 'disconnected', instance_name = NULL, updated_at = NOW()
+             WHERE status IN ('pending', 'disconnected') AND instance_name IS NOT NULL`
+          );
+          console.log('[BOOT] ✓ Instâncias WhatsApp órfãs removidas.');
+        } catch (e) {
+          console.error('[BOOT] Erro ao limpar instâncias WhatsApp:', e);
+        }
+      })();
+    }
   });
 }
 

@@ -1,5 +1,14 @@
 {
     "files.watcherExclude": {
         "**/target": true
+    },
+    "sql.lintingEnabled": false,
+    "mssql.intelliSense.enableIntelliSense": false,
+    "mssql.enableSqlAuthentication": false,
+    "files.associations": {
+        "*.sql": "pgsql"
+    },
+    "[sql]": {
+        "editor.defaultFormatter": "mtxr.sqltools"
     }
 }

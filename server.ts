@@ -454,6 +454,179 @@ async function startServer() {
   }
 
   // ---
+  // POST /api/processes/simplified — Criação de Processo Simplificado pela agência
+  // ---
+  app.post("/api/processes/simplified", async (req, res) => {
+    try {
+      const { agency_id, created_by_user_id, client_name, client_email, client_phone, destination_id, visa_type_id, plan_id } = req.body;
+
+      if (!agency_id || !client_name || !client_email || !client_phone || !destination_id) {
+        return res.status(400).json({ error: "agency_id, client_name, client_email, client_phone e destination_id são obrigatórios" });
+      }
+
+      // Verificar se módulo está ativo na agência
+      const agencyResult = await query("SELECT modules FROM agencies WHERE id = $1", [agency_id]);
+      if (agencyResult.rows.length === 0) return res.status(404).json({ error: "Agência não encontrada" });
+      let agencyModules: Record<string, any> = {};
+      try { agencyModules = JSON.parse(agencyResult.rows[0].modules || "{}"); } catch {}
+      if (!agencyModules.simplified_process) {
+        return res.status(403).json({ error: "Módulo Processo Simplificado não está ativo nesta agência" });
+      }
+
+      // Verificar ou criar cliente
+      const existingUser = await query(
+        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND agency_id = $2",
+        [client_email.trim(), agency_id]
+      );
+      let clientId: number;
+      let clientCreated = false;
+      if (existingUser.rows.length > 0) {
+        clientId = existingUser.rows[0].id;
+      } else {
+        const newUser = await query(
+          "INSERT INTO users (name, email, password, role, agency_id, phone) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+          [client_name.trim(), client_email.trim().toLowerCase(), "", "client", agency_id, client_phone.trim()]
+        );
+        clientId = newUser.rows[0].id;
+        clientCreated = true;
+      }
+
+      // Gerar tracking_token único
+      const crypto = await import("crypto");
+      const trackingToken = crypto.randomBytes(32).toString("hex");
+
+      // Validar destination_id para a agência
+      const destCheck = await query("SELECT id, name FROM destinations WHERE id = $1 AND agency_id = $2", [destination_id, agency_id]);
+      if (destCheck.rows.length === 0) return res.status(400).json({ error: "Destino inválido para esta agência" });
+
+      // Validar visa_type_id (opcional)
+      let validVisaTypeId: number | null = null;
+      if (visa_type_id) {
+        const vtCheck = await query("SELECT id FROM visa_types WHERE id = $1 AND agency_id = $2", [visa_type_id, agency_id]);
+        if (vtCheck.rows.length > 0) validVisaTypeId = Number(visa_type_id);
+      }
+
+      // Validar plan_id (opcional)
+      let validPlanId: number | null = null;
+      let planPrice: number = 0;
+      if (plan_id) {
+        const planCheck = await query("SELECT id, price, name FROM plans WHERE id = $1 AND agency_id = $2", [plan_id, agency_id]);
+        if (planCheck.rows.length > 0) {
+          validPlanId = Number(plan_id);
+          planPrice = parseFloat(planCheck.rows[0].price) || 0;
+        }
+      }
+
+      // Criar processo simplificado
+      const insertCols = ["client_id", "agency_id", "destination_id", "status", "internal_status", "process_type", "tracking_token"];
+      const insertVals: any[] = [clientId, agency_id, destination_id, "started", "pending", "simplified", trackingToken];
+      if (validVisaTypeId) { insertCols.push("visa_type_id"); insertVals.push(validVisaTypeId); }
+      if (validPlanId) { insertCols.push("plan_id"); insertVals.push(validPlanId); }
+      const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(", ");
+      const processResult = await query(
+        `INSERT INTO processes (${insertCols.join(", ")}) VALUES (${placeholders}) RETURNING id`,
+        insertVals
+      );
+      const processId = processResult.rows[0].id;
+
+      // Lançamento financeiro como receita da agência (somente se plano selecionado)
+      if (validPlanId && planPrice > 0) {
+        try {
+          await query(
+            "INSERT INTO revenues (agency_id, description, amount, status, category, due_date) VALUES ($1, $2, $3, $4, $5, $6)",
+            [agency_id, `Processo Simplificado #${processId} — ${client_name}`, planPrice, "pending", "Processo Simplificado", new Date().toISOString().split("T")[0]]
+          );
+        } catch (_) {}
+      }
+
+      // Audit log
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [agency_id, created_by_user_id || null, "process_created", `Processo Simplificado #${processId} criado para ${client_name}`]
+        );
+      } catch (_) {}
+
+      // Disparar regras CRM com trigger simplified_process_opened
+      try {
+        const crmRules = await query(
+          "SELECT * FROM crm_automation_rules WHERE agency_id = $1 AND is_active = true AND trigger_type = 'simplified_process_opened' AND action_type = 'notify_team'",
+          [agency_id]
+        );
+        for (const rule of crmRules.rows) {
+          let actionCfg: Record<string, any> = {};
+          try { actionCfg = typeof rule.action_config === "string" ? JSON.parse(rule.action_config) : (rule.action_config || {}); } catch {}
+          const message = actionCfg.message
+            ? actionCfg.message.replace("{client_name}", client_name).replace("{process_id}", processId)
+            : `Novo Processo Simplificado #${processId} criado para ${client_name}`;
+          await query(
+            "INSERT INTO crm_notifications (agency_id, rule_name, message, process_id) VALUES ($1, $2, $3, $4)",
+            [agency_id, rule.name, message, processId]
+          );
+        }
+      } catch (_) {}
+
+      // Notificação automática padrão (mesmo sem regra configurada)
+      try {
+        await query(
+          "INSERT INTO crm_notifications (agency_id, rule_name, message, process_id) VALUES ($1, $2, $3, $4)",
+          [agency_id, "Processo Simplificado", `Novo Processo Simplificado #${processId} criado para ${client_name}`, processId]
+        );
+      } catch (_) {}
+
+      const trackingUrl = `/acompanhamento/${trackingToken}`;
+      return res.status(201).json({ process_id: processId, tracking_token: trackingToken, tracking_url: trackingUrl, client_created: clientCreated });
+    } catch (err: any) {
+      console.error("[SIMPLIFIED PROCESS]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---
+  // GET /api/processes/track/:token — Tela pública de acompanhamento do cliente (sem auth)
+  // ---
+  app.get("/api/processes/track/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      if (!token) return res.status(400).json({ error: "Token inválido" });
+
+      const result = await query(
+        `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at,
+                d.name AS destination_name, d.flag AS destination_flag, d.image AS destination_image,
+                v.name AS visa_type_name,
+                pl.name AS plan_name, pl.price AS plan_price,
+                a.name AS agency_name, a.logo_url AS agency_logo,
+                u.name AS client_name
+         FROM processes p
+         LEFT JOIN destinations d ON d.id = p.destination_id
+         LEFT JOIN visa_types v ON v.id = p.visa_type_id
+         LEFT JOIN plans pl ON pl.id = p.plan_id
+         LEFT JOIN agencies a ON a.id = p.agency_id
+         LEFT JOIN users u ON u.id = p.client_id
+         WHERE p.tracking_token = $1`,
+        [token]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
+      const proc = result.rows[0];
+
+      // Buscar documentos da agência vinculados ao processo
+      let documents: any[] = [];
+      try {
+        const docsResult = await query(
+          "SELECT id, name, url, status, uploaded_at FROM documents WHERE process_id = $1 AND status != 'rejected' ORDER BY uploaded_at DESC",
+          [proc.id]
+        );
+        documents = docsResult.rows;
+      } catch (_) {}
+
+      return res.json({ ...proc, documents });
+    } catch (err: any) {
+      console.error("[TRACK PROCESS]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---
   // PATCH: Compatibilidade client_id/user_id + query dinâmica segura
   // ---
   app.post("/api/processes/start", async (req, res) => {

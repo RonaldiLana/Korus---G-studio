@@ -67,6 +67,7 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
   const [searchTerm, setSearchTerm] = React.useState('');
   const [filterConsultant, setFilterConsultant] = React.useState('');
   const [filterPayment, setFilterPayment] = React.useState('');
+  const [filterType, setFilterType] = React.useState<'all' | 'normal' | 'simplified'>('all');
   const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
   const [bulkTarget, setBulkTarget] = React.useState<Process['status'] | ''>('');
   const [showFilters, setShowFilters] = React.useState(false);
@@ -91,7 +92,8 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
       p.id.toString().includes(searchTerm);
     const matchConsultant = !filterConsultant || p.consultant_name === filterConsultant;
     const matchPayment = !filterPayment || p.payment_status === filterPayment;
-    return matchSearch && matchConsultant && matchPayment;
+    const matchType = filterType === 'all' || (filterType === 'simplified' ? p.process_type === 'simplified' : p.process_type !== 'simplified');
+    return matchSearch && matchConsultant && matchPayment && matchType;
   });
 
   const getClientName = (process: Process) => {
@@ -182,8 +184,17 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
               <option value="proof_received">Comprovante</option>
               <option value="confirmed">Confirmado</option>
             </select>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as 'all' | 'normal' | 'simplified')}
+              className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50"
+            >
+              <option value="all">Todos os tipos</option>
+              <option value="normal">Normais</option>
+              <option value="simplified">Simplificados</option>
+            </select>
             <button
-              onClick={() => { setFilterConsultant(''); setFilterPayment(''); }}
+              onClick={() => { setFilterConsultant(''); setFilterPayment(''); setFilterType('all'); }}
               className="px-3 py-2 text-xs font-bold text-[var(--text-muted)] hover:text-[var(--text-main)] bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl transition-all"
             >
               Limpar
@@ -386,6 +397,11 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
                                             ? 'Comprov.'
                                             : 'Pend.'}
                                         </div>
+                                        {process.process_type === 'simplified' && (
+                                          <div className="flex items-center gap-1 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                            Simpl.
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                   </div>

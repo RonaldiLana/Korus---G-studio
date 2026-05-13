@@ -154,6 +154,8 @@ export interface Process {
   travel_date?: string | null;
   is_dependent: boolean;
   parent_process_id: number | null;
+  process_type?: 'normal' | 'simplified';
+  tracking_token?: string;
   created_at: string;
   finished_at: string | null;
   process_forms?: ProcessForm[];

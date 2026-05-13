@@ -76,6 +76,8 @@ import { FormsPanel } from './features/FormsPanel';
 import { CRMPanel } from './features/crm/CRMPanel';
 import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
 import { WhatsAppPanel } from './features/whatsapp/WhatsAppPanel';
+import { SimplifiedProcessModal } from './features/simplifiedProcess/SimplifiedProcessModal';
+import { ClientTrackingPage } from './features/simplifiedProcess/ClientTrackingPage';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -387,6 +389,7 @@ export default function App() {
             leads: m.leads !== false,
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
+            simplified_process: m.simplified_process === true,
           });
         } catch {}
       }
@@ -737,6 +740,7 @@ export default function App() {
     has_leads: true,
     has_crm: true,
     has_whatsapp: false,
+    has_simplified_process: false,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -1051,7 +1055,8 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false, simplified_process: false });
+  const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -1251,6 +1256,7 @@ export default function App() {
             leads: m.leads !== false,
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
+            simplified_process: m.simplified_process === true,
           });
         } catch {}
       }
@@ -1486,6 +1492,7 @@ export default function App() {
         leads: parsedModules.leads !== false,
         crm: (parsedModules as any).crm !== false,
         whatsapp: (parsedModules as any).whatsapp === true,
+        simplified_process: (parsedModules as any).simplified_process === true,
       });
 
       let destinations = [];
@@ -3434,6 +3441,11 @@ export default function App() {
     );
   }
 
+  // Página pública de acompanhamento do processo simplificado
+  if (window.location.pathname.includes('/acompanhamento/')) {
+    return <ClientTrackingPage />;
+  }
+
   if (!user) {
     return (
       <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] flex items-center justify-center p-4">
@@ -3767,6 +3779,15 @@ export default function App() {
                 className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-80 text-sm"
               />
             </div>
+            {(view === 'clients' || view === 'dashboard') && agencyModules.simplified_process && user?.role !== 'client' && user?.role !== 'gerente_financeiro' && (
+              <button
+                onClick={() => setShowSimplifiedProcessModal(true)}
+                className="border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all text-sm"
+              >
+                <Plus size={18} />
+                <span className="hidden sm:inline">Processo Simplificado</span>
+              </button>
+            )}
             {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user?.role === 'master' || user?.role === 'supervisor') && (
               <button 
                 data-testid="new-process-button"
@@ -3791,7 +3812,7 @@ export default function App() {
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, has_whatsapp: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
+                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, has_whatsapp: false, has_simplified_process: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
                 className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
@@ -4252,6 +4273,7 @@ export default function App() {
                             has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
                             has_crm: modules.crm !== undefined ? modules.crm : true,
                             has_whatsapp: modules.whatsapp === true,
+                            has_simplified_process: modules.simplified_process === true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
@@ -6824,6 +6846,18 @@ export default function App() {
                                 WhatsApp Habilitado
                               </label>
                             </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_simplified_process"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={newAgency.has_simplified_process}
+                                onChange={e => setNewAgency({ ...newAgency, has_simplified_process: e.target.checked })}
+                              />
+                              <label htmlFor="has_simplified_process" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                Processo Simplificado Habilitado
+                              </label>
+                            </div>
                           </div>
                         </div>
   
@@ -7804,6 +7838,18 @@ export default function App() {
             )}
           </AnimatePresence>
       </main>
+      {showSimplifiedProcessModal && user && (
+        <SimplifiedProcessModal
+          agencyId={getScopedAgencyId() || 0}
+          token={token || ''}
+          destinations={destinations}
+          visaTypes={visaTypes}
+          plans={plans}
+          createdByUserId={user.id}
+          onClose={() => setShowSimplifiedProcessModal(false)}
+          onSuccess={() => { fetchProcesses(); setShowSimplifiedProcessModal(false); }}
+        />
+      )}
       {renderGlobalOverlays()}
     </div>
   );

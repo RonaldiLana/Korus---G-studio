@@ -150,6 +150,10 @@ async function applyMigrations() {
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_agency_created_at ON audit_logs (agency_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_destinations_agency_order ON destinations (agency_id, "order")`,
     `CREATE INDEX IF NOT EXISTS idx_visa_types_agency_id ON visa_types (agency_id)`,
+    // Módulo Processo Simplificado
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS process_type VARCHAR(20) DEFAULT 'normal'`,
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(64)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_tracking_token ON processes(tracking_token) WHERE tracking_token IS NOT NULL`,
   ];
 
   for (const sql of migrations) {
@@ -171,7 +175,7 @@ async function seedInitialData() {
       `INSERT INTO agencies (name, slug, status, modules) 
        VALUES ($1, $2, $3, $4) 
        RETURNING id`,
-      ["Global Visa Solutions", "global-visa", "active", '{"finance": true, "chat": true, "pipefy": true}']
+      ["Global Visa Solutions", "global-visa", "active", '{"finance": true, "chat": true, "pipefy": true, "leads": true, "simplified_process": false}']
     );
 
     const agencyId = agencyResult.rows[0].id;

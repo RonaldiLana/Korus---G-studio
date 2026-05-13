@@ -38,6 +38,7 @@ const TRIGGER_OPTIONS = [
   { value: 'payment_confirmed', label: 'Pagamento Confirmado' },
   { value: 'document_sent', label: 'Documento Enviado' },
   { value: 'inactivity', label: 'Inatividade por N dias' },
+  { value: 'simplified_process_opened', label: 'Processo Simplificado Aberto' },
 ];
 
 const INTERNAL_ACTION_OPTIONS = [
@@ -60,6 +61,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   payment_confirmed: 'Pgto Confirmado',
   document_sent: 'Doc Enviado',
   inactivity: 'Inatividade',
+  simplified_process_opened: 'Proc. Simplificado',
 };
 
 const ACTION_LABELS: Record<string, string> = {

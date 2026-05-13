@@ -790,12 +790,14 @@ async function startServer() {
         auditUserId = adminInsertResult.rows[0].id;
       }
 
-      // Seed de dados padrão (destinos, tipos de visto, formulários, tarefas, planos e campos)
-      await seedAgencyDefaults(agencyId);
-
       await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agencyId, auditUserId, "agency_created", `Agência criada: ${name}`]);
 
       await query('COMMIT', []);
+
+      // Seed de dados padrão APÓS o commit, pois seedAgencyDefaults usa conexões
+      // diferentes do pool e não enxergaria a agência ainda não commitada (FK violation).
+      await seedAgencyDefaults(agencyId);
+
       res.json({ id: agencyId });
     } catch (e: any) {
       await query('ROLLBACK', []);

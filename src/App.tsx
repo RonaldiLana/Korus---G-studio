@@ -1695,6 +1695,7 @@ export default function App() {
           has_leads: true,
           has_crm: true,
           has_whatsapp: false,
+          has_simplified_process: false,
           admin_name: '',
           admin_email: '',
           admin_password: '',

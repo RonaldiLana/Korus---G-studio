@@ -947,7 +947,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true, simplified_process: req.body.has_simplified_process === true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -991,7 +991,8 @@ async function startServer() {
     const has_leads = req.body.has_leads !== undefined ? req.body.has_leads : true;
     const has_crm = req.body.has_crm !== undefined ? req.body.has_crm : true;
     const has_whatsapp = req.body.has_whatsapp === true;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp });
+    const has_simplified_process = req.body.has_simplified_process === true;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp, simplified_process: has_simplified_process });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });

@@ -7001,6 +7001,91 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* Descrição do Processo Simplificado */}
+                  {selectedProcess.description && (
+                    <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-2">Descrição</p>
+                      <p className="text-sm text-[var(--text-main)] leading-relaxed">{selectedProcess.description}</p>
+                    </div>
+                  )}
+
+                  {/* Link de Acompanhamento — visível para consultores/supervisores/master */}
+                  {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && isConsultantSupervisorOrMaster(user) && (() => {
+                    const trackingUrl = `${window.location.origin}/acompanhamento/${selectedProcess.tracking_token}`;
+                    return (
+                      <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
+                        <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3 flex items-center gap-1.5">
+                          <LinkIcon size={10} /> Link de Acompanhamento do Cliente
+                        </p>
+                        <div className="flex items-center gap-2 p-3 bg-[var(--bg-input)]/60 border border-[var(--border-color)] rounded-2xl">
+                          <p className="flex-1 text-xs text-emerald-400 font-bold break-all">{trackingUrl}</p>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(trackingUrl);
+                            }}
+                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
+                          >
+                            <Copy size={13} /> Copiar
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Vincular / Alterar Plano — apenas para processos simplificados */}
+                  {selectedProcess.process_type === 'simplified' && isConsultantSupervisorOrMaster(user) && (() => {
+                    const [spPlanId, setSpPlanId] = React.useState(String(selectedProcess.plan_id || ''));
+                    const [savingSpPlan, setSavingSpPlan] = React.useState(false);
+                    const [spPlanMsg, setSpPlanMsg] = React.useState('');
+                    const handleLinkPlan = async () => {
+                      if (!spPlanId) return;
+                      setSavingSpPlan(true);
+                      setSpPlanMsg('');
+                      try {
+                        const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/plan`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ plan_id: Number(spPlanId), changed_by_user_id: user?.id }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) { setSpPlanMsg(data?.error || 'Erro ao vincular plano.'); return; }
+                        setSpPlanMsg(`Plano "${data.plan_name}" vinculado com sucesso!`);
+                        fetchProcesses();
+                      } catch { setSpPlanMsg('Erro de conexão.'); } finally { setSavingSpPlan(false); }
+                    };
+                    return (
+                      <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
+                        <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3">
+                          {selectedProcess.plan_id ? 'Alterar Plano de Consultoria' : 'Vincular Plano de Consultoria'}
+                        </p>
+                        <div className="flex gap-2">
+                          <select
+                            className="flex-1 px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                            value={spPlanId}
+                            onChange={(e) => setSpPlanId(e.target.value)}
+                          >
+                            <option value="">Selecione um plano...</option>
+                            {plans.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} — {Number(p.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={handleLinkPlan}
+                            disabled={savingSpPlan || !spPlanId}
+                            className="px-4 py-2.5 brand-gradient text-black rounded-xl font-black text-xs hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md brand-shadow whitespace-nowrap"
+                          >
+                            {savingSpPlan ? 'Salvando...' : selectedProcess.plan_id ? 'Alterar' : 'Vincular'}
+                          </button>
+                        </div>
+                        {spPlanMsg && (
+                          <p className={`text-[10px] font-bold mt-2 ${spPlanMsg.includes('sucesso') ? 'text-emerald-400' : 'text-red-400'}`}>{spPlanMsg}</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Botão de aprovação de etapa para consultor/supervisor/master */}
                   {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
                     <div className="mt-6 pt-6 border-t border-[var(--border-color)]">

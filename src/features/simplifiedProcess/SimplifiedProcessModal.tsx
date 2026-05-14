@@ -23,6 +23,7 @@ interface FormState {
   destination_id: string;
   visa_type_id: string;
   plan_id: string;
+  description: string;
 }
 
 const initialForm: FormState = {
@@ -32,6 +33,7 @@ const initialForm: FormState = {
   destination_id: '',
   visa_type_id: '',
   plan_id: '',
+  description: '',
 };
 
 export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
@@ -101,6 +103,7 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
       };
       if (form.visa_type_id) payload.visa_type_id = Number(form.visa_type_id);
       if (form.plan_id) payload.plan_id = Number(form.plan_id);
+      if (form.description.trim()) payload.description = form.description.trim();
 
       const res = await fetch(`${API_URL}/api/processes/simplified`, {
         method: 'POST',
@@ -345,6 +348,20 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
                       Valor lançado como receita: {Number(selectedPlan.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                     </p>
                   )}
+                </div>
+
+                {/* Descrição (opcional) */}
+                <div>
+                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
+                    Descrição <span className="text-[var(--text-muted)]">(opcional)</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Ex: cliente indicado, urgente, visto de estudante..."
+                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all resize-none"
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  />
                 </div>
 
                 {/* Ações */}

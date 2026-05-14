@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS processes (
   visa_type_name TEXT,
   plan_name TEXT,
   destination_name TEXT,
+  description TEXT,
   process_type VARCHAR(20) DEFAULT 'normal',
   tracking_token VARCHAR(64) UNIQUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

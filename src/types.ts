@@ -156,6 +156,7 @@ export interface Process {
   parent_process_id: number | null;
   process_type?: 'normal' | 'simplified';
   tracking_token?: string;
+  description?: string;
   created_at: string;
   finished_at: string | null;
   process_forms?: ProcessForm[];

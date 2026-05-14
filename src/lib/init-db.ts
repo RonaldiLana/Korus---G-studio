@@ -153,6 +153,7 @@ async function applyMigrations() {
     // Módulo Processo Simplificado
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS process_type VARCHAR(20) DEFAULT 'normal'`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(64)`,
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS description TEXT`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_tracking_token ON processes(tracking_token) WHERE tracking_token IS NOT NULL`,
   ];
 

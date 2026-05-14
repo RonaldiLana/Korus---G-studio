@@ -458,7 +458,7 @@ async function startServer() {
   // ---
   app.post("/api/processes/simplified", async (req, res) => {
     try {
-      const { agency_id, created_by_user_id, client_name, client_email, client_phone, destination_id, visa_type_id, plan_id } = req.body;
+      const { agency_id, created_by_user_id, client_name, client_email, client_phone, destination_id, visa_type_id, plan_id, description } = req.body;
 
       if (!agency_id || !client_name || !client_email || !client_phone || !destination_id) {
         return res.status(400).json({ error: "agency_id, client_name, client_email, client_phone e destination_id são obrigatórios" });
@@ -522,6 +522,7 @@ async function startServer() {
       const insertVals: any[] = [clientId, agency_id, destination_id, "started", "pending", "simplified", trackingToken];
       if (validVisaTypeId) { insertCols.push("visa_type_id"); insertVals.push(validVisaTypeId); }
       if (validPlanId) { insertCols.push("plan_id"); insertVals.push(validPlanId); }
+      if (description && description.trim()) { insertCols.push("description"); insertVals.push(description.trim()); }
       const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(", ");
       const processResult = await query(
         `INSERT INTO processes (${insertCols.join(", ")}) VALUES (${placeholders}) RETURNING id`,
@@ -1837,6 +1838,54 @@ async function startServer() {
     } catch (err: any) {
       await query('ROLLBACK', []);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/processes/:id/plan", async (req, res) => {
+    try {
+      const processId = parseInt(req.params.id);
+      const { plan_id, changed_by_user_id } = req.body;
+      if (!plan_id) return res.status(400).json({ error: "plan_id é obrigatório" });
+
+      // Buscar processo atual
+      const procResult = await query("SELECT id, agency_id, plan_id, client_id FROM processes WHERE id = $1", [processId]);
+      if (procResult.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
+      const proc = procResult.rows[0];
+
+      // Validar plano
+      const planResult = await query("SELECT id, name, price FROM plans WHERE id = $1 AND agency_id = $2", [plan_id, proc.agency_id]);
+      if (planResult.rows.length === 0) return res.status(400).json({ error: "Plano inválido para esta agência" });
+      const plan = planResult.rows[0];
+      const planPrice = parseFloat(plan.price) || 0;
+
+      // Atualizar plano no processo
+      await query("UPDATE processes SET plan_id = $1 WHERE id = $2", [plan_id, processId]);
+
+      // Se não havia plano anterior e o plano tem preço, criar receita
+      if (!proc.plan_id && planPrice > 0) {
+        try {
+          // Pegar nome do cliente
+          const clientResult = await query("SELECT name FROM users WHERE id = $1", [proc.client_id]);
+          const clientName = clientResult.rows[0]?.name || "Cliente";
+          await query(
+            "INSERT INTO revenues (agency_id, description, amount, status, category, due_date) VALUES ($1, $2, $3, $4, $5, $6)",
+            [proc.agency_id, `Processo Simplificado #${processId} — ${clientName} (plano vinculado)`, planPrice, "pending", "Processo Simplificado", new Date().toISOString().split("T")[0]]
+          );
+        } catch (_) {}
+      }
+
+      // Audit log
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [proc.agency_id, changed_by_user_id || null, "plan_linked", `Plano "${plan.name}" vinculado ao Processo Simplificado #${processId}`]
+        );
+      } catch (_) {}
+
+      return res.json({ success: true, plan_id: plan.id, plan_name: plan.name, plan_price: planPrice });
+    } catch (err: any) {
+      console.error("[PATCH PLAN]", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 

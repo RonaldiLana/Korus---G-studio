@@ -4510,7 +4510,14 @@ export default function App() {
                             <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
                               <FileText size={16} />
                             </div>
-                            <span className="font-bold text-sm">{process?.visa_name || 'Visto'}</span>
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-sm">{process?.visa_name || 'Visto'}</span>
+                              {process?.process_type === 'simplified' && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 w-fit">
+                                  ✦ Simplificado
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.client_name || '-'}</td>

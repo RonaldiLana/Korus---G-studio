@@ -575,8 +575,8 @@ async function startServer() {
         );
       } catch (_) {}
 
-      const trackingUrl = `/acompanhamento/${trackingToken}`;
-      return res.status(201).json({ process_id: processId, tracking_token: trackingToken, tracking_url: trackingUrl, client_created: clientCreated });
+      const trackingUrl = `/acompanhamento/${trackingToken}?agency=${agency_id}`;
+      return res.status(201).json({ process_id: processId, tracking_token: trackingToken, tracking_url: trackingUrl, client_created: clientCreated, agency_id });
     } catch (err: any) {
       console.error("[SIMPLIFIED PROCESS]", err);
       return res.status(500).json({ error: err.message });
@@ -589,10 +589,11 @@ async function startServer() {
   app.get("/api/processes/track/:token", async (req, res) => {
     try {
       const { token } = req.params;
+      const { agency } = req.query;
       if (!token) return res.status(400).json({ error: "Token inválido" });
 
       const result = await query(
-        `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at,
+        `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at, p.agency_id,
                 d.name AS destination_name, d.flag AS destination_flag, d.image AS destination_image,
                 v.name AS visa_type_name,
                 pl.name AS plan_name, pl.price AS plan_price,
@@ -610,6 +611,11 @@ async function startServer() {
       if (result.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
       const proc = result.rows[0];
 
+      // Validar agency_id se fornecido na query
+      if (agency && Number(agency) !== proc.agency_id) {
+        return res.status(403).json({ error: "Acesso não autorizado para esta agência" });
+      }
+
       // Buscar documentos da agência vinculados ao processo
       let documents: any[] = [];
       try {
@@ -618,7 +624,9 @@ async function startServer() {
           [proc.id]
         );
         documents = docsResult.rows;
-      } catch (_) {}
+      } catch (err: any) {
+        console.warn("[TRACK PROCESS] Erro ao buscar documentos:", err.message);
+      }
 
       return res.json({ ...proc, documents });
     } catch (err: any) {

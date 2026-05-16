@@ -66,6 +66,8 @@ export const ClientTrackingPage: React.FC = () => {
     const pathParts = window.location.pathname.split('/');
     const tokenIdx = pathParts.indexOf('acompanhamento');
     const token = tokenIdx !== -1 ? pathParts[tokenIdx + 1] : null;
+    const searchParams = new URLSearchParams(window.location.search);
+    const agencyId = searchParams.get('agency');
 
     if (!token) {
       setNotFound(true);
@@ -73,13 +75,25 @@ export const ClientTrackingPage: React.FC = () => {
       return;
     }
 
-    fetch(`${API_URL}/api/processes/track/${token}`)
+    const url = new URL(`${API_URL}/api/processes/track/${token}`, window.location.origin);
+    if (agencyId) {
+      url.searchParams.set('agency', agencyId);
+    }
+
+    fetch(url.toString())
       .then(async (res) => {
-        if (!res.ok) { setNotFound(true); return; }
+        if (!res.ok) { 
+          setNotFound(true);
+          console.error(`[ClientTrackingPage] Erro ao carregar: ${res.status}`);
+          return; 
+        }
         const json = await res.json();
         setData(json);
       })
-      .catch(() => setNotFound(true))
+      .catch((err) => {
+        setNotFound(true);
+        console.error(`[ClientTrackingPage] Erro na requisição:`, err);
+      })
       .finally(() => setLoading(false));
   }, []);
 

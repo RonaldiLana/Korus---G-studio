@@ -3310,8 +3310,19 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+  } else {
+    // In production: serve dist folder and fallback to index.html for SPA routes
+    const distPath = path.join(__dirname, "dist");
+    app.use(express.static(distPath));
+    // SPA fallback: serve index.html for any non-API route
+    app.get("*", (req, res) => {
+      if (!req.path.startsWith("/api")) {
+        res.sendFile(path.join(distPath, "index.html"));
+      } else {
+        res.status(404).json({ error: "API route not found" });
+      }
+    });
   }
-  // In production: backend is API-only, frontend served separately
 
   // Handler de erros do multer (tamanho/tipo de arquivo)
   app.use((err: any, _req: any, res: any, next: any) => {

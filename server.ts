@@ -3311,19 +3311,33 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production: serve dist folder and fallback to index.html for SPA routes
+    // In production: serve dist folder with static files
     const distPath = path.join(__dirname, "dist");
-    app.use(express.static(distPath));
-    
-    // SPA fallback: serve index.html for any non-API route
-    app.use((req, res, next) => {
-      if (req.path.startsWith("/api")) {
-        return next(); // Let API routes pass through
-      }
-      // For all other routes, serve index.html (SPA fallback)
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    app.use(express.static(distPath, { maxAge: '1d' }));
   }
+
+  // SPA fallback: serve index.html for any non-API route (must be AFTER all route definitions)
+  app.use((req, res, next) => {
+    // Skip if it's an API route or already handled
+    if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+      return next();
+    }
+    
+    // For SPA routes in production, serve index.html
+    if (process.env.NODE_ENV === "production") {
+      const distPath = path.join(__dirname, "dist");
+      const indexPath = path.join(distPath, "index.html");
+      return res.sendFile(indexPath, (err: any) => {
+        if (err) {
+          console.error("[SPA FALLBACK]", err.message);
+          res.status(404).json({ error: "Not found" });
+        }
+      });
+    }
+    
+    // In development, let Vite handle it
+    next();
+  });
 
   // Handler de erros do multer (tamanho/tipo de arquivo)
   app.use((err: any, _req: any, res: any, next: any) => {

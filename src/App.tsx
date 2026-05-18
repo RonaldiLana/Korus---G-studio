@@ -4617,6 +4617,9 @@ export default function App() {
                 agencyId={getScopedAgencyId() ?? 0}
                 user={user!}
                 token={token || ''}
+                destinations={destinations}
+                visaTypes={visaTypes}
+                plans={plans}
               />
             </motion.div>
           )}

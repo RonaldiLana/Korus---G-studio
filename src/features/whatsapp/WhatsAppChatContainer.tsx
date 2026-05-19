@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { User, Destination, VisaType, Plan } from '../../types';
-import { WhatsAppSidebar } from './WhatsAppSidebar';
-import { WhatsAppConversation } from './WhatsAppConversation';
+import { WhatsAppWebEmbed } from './WhatsAppWebEmbed';
 import { WhatsAppRightPanel } from './WhatsAppRightPanel';
 import { SimplifiedProcessModal } from '../simplifiedProcess/SimplifiedProcessModal';
-import { mockConversations, mockMessages } from './data/mockConversations';
 
 interface WhatsAppChatContainerProps {
   agencyId: number;
@@ -23,15 +21,7 @@ export const WhatsAppChatContainer: React.FC<WhatsAppChatContainerProps> = ({
   visaTypes = [],
   plans = [],
 }) => {
-  const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>('1');
   const [showProcessModal, setShowProcessModal] = useState(false);
-
-  const selectedConversation = mockConversations.find(
-    (conv) => conv.id === selectedConversationId
-  );
-  const currentMessages = selectedConversationId
-    ? mockMessages[selectedConversationId] || []
-    : [];
 
   const handleOpenProcess = () => {
     setShowProcessModal(true);
@@ -43,21 +33,9 @@ export const WhatsAppChatContainer: React.FC<WhatsAppChatContainerProps> = ({
 
   return (
     <div className="w-full h-full flex overflow-hidden">
-      {/* Sidebar - 25% */}
-      <div className="w-1/4 h-full overflow-hidden">
-        <WhatsAppSidebar
-          conversations={mockConversations}
-          selectedConversationId={selectedConversationId}
-          onSelectConversation={setSelectedConversationId}
-        />
-      </div>
-
-      {/* Conversation - 55% */}
-      <div className="w-11/20 h-full overflow-hidden">
-        <WhatsAppConversation
-          conversation={selectedConversation}
-          messages={currentMessages}
-        />
+      {/* WhatsApp Web - 80% */}
+      <div className="w-4/5 h-full overflow-hidden">
+        <WhatsAppWebEmbed />
       </div>
 
       {/* Right Panel - 20% */}

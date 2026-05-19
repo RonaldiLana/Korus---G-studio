@@ -3402,40 +3402,6 @@ async function startServer() {
     }
   });
 
-  // ─── WhatsApp Web Proxy (outras rotas): Proxifica requisições de recursos ─
-  app.get("/api/whatsapp/web-proxy/:path(.*)", async (req, res) => {
-    try {
-      const path = req.params.path;
-      const fullUrl = `https://web.whatsapp.com/${path}${req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""}`;
-
-      console.log("[WHATSAPP WEB PROXY RESOURCE]", fullUrl);
-
-      const response = await fetch(fullUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-          "Referer": "https://web.whatsapp.com/",
-        },
-        redirect: "follow",
-      });
-
-      // Copia headers importantes
-      const contentType = response.headers.get("content-type") || "application/octet-stream";
-      res.set({
-        "Content-Type": contentType,
-        "Cache-Control": response.headers.get("cache-control") || "public, max-age=3600",
-      });
-
-      res.set("X-Frame-Options", "ALLOWALL");
-      res.set("Content-Security-Policy", "");
-
-      const buffer = await response.arrayBuffer();
-      res.send(Buffer.from(buffer));
-    } catch (error: any) {
-      console.error("[WHATSAPP WEB PROXY RESOURCE ERROR]", error.message);
-      res.status(500).json({ error: "Erro ao carregar recurso" });
-    }
-  });
-
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);
     console.log(`[BOOT] ✓ Ambiente: ${process.env.NODE_ENV || 'development'}`);

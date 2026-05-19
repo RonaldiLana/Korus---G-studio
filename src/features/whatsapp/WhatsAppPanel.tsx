@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Destination, VisaType, Plan } from '../../types';
 import { X, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -25,8 +25,31 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showFallback, setShowFallback] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    // Timeout de 5 segundos para detectar se o iframe não carregou
+    timeoutRef.current = setTimeout(() => {
+      console.warn('WhatsApp iframe não carregou em 5 segundos, mostrando fallback');
+      setShowFallback(true);
+    }, 5000);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [iframeKey]);
+
+  const handleIframeLoad = () => {
+    // Limpar timeout se o iframe carregou com sucesso
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    console.log('WhatsApp iframe carregou com sucesso');
+  };
 
   const handleIframeError = () => {
+    console.error('Erro ao carregar WhatsApp iframe');
     setShowFallback(true);
   };
 
@@ -47,6 +70,7 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({
           title="WhatsApp Web"
           className="w-full h-full border-0"
           sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation allow-storage-access-by-user-activation allow-modals"
+          onLoad={handleIframeLoad}
           onError={handleIframeError}
         />
       )}

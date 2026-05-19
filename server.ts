@@ -3403,9 +3403,9 @@ async function startServer() {
   });
 
   // ─── WhatsApp Web Proxy (outras rotas): Proxifica requisições de recursos ─
-  app.get("/api/whatsapp/web-proxy/*", async (req, res) => {
+  app.get("/api/whatsapp/web-proxy/:path(.*)", async (req, res) => {
     try {
-      const path = req.params[0];
+      const path = req.params.path;
       const fullUrl = `https://web.whatsapp.com/${path}${req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""}`;
 
       console.log("[WHATSAPP WEB PROXY RESOURCE]", fullUrl);

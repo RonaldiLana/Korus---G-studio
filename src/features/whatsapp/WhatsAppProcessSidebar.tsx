@@ -13,6 +13,7 @@ interface WhatsAppProcessSidebarProps {
   visaTypes: VisaType[];
   plans: Plan[];
   onProcessCreated?: (processId: number) => void;
+  onClose?: () => void;
 }
 
 interface FormState {
@@ -43,6 +44,7 @@ export const WhatsAppProcessSidebar: React.FC<WhatsAppProcessSidebarProps> = ({
   visaTypes,
   plans,
   onProcessCreated,
+  onClose,
 }) => {
   const [form, setForm] = useState<FormState>(initialForm);
   const [clientExists, setClientExists] = useState<boolean | null>(null);
@@ -136,6 +138,7 @@ export const WhatsAppProcessSidebar: React.FC<WhatsAppProcessSidebarProps> = ({
     setError('');
     setSuccessData(null);
     setCopied(false);
+    onClose?.();
   };
 
   return (

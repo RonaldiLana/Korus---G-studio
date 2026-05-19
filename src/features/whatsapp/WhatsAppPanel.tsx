@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { User, Destination, VisaType, Plan } from '../../types';
-import { Smartphone, X, UserPlus } from 'lucide-react';
+import { X, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WhatsAppProcessSidebar } from './WhatsAppProcessSidebar';
+import { WhatsAppWebFallback } from './WhatsAppWebFallback';
 
 interface WhatsAppPanelProps {
   agencyId: number;
@@ -22,35 +23,33 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({
   plans = [],
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+
+  const handleIframeError = () => {
+    setShowFallback(true);
+  };
+
+  const handleRetry = () => {
+    setShowFallback(false);
+    setIframeKey(prev => prev + 1);
+  };
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-[var(--bg-panel)] relative">
+    <div className="h-full w-full flex flex-col overflow-hidden bg-black relative">
       {/* ─── WHATSAPP WEB - FULL SCREEN ─── */}
-      <div className="h-full w-full flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex-shrink-0 px-6 py-4 border-b border-[var(--border-color)] bg-[var(--bg-card)]/50">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-              <Smartphone size={20} className="text-emerald-400" />
-            </div>
-            <div>
-              <h2 className="text-lg font-black tracking-tighter">WhatsApp Web</h2>
-              <p className="text-xs text-[var(--text-muted)]">Acesso oficial com total controle</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Iframe - Full Height */}
-        <div className="flex-1 overflow-hidden relative">
-          <iframe
-            key="whatsapp-web"
-            src="https://web.whatsapp.com"
-            title="WhatsApp Web"
-            className="w-full h-full border-0"
-            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation allow-storage-access-by-user-activation"
-          />
-        </div>
-      </div>
+      {showFallback ? (
+        <WhatsAppWebFallback onRetry={handleRetry} />
+      ) : (
+        <iframe
+          key={`whatsapp-web-${iframeKey}`}
+          src="https://web.whatsapp.com"
+          title="WhatsApp Web"
+          className="w-full h-full border-0"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation allow-storage-access-by-user-activation allow-modals"
+          onError={handleIframeError}
+        />
+      )}
 
       {/* ─── FLOATING BUTTON ─── */}
       <button

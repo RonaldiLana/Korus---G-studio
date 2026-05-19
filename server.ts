@@ -3350,6 +3350,92 @@ async function startServer() {
     next(err);
   });
 
+  // ─── WhatsApp Web Proxy: Permite carregar web.whatsapp.com em iframe ─────
+  // PROPÓSITO: Remove headers X-Frame-Options e CSP que bloqueiam iframe
+  // SEGURANÇA: Apenas retorna o conteúdo, sem modificar dados
+  app.get("/api/whatsapp/web-proxy", async (req, res) => {
+    try {
+      // Fetch do web.whatsapp.com
+      const response = await fetch("https://web.whatsapp.com", {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "pt-BR,pt;q=0.9",
+        },
+        redirect: "follow",
+      });
+
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Falha ao carregar WhatsApp Web" });
+      }
+
+      let html = await response.text();
+
+      // Remove headers que bloqueiam iframe
+      // Isso permite que a página carregue dentro do iframe da aplicação
+      res.set({
+        "Content-Type": "text/html; charset=utf-8",
+        "X-Frame-Options": "ALLOWALL", // Remove bloqueio
+        "Content-Security-Policy": "", // Remove CSP restritiva
+      });
+
+      // Injeta script para melhor compatibilidade
+      html = html.replace("</head>", `
+        <script>
+          // Notifica que está em iframe (importante para WhatsApp)
+          window.isInIframe = true;
+          // Tenta manter localStorage e sessionStorage funcionando
+          if (typeof localStorage === 'undefined') {
+            window.localStorage = window.parent.localStorage;
+          }
+          if (typeof sessionStorage === 'undefined') {
+            window.sessionStorage = window.parent.sessionStorage;
+          }
+        </script>
+        </head>
+      `);
+
+      res.send(html);
+    } catch (error: any) {
+      console.error("[WHATSAPP WEB PROXY]", error.message);
+      res.status(500).json({ error: "Erro ao proxificar WhatsApp Web" });
+    }
+  });
+
+  // ─── WhatsApp Web Proxy (outras rotas): Proxifica requisições de recursos ─
+  app.get("/api/whatsapp/web-proxy/*", async (req, res) => {
+    try {
+      const path = req.params[0];
+      const fullUrl = `https://web.whatsapp.com/${path}${req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""}`;
+
+      console.log("[WHATSAPP WEB PROXY RESOURCE]", fullUrl);
+
+      const response = await fetch(fullUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+          "Referer": "https://web.whatsapp.com/",
+        },
+        redirect: "follow",
+      });
+
+      // Copia headers importantes
+      const contentType = response.headers.get("content-type") || "application/octet-stream";
+      res.set({
+        "Content-Type": contentType,
+        "Cache-Control": response.headers.get("cache-control") || "public, max-age=3600",
+      });
+
+      res.set("X-Frame-Options", "ALLOWALL");
+      res.set("Content-Security-Policy", "");
+
+      const buffer = await response.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    } catch (error: any) {
+      console.error("[WHATSAPP WEB PROXY RESOURCE ERROR]", error.message);
+      res.status(500).json({ error: "Erro ao carregar recurso" });
+    }
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);
     console.log(`[BOOT] ✓ Ambiente: ${process.env.NODE_ENV || 'development'}`);

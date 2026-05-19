@@ -255,3 +255,24 @@ export interface WhatsAppIntegration {
   created_at: string;
   updated_at: string;
 }
+
+export interface WhatsAppConversation {
+  id: string;
+  contact: {
+    name: string;
+    phone: string;
+    avatar?: string;
+  };
+  lastMessage: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  isOnline: boolean;
+}
+
+export interface WhatsAppMessage {
+  id: string;
+  conversationId: string;
+  sender: 'user' | 'contact';
+  content: string;
+  timestamp: string;
+}

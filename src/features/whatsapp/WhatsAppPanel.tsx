@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Destination, VisaType, Plan } from '../../types';
-import { X, UserPlus } from 'lucide-react';
+import { X, UserPlus, MessageCircle, ExternalLink, Smartphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WhatsAppProcessSidebar } from './WhatsAppProcessSidebar';
-import { WhatsAppWebFallback } from './WhatsAppWebFallback';
 
 interface WhatsAppPanelProps {
   agencyId: number;
@@ -23,57 +22,91 @@ export const WhatsAppPanel: React.FC<WhatsAppPanelProps> = ({
   plans = [],
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [showFallback, setShowFallback] = useState(false);
-  const [iframeKey, setIframeKey] = useState(0);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isLoadingWeb, setIsLoadingWeb] = useState(false);
 
-  useEffect(() => {
-    // Timeout de 5 segundos para detectar se o iframe não carregou
-    timeoutRef.current = setTimeout(() => {
-      console.warn('WhatsApp iframe não carregou em 5 segundos, mostrando fallback');
-      setShowFallback(true);
-    }, 5000);
-
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [iframeKey]);
-
-  const handleIframeLoad = () => {
-    // Limpar timeout se o iframe carregou com sucesso
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    console.log('WhatsApp iframe carregou com sucesso');
-  };
-
-  const handleIframeError = () => {
-    console.error('Erro ao carregar WhatsApp iframe');
-    setShowFallback(true);
-  };
-
-  const handleRetry = () => {
-    setShowFallback(false);
-    setIframeKey(prev => prev + 1);
+  const handleOpenWhatsAppWeb = () => {
+    setIsLoadingWeb(true);
+    window.open('https://web.whatsapp.com', 'whatsapp_web', 'width=1200,height=800');
+    setTimeout(() => setIsLoadingWeb(false), 1000);
   };
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden bg-black relative">
-      {/* ─── WHATSAPP WEB - FULL SCREEN ─── */}
-      {showFallback ? (
-        <WhatsAppWebFallback onRetry={handleRetry} />
-      ) : (
-        <iframe
-          key={`whatsapp-web-${iframeKey}`}
-          src="https://web.whatsapp.com"
-          title="WhatsApp Web"
-          className="w-full h-full border-0"
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation allow-storage-access-by-user-activation allow-modals"
-          onLoad={handleIframeLoad}
-          onError={handleIframeError}
-        />
-      )}
+    <div className="h-full w-full flex flex-col overflow-hidden bg-gradient-to-br from-gray-900 via-black to-gray-900 relative">
+      {/* ─── MAIN CONTENT ─── */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-8 p-4">
+        {/* Logo & Title */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="text-center"
+        >
+          <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-2xl">
+            <MessageCircle size={56} className="text-white" strokeWidth={1.5} />
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-black text-white mb-2 tracking-tighter">
+            WhatsApp Web
+          </h1>
+          <p className="text-gray-400 text-lg">
+            Acesse sua conta do WhatsApp Web oficial
+          </p>
+        </motion.div>
+
+        {/* Features */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl w-full"
+        >
+          {[
+            { icon: MessageCircle, label: 'Enviar Mensagens', desc: 'Em tempo real' },
+            { icon: Smartphone, label: 'Conectado', desc: 'Pelo celular' },
+            { icon: ExternalLink, label: 'Oficial', desc: 'web.whatsapp.com' },
+          ].map((item, i) => (
+            <div
+              key={i}
+              className="p-4 rounded-2xl bg-white/5 border border-emerald-500/20 hover:border-emerald-500/50 transition-all"
+            >
+              <item.icon className="text-emerald-400 mb-2" size={24} />
+              <p className="text-white font-bold text-sm">{item.label}</p>
+              <p className="text-gray-400 text-xs">{item.desc}</p>
+            </div>
+          ))}
+        </motion.div>
+
+        {/* Main Button */}
+        <motion.button
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.3 }}
+          onClick={handleOpenWhatsAppWeb}
+          disabled={isLoadingWeb}
+          className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 disabled:opacity-70 text-white font-black text-lg flex items-center gap-3 transition-all shadow-2xl hover:shadow-emerald-500/50"
+        >
+          <ExternalLink size={24} />
+          {isLoadingWeb ? 'Abrindo...' : 'Abrir WhatsApp Web'}
+        </motion.button>
+
+        {/* Instructions */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-6 max-w-2xl w-full"
+        >
+          <p className="text-emerald-400 font-bold mb-2 flex items-center gap-2">
+            <Smartphone size={18} />
+            Como usar:
+          </p>
+          <ol className="text-gray-300 text-sm space-y-2 list-decimal list-inside">
+            <li>Clique no botão acima para abrir WhatsApp Web</li>
+            <li>Aponte o celular para escanear o QR code</li>
+            <li>Seu WhatsApp estará pronto para usar</li>
+            <li>Você permanecerá conectado enquanto o navegador estiver aberto</li>
+          </ol>
+        </motion.div>
+      </div>
 
       {/* ─── FLOATING BUTTON ─── */}
       <button

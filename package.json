@@ -41,6 +41,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "cors": "^2.8.6",
+    "cross-env": "^10.1.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "embla-carousel-react": "^8.6.0",
@@ -56,6 +57,7 @@
     "react-day-picker": "8.10.1",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.56.2",
+    "react-is": "^19.2.6",
     "react-resizable-panels": "^3.0.1",
     "react-router-dom": "^7.5.1",
     "recharts": "^3.6.0",
@@ -64,8 +66,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.21.0",
     "vaul": "^1.1.2",
-    "zod": "^3.24.4",
-    "cross-env": "^10.1.0"
+    "zod": "^3.24.4"
   },
   "scripts": {
     "start": "cross-env NODE_ENV=production tsx server.ts",

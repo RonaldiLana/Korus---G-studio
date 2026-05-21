@@ -4299,10 +4299,11 @@ export default function App() {
                             has_crm: modules.crm !== undefined ? modules.crm : true,
                             has_whatsapp: modules.whatsapp === true,
                             has_simplified_process: modules.simplified_process === true,
+                            has_clients: modules.clients === true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
-                          });
+                          } as any);
                           setShowAgencyModal(true);
                         }}
                         className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"

@@ -3629,7 +3629,7 @@ export default function App() {
             />
           )}
 
-          {(user?.role === 'master' || agencyModules.clients) && user?.role !== 'client' && (
+          {(user?.role === 'master' || (user?.role === 'supervisor' && agencyModules.clients)) && (
             <SidebarItem
               icon={UserPlus}
               label="Cadastro de Clientes"
@@ -4659,7 +4659,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'client_registry' && (user?.role === 'master' || agencyModules.clients) && user?.role !== 'client' && (
+          {view === 'client_registry' && (user?.role === 'master' || (user?.role === 'supervisor' && agencyModules.clients)) && (
             <motion.div
               key="client_registry"
               initial={{ opacity: 0 }}
@@ -4672,6 +4672,9 @@ export default function App() {
                 userId={user?.id ?? 0}
                 userRole={user?.role ?? ''}
                 notify={notify}
+                destinations={destinations}
+                visaTypes={visaTypes}
+                plans={plans}
               />
             </motion.div>
           )}
@@ -7074,8 +7077,8 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Link de Acompanhamento — visível para consultores/supervisores/master */}
-                  {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && isConsultantSupervisorOrMaster(user) && (() => {
+                  {/* Link de Acompanhamento — visível para consultores/supervisores/master/analista */}
+                  {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (() => {
                     const trackingUrl = `${window.location.origin}/acompanhamento/${selectedProcess.tracking_token}`;
                     return (
                       <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
@@ -7098,7 +7101,7 @@ export default function App() {
                   })()}
 
                   {/* Vincular / Alterar Plano — apenas para processos simplificados */}
-                  {selectedProcess.process_type === 'simplified' && isConsultantSupervisorOrMaster(user) && (
+                  {selectedProcess.process_type === 'simplified' && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (
                     <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
                       <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3">
                         {selectedProcess.plan_id ? 'Alterar Plano de Consultoria' : 'Vincular Plano de Consultoria'}
@@ -7145,8 +7148,15 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Botão de aprovação de etapa para consultor/supervisor/master */}
-                  {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
+                  {/* Botão de aprovação de etapa para consultor/supervisor/master, e etapas finais também para analista */}
+                  {(() => {
+                    const s = selectedProcess.internal_status;
+                    const isAnalystStage = s === 'submitted' || s === 'confirmed';
+                    const canAct = isAnalystStage
+                      ? (user?.role === 'analyst' || user?.role === 'supervisor' || user?.role === 'master')
+                      : isConsultantSupervisorOrMaster(user);
+                    return canAct;
+                  })() && selectedProcess.status !== 'completed' && (
                     <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
                       {(() => {
                         const stageLabels: Record<string, string> = {

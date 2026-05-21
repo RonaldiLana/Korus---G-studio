@@ -12,6 +12,7 @@ interface SimplifiedProcessModalProps {
   visaTypes: VisaType[];
   plans: Plan[];
   createdByUserId: number;
+  initialClient?: { name: string; email?: string | null; phone?: string | null };
   onClose: () => void;
   onSuccess: (processId: number) => void;
 }
@@ -43,10 +44,19 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
   visaTypes,
   plans,
   createdByUserId,
+  initialClient,
   onClose,
   onSuccess,
 }) => {
-  const [form, setForm] = React.useState<FormState>(initialForm);
+  const [form, setForm] = React.useState<FormState>(initialClient ? {
+    client_name: initialClient.name || '',
+    client_email: initialClient.email || '',
+    client_phone: initialClient.phone || '',
+    destination_id: '',
+    visa_type_id: '',
+    plan_id: '',
+    description: '',
+  } : initialForm);
   const [clientExists, setClientExists] = React.useState<boolean | null>(null);
   const [checkingEmail, setCheckingEmail] = React.useState(false);
   const [saving, setSaving] = React.useState(false);

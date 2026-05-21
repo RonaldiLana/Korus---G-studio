@@ -7,16 +7,16 @@ import {
   Pencil,
   Trash2,
   X,
-  Download,
   Filter,
   CheckCircle2,
   Clock,
-  Archive,
   FileSpreadsheet,
-  AlertCircle,
   ChevronLeft,
   ChevronRight,
+  FilePlus,
 } from 'lucide-react';
+import { Destination, VisaType, Plan } from '../../types';
+import { SimplifiedProcessModal } from '../simplifiedProcess/SimplifiedProcessModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -74,6 +74,9 @@ interface Props {
   userId: number;
   userRole: string;
   notify: (msg: string, type: 'success' | 'error' | 'info') => void;
+  destinations: Destination[];
+  visaTypes: VisaType[];
+  plans: Plan[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -535,7 +538,7 @@ function ClientImportModal({ agencyId, userId, apiUrl, token, onClose, onImporte
 // ─────────────────────────────────────────────────────────────────────────────
 // Painel principal
 // ─────────────────────────────────────────────────────────────────────────────
-export function ClientsRegistryPanel({ apiUrl, token, agencyId, userId, userRole, notify }: Props) {
+export function ClientsRegistryPanel({ apiUrl, token, agencyId, userId, userRole, notify, destinations, visaTypes, plans }: Props) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<ClientsStats | null>(null);
@@ -549,8 +552,10 @@ export function ClientsRegistryPanel({ apiUrl, token, agencyId, userId, userRole
   const [showClientModal, setShowClientModal] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [clientForProcess, setClientForProcess] = useState<ClientRecord | null>(null);
 
   const isMasterOrSupervisor = userRole === 'master' || userRole === 'supervisor';
+  const canCreateProcess = userRole === 'master' || userRole === 'supervisor' || userRole === 'analyst';
 
   const fetchClients = useCallback(async () => {
     setLoading(true);
@@ -763,6 +768,15 @@ export function ClientsRegistryPanel({ apiUrl, token, agencyId, userId, userRole
                           >
                             <Pencil size={15} />
                           </button>
+                          {canCreateProcess && (
+                            <button
+                              onClick={() => setClientForProcess(client)}
+                              className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-blue-400 hover:bg-blue-500/10 transition-all"
+                              title="Criar Processo Simplificado"
+                            >
+                              <FilePlus size={15} />
+                            </button>
+                          )}
                           {isMasterOrSupervisor && (
                             <button
                               onClick={() => handleDelete(client)}
@@ -831,6 +845,19 @@ export function ClientsRegistryPanel({ apiUrl, token, agencyId, userId, userRole
           onClose={() => setShowImportModal(false)}
           onImported={() => { fetchClients(); fetchStats(); }}
           notify={notify}
+        />
+      )}
+      {clientForProcess && (
+        <SimplifiedProcessModal
+          agencyId={agencyId}
+          token={token || ''}
+          destinations={destinations}
+          visaTypes={visaTypes}
+          plans={plans}
+          createdByUserId={userId}
+          initialClient={{ name: clientForProcess.full_name, email: clientForProcess.email, phone: clientForProcess.phone }}
+          onClose={() => setClientForProcess(null)}
+          onSuccess={() => { setClientForProcess(null); fetchClients(); }}
         />
       )}
     </div>

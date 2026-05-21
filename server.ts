@@ -1787,7 +1787,7 @@ async function startServer() {
         sql += " WHERE p.agency_id = $1";
         params.push(agency_id);
       } else if (role === 'analyst') {
-        sql += " WHERE p.analyst_id = $1 OR (p.internal_status = 'reviewing' AND p.agency_id = $2)";
+        sql += " WHERE p.analyst_id = $1 OR (p.internal_status IN ('submitted', 'confirmed') AND p.agency_id = $2)";
         params.push(user_id, agency_id);
       } else {
         sql += " WHERE p.agency_id = $1";

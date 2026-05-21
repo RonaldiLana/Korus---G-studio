@@ -78,6 +78,7 @@ import { NotificationPopup, CrmNotification } from './features/crm/NotificationP
 import { WhatsAppPanel } from './features/whatsapp/WhatsAppPanel';
 import { SimplifiedProcessModal } from './features/simplifiedProcess/SimplifiedProcessModal';
 import { ClientTrackingPage } from './features/simplifiedProcess/ClientTrackingPage';
+import { ClientsRegistryPanel } from './features/clientsRegistry/ClientsRegistryPanel';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -390,6 +391,7 @@ export default function App() {
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
             simplified_process: m.simplified_process === true,
+            clients: m.clients === true,
           });
         } catch {}
       }
@@ -404,7 +406,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm' | 'whatsapp'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<ClientOverview[]>([]);
@@ -1055,7 +1057,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false, simplified_process: false });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false });
   const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
   const [spPlanId, setSpPlanId] = useState('');
   const [savingSpPlan, setSavingSpPlan] = useState(false);
@@ -1260,6 +1262,7 @@ export default function App() {
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
             simplified_process: m.simplified_process === true,
+            clients: m.clients === true,
           });
         } catch {}
       }
@@ -1496,6 +1499,7 @@ export default function App() {
         crm: (parsedModules as any).crm !== false,
         whatsapp: (parsedModules as any).whatsapp === true,
         simplified_process: (parsedModules as any).simplified_process === true,
+        clients: (parsedModules as any).clients === true,
       });
 
       let destinations = [];
@@ -3625,6 +3629,15 @@ export default function App() {
             />
           )}
 
+          {(user?.role === 'master' || agencyModules.clients) && user?.role !== 'client' && (
+            <SidebarItem
+              icon={UserPlus}
+              label="Cadastro de Clientes"
+              active={view === 'client_registry'}
+              onClick={() => { setView('client_registry'); setSidebarOpen(false); }}
+            />
+          )}
+
           {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Users} 
@@ -3759,6 +3772,7 @@ export default function App() {
                 {view === 'pipefy' && 'Pipefy'}
                 {view === 'crm' && 'CRM'}
                 {view === 'whatsapp' && 'WhatsApp'}
+                {view === 'client_registry' && 'Cadastro de Clientes'}
               </h2>
               <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">
                 <MapPin size={14} />
@@ -4640,6 +4654,23 @@ export default function App() {
               <FormsPanel
                 agencyId={getScopedAgencyId()}
                 userRole={user?.role || ''}
+              />
+            </motion.div>
+          )}
+
+          {view === 'client_registry' && (user?.role === 'master' || agencyModules.clients) && user?.role !== 'client' && (
+            <motion.div
+              key="client_registry"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <ClientsRegistryPanel
+                apiUrl={API_URL}
+                token={token}
+                agencyId={getScopedAgencyId() ?? 0}
+                userId={user?.id ?? 0}
+                userRole={user?.role ?? ''}
+                notify={notify}
               />
             </motion.div>
           )}
@@ -6878,6 +6909,18 @@ export default function App() {
                               />
                               <label htmlFor="has_simplified_process" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
                                 Processo Simplificado Habilitado
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
+                              <input 
+                                type="checkbox" 
+                                id="has_clients"
+                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                                checked={(newAgency as any).has_clients === true}
+                                onChange={e => setNewAgency({ ...newAgency, has_clients: e.target.checked } as any)}
+                              />
+                              <label htmlFor="has_clients" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                Cadastro de Clientes Habilitado
                               </label>
                             </div>
                           </div>

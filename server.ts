@@ -7,6 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import fs from "fs";
+import * as XLSX from "xlsx";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -956,7 +957,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true, simplified_process: req.body.has_simplified_process === true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true, simplified_process: req.body.has_simplified_process === true, clients: req.body.has_clients === true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -1001,7 +1002,8 @@ async function startServer() {
     const has_crm = req.body.has_crm !== undefined ? req.body.has_crm : true;
     const has_whatsapp = req.body.has_whatsapp === true;
     const has_simplified_process = req.body.has_simplified_process === true;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp, simplified_process: has_simplified_process });
+    const has_clients = req.body.has_clients === true;
+    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp, simplified_process: has_simplified_process, clients: has_clients });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });
@@ -3401,6 +3403,473 @@ async function startServer() {
       res.status(500).json({ error: "Erro ao proxificar WhatsApp Web" });
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // MÓDULO CADASTRO DE CLIENTES
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Multer para importação de planilhas (10 MB máximo)
+  const xlsxStorage = multer.memoryStorage();
+  const xlsxUpload = multer({
+    storage: xlsxStorage,
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'text/csv',
+        'application/csv',
+      ];
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (allowed.includes(file.mimetype) || ext === '.xlsx' || ext === '.csv') {
+        cb(null, true);
+      } else {
+        cb(new Error('Arquivo inválido. Envie um arquivo .xlsx ou .csv'));
+      }
+    },
+  });
+
+  /** Verifica se o módulo clientes está habilitado para a agência */
+  async function isClientsModuleEnabled(agencyId: number): Promise<boolean> {
+    const r = await query("SELECT modules FROM agencies WHERE id = $1", [agencyId]);
+    if (!r.rows[0]) return false;
+    try {
+      const m = JSON.parse(r.rows[0].modules || '{}');
+      return Boolean(m.clients);
+    } catch { return false; }
+  }
+
+  /** Sanitiza string para evitar injeção / dados maliciosos */
+  function sanitizeStr(v: unknown): string | null {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    return s.length > 0 ? s.substring(0, 500) : null;
+  }
+
+  // GET /api/clients — listar clientes da agência
+  app.get("/api/clients", async (req, res) => {
+    try {
+      const agencyId = Number(req.query.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const { status, search, page = '1', limit = '50' } = req.query;
+      const offset = (Number(page) - 1) * Number(limit);
+
+      const conditions: string[] = ["c.agency_id = $1"];
+      const params: any[] = [agencyId];
+      let idx = 2;
+
+      if (status) { conditions.push(`c.status = $${idx++}`); params.push(status); }
+      if (search) {
+        conditions.push(`(c.full_name ILIKE $${idx} OR c.email ILIKE $${idx} OR c.phone ILIKE $${idx})`);
+        params.push(`%${search}%`);
+        idx++;
+      }
+
+      const where = conditions.join(" AND ");
+      const result = await query(
+        `SELECT c.*, u.name AS created_by_name
+         FROM clients c
+         LEFT JOIN users u ON u.id = c.created_by
+         WHERE ${where}
+         ORDER BY c.created_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, Number(limit), offset]
+      );
+      const total = await query(`SELECT COUNT(*)::int AS count FROM clients c WHERE ${where}`, params);
+
+      return res.json({ clients: result.rows, total: total.rows[0]?.count || 0 });
+    } catch (err: any) {
+      console.error("[CLIENTS GET]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/clients/stats — estatísticas por agência
+  app.get("/api/clients/stats", async (req, res) => {
+    try {
+      const agencyId = Number(req.query.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const r = await query(
+        `SELECT
+           COUNT(*)::int AS total,
+           SUM(CASE WHEN status = 'pre_registered' THEN 1 ELSE 0 END)::int AS pre_registered,
+           SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)::int AS active,
+           SUM(CASE WHEN imported = true THEN 1 ELSE 0 END)::int AS imported
+         FROM clients WHERE agency_id = $1`,
+        [agencyId]
+      );
+      return res.json(r.rows[0] || { total: 0, pre_registered: 0, active: 0, imported: 0 });
+    } catch (err: any) {
+      console.error("[CLIENTS STATS]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /api/clients/:id — obter cliente por ID
+  app.get("/api/clients/:id", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const agencyId = Number(req.query.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const r = await query(
+        "SELECT * FROM clients WHERE id = $1 AND agency_id = $2",
+        [clientId, agencyId]
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: "Cliente não encontrado" });
+      return res.json(r.rows[0]);
+    } catch (err: any) {
+      console.error("[CLIENTS GET ONE]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/clients — criar cliente manual
+  app.post("/api/clients", async (req, res) => {
+    try {
+      const agencyId = Number(req.body.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const full_name = sanitizeStr(req.body.full_name);
+      if (!full_name) return res.status(400).json({ error: "full_name é obrigatório" });
+
+      const phone = sanitizeStr(req.body.phone);
+      const email = sanitizeStr(req.body.email)?.toLowerCase() || null;
+      const city = sanitizeStr(req.body.city);
+      const state = sanitizeStr(req.body.state);
+      const created_by = req.body.created_by ? Number(req.body.created_by) : null;
+
+      // Verificar duplicidade: email ou telefone
+      if (email) {
+        const dup = await query("SELECT id FROM clients WHERE agency_id = $1 AND email = $2", [agencyId, email]);
+        if (dup.rows.length > 0) return res.status(409).json({ error: "Já existe um cliente com este e-mail nesta agência" });
+      }
+      if (phone) {
+        const dup = await query("SELECT id FROM clients WHERE agency_id = $1 AND phone = $2", [agencyId, phone]);
+        if (dup.rows.length > 0) return res.status(409).json({ error: "Já existe um cliente com este telefone nesta agência" });
+      }
+
+      const r = await query(
+        `INSERT INTO clients (agency_id, created_by, full_name, phone, email, city, state, status, imported)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pre_registered', false)
+         RETURNING *`,
+        [agencyId, created_by, full_name, phone, email, city, state]
+      );
+      return res.status(201).json(r.rows[0]);
+    } catch (err: any) {
+      console.error("[CLIENTS POST]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/clients/:id — atualizar cliente
+  app.patch("/api/clients/:id", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const agencyId = Number(req.body.agency_id || req.query.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      // Confirmar que o cliente pertence à agência
+      const existing = await query("SELECT id FROM clients WHERE id = $1 AND agency_id = $2", [clientId, agencyId]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "Cliente não encontrado" });
+
+      const fields: string[] = [];
+      const vals: any[] = [];
+      let idx = 1;
+
+      const addField = (col: string, val: string | null | undefined) => {
+        if (val !== undefined) { fields.push(`${col} = $${idx++}`); vals.push(val); }
+      };
+
+      if (req.body.full_name !== undefined) addField('full_name', sanitizeStr(req.body.full_name));
+      if (req.body.phone !== undefined) addField('phone', sanitizeStr(req.body.phone));
+      if (req.body.email !== undefined) addField('email', sanitizeStr(req.body.email)?.toLowerCase() || null);
+      if (req.body.city !== undefined) addField('city', sanitizeStr(req.body.city));
+      if (req.body.state !== undefined) addField('state', sanitizeStr(req.body.state));
+      if (req.body.status !== undefined) {
+        const validStatus = ['pre_registered', 'active', 'archived'];
+        if (!validStatus.includes(req.body.status)) return res.status(400).json({ error: "Status inválido" });
+        addField('status', req.body.status);
+      }
+      fields.push(`updated_at = NOW()`);
+
+      if (fields.length === 1) return res.status(400).json({ error: "Nenhum campo para atualizar" });
+
+      vals.push(clientId, agencyId);
+      const r = await query(
+        `UPDATE clients SET ${fields.join(', ')} WHERE id = $${idx++} AND agency_id = $${idx} RETURNING *`,
+        vals
+      );
+      return res.json(r.rows[0]);
+    } catch (err: any) {
+      console.error("[CLIENTS PATCH]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE /api/clients/:id — excluir cliente
+  app.delete("/api/clients/:id", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const agencyId = Number(req.query.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const r = await query(
+        "DELETE FROM clients WHERE id = $1 AND agency_id = $2 RETURNING id",
+        [clientId, agencyId]
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: "Cliente não encontrado" });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("[CLIENTS DELETE]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/clients/import — importação em massa via Excel/CSV
+  app.post("/api/clients/import", xlsxUpload.single("file"), async (req, res) => {
+    try {
+      const agencyId = Number(req.body.agency_id);
+      const createdBy = req.body.created_by ? Number(req.body.created_by) : null;
+
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado" });
+
+      // Verificar módulo
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      // Ler planilha
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) return res.status(400).json({ error: "Planilha vazia ou inválida" });
+
+      const sheet = workbook.Sheets[sheetName];
+      const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      if (rows.length === 0) return res.status(400).json({ error: "Nenhuma linha encontrada na planilha" });
+      if (rows.length > 5000) return res.status(400).json({ error: "Limite máximo de 5000 registros por importação" });
+
+      // Mapeamento de colunas (case-insensitive)
+      const mapColumn = (row: Record<string, any>, aliases: string[]): string | null => {
+        for (const key of Object.keys(row)) {
+          if (aliases.some(a => key.toLowerCase().trim() === a.toLowerCase())) {
+            const v = sanitizeStr(row[key]);
+            return v || null;
+          }
+        }
+        return null;
+      };
+
+      // Buscar emails e telefones já existentes nesta agência (para dedup)
+      const existingEmails = new Set<string>();
+      const existingPhones = new Set<string>();
+      const existingNameCity = new Set<string>();
+
+      const existingResult = await query(
+        "SELECT LOWER(email) AS email, phone, LOWER(full_name || '|' || COALESCE(city,'')) AS name_city FROM clients WHERE agency_id = $1",
+        [agencyId]
+      );
+      for (const row of existingResult.rows) {
+        if (row.email) existingEmails.add(row.email);
+        if (row.phone) existingPhones.add(row.phone);
+        if (row.name_city) existingNameCity.add(row.name_city);
+      }
+
+      const batchId = `import_${Date.now()}_${agencyId}`;
+      const toInsert: any[] = [];
+      const errors: string[] = [];
+      let duplicates = 0;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const lineNum = i + 2; // linha 1 = header
+
+        const full_name = mapColumn(row, ['nome', 'name', 'full_name', 'nome completo', 'fullname', 'cliente']);
+        if (!full_name) { errors.push(`Linha ${lineNum}: Nome é obrigatório`); continue; }
+
+        const phone = mapColumn(row, ['telefone', 'phone', 'celular', 'fone', 'tel']);
+        const email = mapColumn(row, ['email', 'e-mail', 'mail'])?.toLowerCase() || null;
+        const city = mapColumn(row, ['cidade', 'city']);
+        const state = mapColumn(row, ['estado', 'state', 'uf']);
+
+        // Verificar duplicidade: email > telefone > nome+cidade
+        let isDuplicate = false;
+        if (email && existingEmails.has(email)) { isDuplicate = true; }
+        else if (phone && existingPhones.has(phone)) { isDuplicate = true; }
+        else if (existingNameCity.has(`${full_name.toLowerCase()}|${city?.toLowerCase() || ''}`)) { isDuplicate = true; }
+
+        if (isDuplicate) { duplicates++; continue; }
+
+        // Marcar como já visto neste lote (evita duplicata dentro do próprio lote)
+        if (email) existingEmails.add(email);
+        if (phone) existingPhones.add(phone);
+        existingNameCity.add(`${full_name.toLowerCase()}|${city?.toLowerCase() || ''}`);
+
+        toInsert.push([agencyId, createdBy, full_name, phone, email, city, state, batchId]);
+      }
+
+      if (toInsert.length === 0 && errors.length === 0 && duplicates > 0) {
+        return res.json({ total: rows.length, created: 0, duplicates, errors: [], batch_id: batchId });
+      }
+
+      // Inserção em lote com transação
+      let created = 0;
+      if (toInsert.length > 0) {
+        await query('BEGIN', []);
+        try {
+          // Inserir em blocos de 500 para não extrapolar parâmetros do pg
+          const CHUNK = 500;
+          for (let start = 0; start < toInsert.length; start += CHUNK) {
+            const chunk = toInsert.slice(start, start + CHUNK);
+            const placeholders = chunk.map((_, ci) => {
+              const base = ci * 8;
+              return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},true,$${base+8})`;
+            }).join(',');
+            const flat = chunk.flat();
+            await query(
+              `INSERT INTO clients (agency_id, created_by, full_name, phone, email, city, state, imported, import_batch_id)
+               VALUES ${placeholders}
+               ON CONFLICT DO NOTHING`,
+              flat
+            );
+            created += chunk.length;
+          }
+          await query('COMMIT', []);
+        } catch (err) {
+          await query('ROLLBACK', []);
+          throw err;
+        }
+      }
+
+      return res.json({
+        total: rows.length,
+        created,
+        duplicates,
+        errors: errors.slice(0, 50), // limitar erros retornados
+        batch_id: batchId,
+      });
+    } catch (err: any) {
+      console.error("[CLIENTS IMPORT]", err);
+      // Garantir rollback em qualquer erro não capturado
+      try { await query('ROLLBACK', []); } catch {}
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/clients/import/preview — prévia sem salvar
+  app.post("/api/clients/import/preview", xlsxUpload.single("file"), async (req, res) => {
+    try {
+      const agencyId = Number(req.body.agency_id);
+      if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado" });
+
+      if (!await isClientsModuleEnabled(agencyId)) {
+        return res.status(403).json({ error: "Módulo Cadastro de Clientes não está ativo nesta agência" });
+      }
+
+      const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) return res.status(400).json({ error: "Planilha vazia ou inválida" });
+
+      const sheet = workbook.Sheets[sheetName];
+      const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      if (rows.length === 0) return res.status(400).json({ error: "Nenhuma linha encontrada" });
+
+      const mapColumn = (row: Record<string, any>, aliases: string[]): string | null => {
+        for (const key of Object.keys(row)) {
+          if (aliases.some(a => key.toLowerCase().trim() === a.toLowerCase())) {
+            const v = sanitizeStr(row[key]); return v || null;
+          }
+        }
+        return null;
+      };
+
+      // Buscar existentes para dedup
+      const existingEmails = new Set<string>();
+      const existingPhones = new Set<string>();
+      const existingNameCity = new Set<string>();
+      const existingResult = await query(
+        "SELECT LOWER(email) AS email, phone, LOWER(full_name || '|' || COALESCE(city,'')) AS name_city FROM clients WHERE agency_id = $1",
+        [agencyId]
+      );
+      for (const row of existingResult.rows) {
+        if (row.email) existingEmails.add(row.email);
+        if (row.phone) existingPhones.add(row.phone);
+        if (row.name_city) existingNameCity.add(row.name_city);
+      }
+
+      const preview: any[] = [];
+      let duplicates = 0;
+      const errors: string[] = [];
+
+      const limit = Math.min(rows.length, 5000);
+      for (let i = 0; i < limit; i++) {
+        const row = rows[i];
+        const full_name = mapColumn(row, ['nome', 'name', 'full_name', 'nome completo', 'fullname', 'cliente']);
+        if (!full_name) { errors.push(`Linha ${i+2}: Nome obrigatório`); continue; }
+        const phone = mapColumn(row, ['telefone', 'phone', 'celular', 'fone', 'tel']);
+        const email = mapColumn(row, ['email', 'e-mail', 'mail'])?.toLowerCase() || null;
+        const city = mapColumn(row, ['cidade', 'city']);
+        const state = mapColumn(row, ['estado', 'state', 'uf']);
+
+        let isDuplicate = false;
+        if (email && existingEmails.has(email)) isDuplicate = true;
+        else if (phone && existingPhones.has(phone)) isDuplicate = true;
+        else if (existingNameCity.has(`${full_name.toLowerCase()}|${city?.toLowerCase() || ''}`)) isDuplicate = true;
+
+        if (isDuplicate) { duplicates++; }
+        if (email) existingEmails.add(email);
+        if (phone) existingPhones.add(phone);
+        existingNameCity.add(`${full_name.toLowerCase()}|${city?.toLowerCase() || ''}`);
+
+        if (preview.length < 20) {
+          preview.push({ full_name, phone, email, city, state, is_duplicate: isDuplicate });
+        }
+      }
+
+      return res.json({
+        total: rows.length,
+        new_count: rows.length - duplicates - errors.length,
+        duplicates,
+        errors: errors.slice(0, 20),
+        preview,
+      });
+    } catch (err: any) {
+      console.error("[CLIENTS IMPORT PREVIEW]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);

@@ -155,6 +155,28 @@ async function applyMigrations() {
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(64)`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS description TEXT`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_tracking_token ON processes(tracking_token) WHERE tracking_token IS NOT NULL`,
+
+    // ─── Módulo Cadastro de Clientes ───────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS clients (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      full_name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      city TEXT,
+      state TEXT,
+      status TEXT NOT NULL DEFAULT 'pre_registered' CHECK (status IN ('pre_registered', 'active', 'archived')),
+      imported BOOLEAN NOT NULL DEFAULT FALSE,
+      import_batch_id TEXT,
+      partner_id TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_clients_agency_id ON clients (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_clients_email ON clients (email)`,
+    `CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients (phone)`,
+    `CREATE INDEX IF NOT EXISTS idx_clients_status ON clients (agency_id, status)`,
   ];
 
   for (const sql of migrations) {

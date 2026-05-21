@@ -1,5 +1,6 @@
 import React from 'react';
 import { Process } from '../../types';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   TrendingUp,
   Clock,
@@ -9,6 +10,10 @@ import {
   CheckCircle,
   BarChart2,
   Target,
+  Globe,
+  Layers,
+  FileCheck,
+  Briefcase,
 } from 'lucide-react';
 
 interface CRMAnalyticsProps {
@@ -41,6 +46,94 @@ function avg(arr: number[]): number {
   if (!arr.length) return 0;
   return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
 }
+
+const DONUT_COLORS = ['#10b981', '#6366f1', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7', '#f97316', '#ec4899'];
+
+function groupByField(
+  procs: Process[],
+  key: keyof Process,
+  top = 7,
+): { name: string; value: number }[] {
+  const map: Record<string, number> = {};
+  procs.forEach((p) => {
+    const raw = p[key];
+    const label = typeof raw === 'string' && raw.trim() ? raw.trim() : 'Não informado';
+    map[label] = (map[label] ?? 0) + 1;
+  });
+  return Object.entries(map)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, top);
+}
+
+const DonutChartCard: React.FC<{
+  icon: React.ElementType;
+  title: string;
+  data: { name: string; value: number }[];
+  colors: string[];
+  total: number;
+}> = ({ icon: Icon, title, data, colors, total }) => (
+  <div className="bg-[var(--bg-card)]/50 rounded-2xl border border-[var(--border-color)] p-5 flex flex-col gap-4">
+    <div className="flex items-center gap-2">
+      <Icon size={16} className="text-emerald-400" />
+      <h3 className="text-sm font-black uppercase tracking-tight">{title}</h3>
+    </div>
+    {data.length === 0 ? (
+      <p className="text-xs text-[var(--text-muted)] text-center py-8">Sem dados</p>
+    ) : (
+      <>
+        <div style={{ height: 180 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={50}
+                outerRadius={80}
+                paddingAngle={2}
+              >
+                {data.map((_, i) => (
+                  <Cell key={i} fill={colors[i % colors.length]} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--bg-card, #1a1a2e)',
+                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
+                  borderRadius: 10,
+                  fontSize: 12,
+                  color: 'var(--text-main, #fff)',
+                }}
+                formatter={(value: number, name: string) => [
+                  `${value} (${total > 0 ? Math.round((value / total) * 100) : 0}%)`,
+                  name,
+                ]}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <ul className="space-y-1.5">
+          {data.map((d, i) => (
+            <li key={d.name} className="flex items-center gap-2 text-xs">
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ background: colors[i % colors.length] }}
+              />
+              <span className="truncate text-[var(--text-main)] font-bold flex-1">{d.name}</span>
+              <span className="text-[var(--text-muted)] tabular-nums">{d.value}</span>
+              <span className="text-[var(--text-muted)] tabular-nums w-8 text-right">
+                {total > 0 ? Math.round((d.value / total) * 100) : 0}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      </>
+    )}
+  </div>
+);
 
 const MetricCard: React.FC<{
   icon: React.ElementType;
@@ -107,6 +200,22 @@ export const CRMAnalytics: React.FC<CRMAnalyticsProps> = ({ processes }) => {
     (p) => p.status !== 'completed' && getDays(p.created_at) > 14
   ).length;
 
+  // Datasets para gráficos de rosca
+  const processTypeData = (() => {
+    const map: Record<string, number> = { Normal: 0, Simplificado: 0 };
+    processes.forEach((p) => {
+      if (p.process_type === 'simplified') map['Simplificado'] += 1;
+      else map['Normal'] += 1;
+    });
+    return Object.entries(map)
+      .filter(([, v]) => v > 0)
+      .map(([name, value]) => ({ name, value }));
+  })();
+
+  const destinationData = groupByField(processes, 'destination_name', 7);
+  const visaData = groupByField(processes, 'visa_name', 7);
+  const planData = groupByField(processes, 'plan_name', 7);
+
   return (
     <div className="p-6 space-y-8">
       {/* Header */}
@@ -134,6 +243,44 @@ export const CRMAnalytics: React.FC<CRMAnalyticsProps> = ({ processes }) => {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <MetricCard icon={DollarSign} label="Pagamentos Confirmados" value={paidCount} sub={`${total > 0 ? Math.round((paidCount / total) * 100) : 0}% do total`} color="text-emerald-400" />
         <MetricCard icon={DollarSign} label="Pagamentos Pendentes" value={pendingCount} sub={`${total > 0 ? Math.round((pendingCount / total) * 100) : 0}% do total`} color="text-amber-400" />
+      </div>
+
+      {/* Distribuição por tipo e destino */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Globe size={16} className="text-emerald-400" />
+          <h3 className="text-sm font-black uppercase tracking-tight text-[var(--text-main)]">Distribuição por Tipo e Destino</h3>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <DonutChartCard
+            icon={Layers}
+            title="Tipo de Processo"
+            data={processTypeData}
+            colors={['#10b981', '#6366f1']}
+            total={total}
+          />
+          <DonutChartCard
+            icon={Globe}
+            title="Por Destino"
+            data={destinationData}
+            colors={DONUT_COLORS}
+            total={total}
+          />
+          <DonutChartCard
+            icon={FileCheck}
+            title="Tipo de Visto"
+            data={visaData}
+            colors={DONUT_COLORS.slice(2)}
+            total={total}
+          />
+          <DonutChartCard
+            icon={Briefcase}
+            title="Por Plano"
+            data={planData}
+            colors={DONUT_COLORS.slice(1)}
+            total={total}
+          />
+        </div>
       </div>
 
       {/* Tempo médio por etapa */}

@@ -188,12 +188,12 @@ const KorusLogo = ({ size = 32 }: { size?: number }) => (
 
 const canAccessPipefyModule = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant';
+  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
 };
 
 const canAccessCRMModule = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant';
+  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
 };
 
 const canAccessWhatsAppModule = (user?: User | null): boolean => {

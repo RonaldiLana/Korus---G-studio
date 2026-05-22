@@ -177,6 +177,47 @@ async function applyMigrations() {
     `CREATE INDEX IF NOT EXISTS idx_clients_email ON clients (email)`,
     `CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients (phone)`,
     `CREATE INDEX IF NOT EXISTS idx_clients_status ON clients (agency_id, status)`,
+
+    // ─── Módulo de Grupos de Atividade (visibilidade por perfil e etapa) ─────
+    // Grupos automáticos: 1 grupo de consultores + 1 de analistas por agência.
+    // Membros do mesmo grupo veem os mesmos processos de suas etapas.
+    `CREATE TABLE IF NOT EXISTS activity_groups (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      profile TEXT NOT NULL CHECK (profile IN ('consultant', 'analyst')),
+      name TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(agency_id, profile)
+    )`,
+    `CREATE TABLE IF NOT EXISTS activity_group_members (
+      id SERIAL PRIMARY KEY,
+      activity_group_id INTEGER NOT NULL REFERENCES activity_groups(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(activity_group_id, user_id)
+    )`,
+    // Criar grupo de consultores para cada agência que já tem consultores
+    `INSERT INTO activity_groups (agency_id, profile, name)
+     SELECT DISTINCT u.agency_id, 'consultant', 'Consultores'
+     FROM users u
+     WHERE u.role = 'consultant' AND u.agency_id IS NOT NULL
+     ON CONFLICT (agency_id, profile) DO NOTHING`,
+    // Criar grupo de analistas para cada agência que já tem analistas
+    `INSERT INTO activity_groups (agency_id, profile, name)
+     SELECT DISTINCT u.agency_id, 'analyst', 'Analistas'
+     FROM users u
+     WHERE u.role = 'analyst' AND u.agency_id IS NOT NULL
+     ON CONFLICT (agency_id, profile) DO NOTHING`,
+    // Popular membros dos grupos a partir de usuários existentes
+    `INSERT INTO activity_group_members (activity_group_id, user_id)
+     SELECT ag.id, u.id
+     FROM users u
+     JOIN activity_groups ag ON u.agency_id = ag.agency_id AND u.role = ag.profile
+     ON CONFLICT (activity_group_id, user_id) DO NOTHING`,
+    // Índices de performance para consultas de grupos
+    `CREATE INDEX IF NOT EXISTS idx_activity_groups_agency ON activity_groups (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_group_members_group ON activity_group_members (activity_group_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_activity_group_members_user ON activity_group_members (user_id)`,
   ];
 
   for (const sql of migrations) {

@@ -1,11 +1,12 @@
 import React from 'react';
 import { Process, User } from '../../types';
-import { Kanban, BarChart2, Zap, Bell } from 'lucide-react';
+import { Kanban, BarChart2, Zap, Bell, Users } from 'lucide-react';
 import { CRMKanban } from './CRMKanban';
 import { CRMProcessDetail } from './CRMProcessDetail';
 import { CRMAnalytics } from './CRMAnalytics';
 import { CRMAutomation } from './CRMAutomation';
 import { CRMFollowUp } from './CRMFollowUp';
+import { ActivityGroupsManager } from './ActivityGroupsManager';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -18,14 +19,7 @@ interface CRMPanelProps {
   user: User;
 }
 
-type CRMTab = 'kanban' | 'analytics' | 'automation' | 'followup';
-
-const TABS: { id: CRMTab; label: string; icon: React.ElementType }[] = [
-  { id: 'kanban', label: 'Pipeline', icon: Kanban },
-  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
-  { id: 'automation', label: 'Automações', icon: Zap },
-  { id: 'followup', label: 'Follow-up', icon: Bell },
-];
+type CRMTab = 'kanban' | 'analytics' | 'automation' | 'followup' | 'groups';
 
 export const CRMPanel: React.FC<CRMPanelProps> = ({
   processes,
@@ -40,9 +34,19 @@ export const CRMPanel: React.FC<CRMPanelProps> = ({
 
   const token = localStorage.getItem('korus-token') || '';
 
+  // Abas disponíveis — "Grupos" apenas para supervisor/master
+  const TABS: { id: CRMTab; label: string; icon: React.ElementType }[] = [
+    { id: 'kanban', label: 'Pipeline', icon: Kanban },
+    { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+    { id: 'automation', label: 'Automações', icon: Zap },
+    { id: 'followup', label: 'Follow-up', icon: Bell },
+    ...(user.role === 'supervisor' || user.role === 'master'
+      ? [{ id: 'groups' as CRMTab, label: 'Grupos', icon: Users }]
+      : []),
+  ];
+
   const handleSelectProcess = (process: Process) => {
     setDetailProcess(process);
-    // Também dispara o callback pai para carregar o detalhe completo se necessário
     onSelectProcess(process);
   };
 
@@ -80,6 +84,7 @@ export const CRMPanel: React.FC<CRMPanelProps> = ({
             clients={clients}
             onUpdateStatus={onUpdateStatus}
             onSelectProcess={handleSelectProcess}
+            user={user}
           />
         )}
         {activeTab === 'analytics' && (
@@ -95,6 +100,11 @@ export const CRMPanel: React.FC<CRMPanelProps> = ({
         {activeTab === 'followup' && (
           <div className="h-full overflow-y-auto scrollbar-hide">
             <CRMFollowUp processes={processes} onSelectProcess={handleSelectProcess} />
+          </div>
+        )}
+        {activeTab === 'groups' && (user.role === 'supervisor' || user.role === 'master') && (
+          <div className="h-full overflow-y-auto scrollbar-hide">
+            <ActivityGroupsManager agencyId={agencyId} user={user} />
           </div>
         )}
       </div>

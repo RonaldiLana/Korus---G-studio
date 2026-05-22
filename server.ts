@@ -1767,7 +1767,8 @@ async function startServer() {
           pl.name as plan_name,
           f.status as payment_status,
           f.proof_url as payment_proof_url,
-          cu.name as consultant_name
+          cu.name as consultant_name,
+          au.name as analyst_name
         FROM processes p
         JOIN users u ON p.client_id = u.id
         LEFT JOIN visa_types v ON p.visa_type_id = v.id
@@ -1775,21 +1776,30 @@ async function startServer() {
         LEFT JOIN plans pl ON p.plan_id = pl.id
         LEFT JOIN financials f ON p.id = f.process_id
         LEFT JOIN users cu ON p.consultant_id = cu.id
+        LEFT JOIN users au ON p.analyst_id = au.id
       `;
-      let params = [];
+      let params: any[] = [];
 
       if (role === 'master') {
-        // No filter
+        // Master vê tudo — sem filtro de agência
       } else if (role === 'client') {
+        // Cliente vê apenas seus próprios processos
         sql += " WHERE p.client_id = $1";
         params.push(user_id);
       } else if (role === 'consultant') {
-        sql += " WHERE p.agency_id = $1";
+        // Consultor vê processos da SUA agência nas etapas de sua responsabilidade
+        // (started → analyzing). Isolamento total: agency_id filtra primeiro.
+        sql += ` WHERE p.agency_id = $1
+          AND p.status IN ('started', 'waiting_payment', 'payment_confirmed', 'analyzing')`;
         params.push(agency_id);
       } else if (role === 'analyst') {
-        sql += " WHERE p.analyst_id = $1 OR (p.internal_status IN ('submitted', 'confirmed') AND p.agency_id = $2)";
-        params.push(user_id, agency_id);
+        // Analista vê processos da SUA agência a partir da etapa "analyzing".
+        // Isolamento total: agency_id filtra primeiro.
+        sql += ` WHERE p.agency_id = $1
+          AND p.status IN ('analyzing', 'final_phase', 'completed')`;
+        params.push(agency_id);
       } else {
+        // Supervisor, gerente_financeiro e outros — veem todos da sua agência
         sql += " WHERE p.agency_id = $1";
         params.push(agency_id);
       }
@@ -1946,6 +1956,64 @@ async function startServer() {
             [existingProcess.agency_id, auditUserId, "process_status_changed", details]
           );
         } catch (_) {}
+      }
+
+      // ── Trigger: quando processo entra em "analyzing", notificar grupo de analistas
+      if (statusChanged && newStatus === 'analyzing') {
+        try {
+          // Garantir que o grupo de analistas existe para esta agência
+          await query(
+            `INSERT INTO activity_groups (agency_id, profile, name)
+             VALUES ($1, 'analyst', 'Analistas')
+             ON CONFLICT (agency_id, profile) DO NOTHING`,
+            [existingProcess.agency_id]
+          );
+          // Popular grupo com analistas ainda não adicionados
+          await query(
+            `INSERT INTO activity_group_members (activity_group_id, user_id)
+             SELECT ag.id, u.id
+             FROM users u
+             JOIN activity_groups ag ON u.agency_id = ag.agency_id AND ag.profile = 'analyst'
+             WHERE u.role = 'analyst' AND u.agency_id = $1
+             ON CONFLICT (activity_group_id, user_id) DO NOTHING`,
+            [existingProcess.agency_id]
+          );
+          // Inserir notificação para o grupo de analistas
+          await query(
+            `INSERT INTO crm_notifications (agency_id, rule_name, message, process_id)
+             VALUES ($1, 'Novo processo para análise', $2, $3)`,
+            [
+              existingProcess.agency_id,
+              `Processo #${req.params.id} entrou em análise e está disponível para o grupo de analistas.`,
+              req.params.id,
+            ]
+          );
+        } catch (e) {
+          console.error('[ANALYST GROUP TRIGGER]', e);
+        }
+      }
+
+      // ── Trigger: quando consultor é atribuído, garantir grupo de consultores existe
+      if (consultantChanged && consultant_id) {
+        try {
+          await query(
+            `INSERT INTO activity_groups (agency_id, profile, name)
+             VALUES ($1, 'consultant', 'Consultores')
+             ON CONFLICT (agency_id, profile) DO NOTHING`,
+            [existingProcess.agency_id]
+          );
+          await query(
+            `INSERT INTO activity_group_members (activity_group_id, user_id)
+             SELECT ag.id, u.id
+             FROM users u
+             JOIN activity_groups ag ON u.agency_id = ag.agency_id AND ag.profile = 'consultant'
+             WHERE u.role = 'consultant' AND u.agency_id = $1
+             ON CONFLICT (activity_group_id, user_id) DO NOTHING`,
+            [existingProcess.agency_id]
+          );
+        } catch (e) {
+          console.error('[CONSULTANT GROUP TRIGGER]', e);
+        }
       }
 
       // Disparar regras de automação quando status OU internal_status mudar
@@ -2306,6 +2374,158 @@ async function startServer() {
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });
+    }
+  });
+
+  // ─── Grupos de Atividade — Visibilidade por Perfil e Etapa ──────────────────
+  // Regra: Consultores veem processos (started → analyzing).
+  //        Analistas veem processos (analyzing → completed).
+  //        Todos os membros de um grupo veem os mesmos processos e atribuições.
+  //        Isolamento total: usuários só acessam dados da sua própria agência.
+
+  // GET /api/activity-groups — Lista grupos com membros (supervisor/master)
+  app.get("/api/activity-groups", async (req, res) => {
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+    try {
+      const groupsResult = await query(
+        `SELECT ag.id, ag.profile, ag.name, ag.created_at,
+                json_agg(
+                  json_build_object('id', agm.id, 'user_id', u.id, 'name', u.name, 'email', u.email, 'role', u.role, 'joined_at', agm.joined_at)
+                  ORDER BY u.name
+                ) FILTER (WHERE u.id IS NOT NULL) as members
+         FROM activity_groups ag
+         LEFT JOIN activity_group_members agm ON ag.id = agm.activity_group_id
+         LEFT JOIN users u ON agm.user_id = u.id
+         WHERE ag.agency_id = $1
+         GROUP BY ag.id
+         ORDER BY ag.profile ASC`,
+        [agency_id]
+      );
+      res.json(groupsResult.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/activity-groups/members/:group_id — Adicionar membro ao grupo
+  app.post("/api/activity-groups/members/:group_id", async (req, res) => {
+    const { user_id, agency_id } = req.body;
+    const groupId = parseInt(req.params.group_id);
+    if (!user_id || !agency_id) return res.status(400).json({ error: "user_id e agency_id são obrigatórios" });
+
+    try {
+      // Validar que o grupo pertence à agência do solicitante (isolamento de agência)
+      const groupCheck = await query(
+        "SELECT id, profile FROM activity_groups WHERE id = $1 AND agency_id = $2",
+        [groupId, agency_id]
+      );
+      if (groupCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Grupo não encontrado ou não pertence à sua agência" });
+      }
+
+      // Validar que o usuário pertence à mesma agência
+      const userCheck = await query(
+        "SELECT id, role FROM users WHERE id = $1 AND agency_id = $2",
+        [user_id, agency_id]
+      );
+      if (userCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Usuário não encontrado ou não pertence à sua agência" });
+      }
+
+      // Validar que o role do usuário é compatível com o perfil do grupo
+      const groupProfile = groupCheck.rows[0].profile;
+      const userRole = userCheck.rows[0].role;
+      if (userRole !== groupProfile) {
+        return res.status(400).json({ error: `Usuário com perfil '${userRole}' não pode ser adicionado ao grupo de '${groupProfile}'` });
+      }
+
+      await query(
+        "INSERT INTO activity_group_members (activity_group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [groupId, user_id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE /api/activity-groups/members/:group_id/:user_id — Remover membro
+  app.delete("/api/activity-groups/members/:group_id/:user_id", async (req, res) => {
+    const { agency_id } = req.query;
+    if (!agency_id) return res.status(400).json({ error: "agency_id é obrigatório" });
+
+    try {
+      // Validar que o grupo pertence à agência (isolamento de agência)
+      const groupCheck = await query(
+        "SELECT id FROM activity_groups WHERE id = $1 AND agency_id = $2",
+        [req.params.group_id, agency_id]
+      );
+      if (groupCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Grupo não pertence à sua agência" });
+      }
+
+      await query(
+        "DELETE FROM activity_group_members WHERE activity_group_id = $1 AND user_id = $2",
+        [req.params.group_id, req.params.user_id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/processes/:id/assign — Atribuir processo a um usuário do grupo
+  // Atualiza consultant_id (para consultores) ou analyst_id (para analistas).
+  // Todos do mesmo grupo continuam vendo o processo; o campo mostra quem assumiu.
+  app.patch("/api/processes/:id/assign", async (req, res) => {
+    const { assigned_to_user_id, role, agency_id, changed_by_user_id } = req.body;
+    if (!assigned_to_user_id || !role || !agency_id) {
+      return res.status(400).json({ error: "assigned_to_user_id, role e agency_id são obrigatórios" });
+    }
+
+    try {
+      // Validar que o processo pertence à agência (isolamento de agência)
+      const processCheck = await query(
+        "SELECT id, agency_id, status FROM processes WHERE id = $1 AND agency_id = $2",
+        [req.params.id, agency_id]
+      );
+      if (processCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Processo não encontrado ou não pertence à sua agência" });
+      }
+
+      // Validar que o usuário a assumir pertence à mesma agência
+      const userCheck = await query(
+        "SELECT id, role FROM users WHERE id = $1 AND agency_id = $2",
+        [assigned_to_user_id, agency_id]
+      );
+      if (userCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Usuário não pertence à sua agência" });
+      }
+
+      const assigneeRole = userCheck.rows[0].role;
+
+      // Atualizar o campo correto de acordo com o perfil do usuário que assume
+      if (assigneeRole === 'consultant') {
+        await query("UPDATE processes SET consultant_id = $1 WHERE id = $2", [assigned_to_user_id, req.params.id]);
+      } else if (assigneeRole === 'analyst') {
+        await query("UPDATE processes SET analyst_id = $1 WHERE id = $2", [assigned_to_user_id, req.params.id]);
+      } else {
+        return res.status(400).json({ error: "Apenas consultores ou analistas podem assumir processos" });
+      }
+
+      // Audit log
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [agency_id, changed_by_user_id || assigned_to_user_id, "process_assigned", `Processo #${req.params.id} assumido por usuário #${assigned_to_user_id} (${assigneeRole})`]
+        );
+      } catch (_) {}
+
+      res.json({ success: true, assigned_to_user_id, role: assigneeRole });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

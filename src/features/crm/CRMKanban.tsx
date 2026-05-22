@@ -14,17 +14,21 @@ import {
   DollarSign,
   CheckSquare,
   TrendingUp,
+  UserCheck,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 interface CRMKanbanProps {
   processes: Process[];
   clients: User[];
   onUpdateStatus: (processId: number, newStatus: Process['status']) => void;
   onSelectProcess: (process: Process) => void;
+  user?: User | null;
 }
 
-const COLUMNS: { id: Process['status']; label: string; color: string }[] = [
+const ALL_COLUMNS: { id: Process['status']; label: string; color: string }[] = [
   { id: 'started', label: 'Iniciado', color: 'bg-blue-500' },
   { id: 'waiting_payment', label: 'Aguard. Pagamento', color: 'bg-amber-500' },
   { id: 'payment_confirmed', label: 'Pgto Confirmado', color: 'bg-emerald-500' },
@@ -32,6 +36,10 @@ const COLUMNS: { id: Process['status']; label: string; color: string }[] = [
   { id: 'final_phase', label: 'Fase Final', color: 'bg-indigo-500' },
   { id: 'completed', label: 'Concluído', color: 'bg-zinc-500' },
 ];
+
+// Etapas visíveis por perfil
+const CONSULTANT_STAGE_IDS: Process['status'][] = ['started', 'waiting_payment', 'payment_confirmed', 'analyzing'];
+const ANALYST_STAGE_IDS: Process['status'][] = ['analyzing', 'final_phase', 'completed'];
 
 function getDaysInStage(createdAt: string): number {
   const created = new Date(createdAt);
@@ -63,6 +71,7 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
   clients,
   onUpdateStatus,
   onSelectProcess,
+  user,
 }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
   const [filterConsultant, setFilterConsultant] = React.useState('');
@@ -71,6 +80,50 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
   const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
   const [bulkTarget, setBulkTarget] = React.useState<Process['status'] | ''>('');
   const [showFilters, setShowFilters] = React.useState(false);
+  const [assigningId, setAssigningId] = React.useState<number | null>(null);
+
+  // Colunas visíveis de acordo com o perfil do usuário logado
+  const COLUMNS = React.useMemo(() => {
+    if (user?.role === 'consultant') {
+      return ALL_COLUMNS.filter((c) => CONSULTANT_STAGE_IDS.includes(c.id));
+    }
+    if (user?.role === 'analyst') {
+      return ALL_COLUMNS.filter((c) => ANALYST_STAGE_IDS.includes(c.id));
+    }
+    return ALL_COLUMNS; // supervisor e master veem tudo
+  }, [user]);
+
+  // Etapas permitidas para drag-and-drop (restringe movimentação por perfil)
+  const allowedStageIds = React.useMemo(() => {
+    if (user?.role === 'consultant') return CONSULTANT_STAGE_IDS;
+    if (user?.role === 'analyst') return ANALYST_STAGE_IDS;
+    return ALL_COLUMNS.map((c) => c.id);
+  }, [user]);
+
+  // Assumir processo: atribui o usuário logado ao processo
+  const handleAssume = async (e: React.MouseEvent, processId: number) => {
+    e.stopPropagation();
+    if (!user) return;
+    setAssigningId(processId);
+    try {
+      await fetch(`${API_URL}/api/processes/${processId}/assign`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assigned_to_user_id: user.id,
+          role: user.role,
+          agency_id: user.agency_id,
+          changed_by_user_id: user.id,
+        }),
+      });
+      // Recarregar página para refletir atribuição visível para todos do grupo
+      window.location.reload();
+    } catch {
+      // falha silenciosa — estado volta ao normal
+    } finally {
+      setAssigningId(null);
+    }
+  };
 
   const consultants = React.useMemo(
     () => Array.from(new Set(processes.map((p) => p.consultant_name).filter(Boolean))),
@@ -82,6 +135,8 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
     if (!destination) return;
     const processId = parseInt(draggableId);
     const newStatus = destination.droppableId as Process['status'];
+    // Impede mover para etapas fora do perfil do usuário
+    if (!allowedStageIds.includes(newStatus)) return;
     onUpdateStatus(processId, newStatus);
   };
 
@@ -337,18 +392,49 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
                                       />
                                     </div>
 
-                                    {/* Tags */}
+                    {/* Tags */}
                                     <div className="flex flex-wrap gap-1.5">
                                       <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--bg-input)] border border-[var(--border-color)] text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
                                         <MapPin size={10} />
                                         {process.visa_name || 'Visto'}
                                       </div>
-                                      {process.consultant_name && (
-                                        <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--bg-input)] border border-[var(--border-color)] text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
-                                          <UserIcon size={10} />
-                                          {process.consultant_name.split(' ')[0]}
-                                        </div>
-                                      )}
+                                      {/* Responsável: analista nas etapas de análise, consultor nas anteriores */}
+                                      {(['analyzing', 'final_phase', 'completed'] as Process['status'][]).includes(process.status)
+                                        ? process.analyst_name
+                                          ? (
+                                            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[9px] font-bold text-purple-400 uppercase tracking-widest">
+                                              <UserCheck size={10} />
+                                              {process.analyst_name.split(' ')[0]}
+                                            </div>
+                                          )
+                                          : (user?.role === 'analyst' && (
+                                            <button
+                                              onClick={(e) => handleAssume(e, process.id)}
+                                              disabled={assigningId === process.id}
+                                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/30 text-[9px] font-bold text-purple-400 uppercase tracking-widest hover:bg-purple-500/20 transition-all disabled:opacity-50"
+                                            >
+                                              <UserCheck size={10} />
+                                              {assigningId === process.id ? 'Assumindo…' : 'Assumir'}
+                                            </button>
+                                          ))
+                                        : process.consultant_name
+                                          ? (
+                                            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--bg-input)] border border-[var(--border-color)] text-[9px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
+                                              <UserIcon size={10} />
+                                              {process.consultant_name.split(' ')[0]}
+                                            </div>
+                                          )
+                                          : (user?.role === 'consultant' && (
+                                            <button
+                                              onClick={(e) => handleAssume(e, process.id)}
+                                              disabled={assigningId === process.id}
+                                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[9px] font-bold text-emerald-400 uppercase tracking-widest hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                                            >
+                                              <UserCheck size={10} />
+                                              {assigningId === process.id ? 'Assumindo…' : 'Assumir'}
+                                            </button>
+                                          ))
+                                      }
                                     </div>
 
                                     {/* Score bar */}

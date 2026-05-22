@@ -313,3 +313,27 @@ CREATE TABLE IF NOT EXISTS whatsapp_integrations (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE
 );
+
+-- ─── Activity Groups (grupos de atividade por perfil e agência) ──────────────
+-- Cada agência tem automaticamente 1 grupo de consultores e 1 de analistas.
+-- Todos os membros de um grupo visualizam os mesmos processos de suas etapas.
+CREATE TABLE IF NOT EXISTS activity_groups (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL,
+  profile TEXT NOT NULL CHECK (profile IN ('consultant', 'analyst')),
+  name TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+  UNIQUE(agency_id, profile)
+);
+
+-- ─── Activity Group Members (membros de cada grupo de atividade) ─────────────
+CREATE TABLE IF NOT EXISTS activity_group_members (
+  id SERIAL PRIMARY KEY,
+  activity_group_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(activity_group_id, user_id)
+);

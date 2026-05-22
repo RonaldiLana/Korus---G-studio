@@ -276,3 +276,25 @@ export interface WhatsAppMessage {
   content: string;
   timestamp: string;
 }
+
+// ─── Grupos de Atividade ─────────────────────────────────────────────────────
+
+export interface ActivityGroupMember {
+  id: number;
+  user_id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+  joined_at: string;
+}
+
+export interface ActivityGroup {
+  id: number;
+  agency_id: number;
+  /** 'consultant' → vê processos (started → analyzing)
+   *  'analyst'    → vê processos (analyzing → completed) */
+  profile: 'consultant' | 'analyst';
+  name: string;
+  created_at: string;
+  members: ActivityGroupMember[];
+}

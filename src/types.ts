@@ -134,6 +134,11 @@ export interface Process {
   id: number;
   client_id: number;
   client_name?: string;
+  client_phone?: string | null;
+  client_email?: string | null;
+  client_city?: string | null;
+  client_state?: string | null;
+  plan_price?: number | null;
   agency_id: number;
   visa_type_id: number;
   destination_id?: number | null;

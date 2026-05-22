@@ -218,6 +218,11 @@ async function applyMigrations() {
     `CREATE INDEX IF NOT EXISTS idx_activity_groups_agency ON activity_groups (agency_id)`,
     `CREATE INDEX IF NOT EXISTS idx_activity_group_members_group ON activity_group_members (activity_group_id)`,
     `CREATE INDEX IF NOT EXISTS idx_activity_group_members_user ON activity_group_members (user_id)`,
+
+    // ─── Dados complementares do cliente no usuário ───────────────────────────
+    // Cidade e UF ficam no registro do usuário, acessíveis via processes.client_id.
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS city TEXT`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS state TEXT`,
   ];
 
   for (const sql of migrations) {

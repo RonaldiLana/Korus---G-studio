@@ -1761,10 +1761,15 @@ async function startServer() {
         SELECT
           p.*,
           u.name as client_name,
+          u.phone as client_phone,
+          u.email as client_email,
+          u.city as client_city,
+          u.state as client_state,
           v.name as visa_name,
           d.name as destination_name,
           d.image as destination_image,
           pl.name as plan_name,
+          pl.price as plan_price,
           f.status as payment_status,
           f.proof_url as payment_proof_url,
           cu.name as consultant_name,
@@ -2217,11 +2222,16 @@ async function startServer() {
         SELECT
           p.*,
           u.name as client_name,
+          u.phone as client_phone,
+          u.email as client_email,
+          u.city as client_city,
+          u.state as client_state,
           v.name as visa_name,
           v.required_docs,
           d.name as destination_name,
           d.image as destination_image,
           pl.name as plan_name,
+          pl.price as plan_price,
           cu.name as consultant_name,
           cu.email as consultant_email,
           an.name as analyst_name
@@ -2524,6 +2534,63 @@ async function startServer() {
       } catch (_) {}
 
       res.json({ success: true, assigned_to_user_id, role: assigneeRole });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Atualizar dados do cliente de um processo ───────────────────────────────
+  app.patch("/api/processes/:id/client-info", async (req, res) => {
+    try {
+      const processId = parseInt(req.params.id);
+      const { name, phone, email, city, state, destination_id, visa_type_id, role, agency_id } = req.body;
+
+      if (!role || !agency_id) {
+        return res.status(400).json({ error: "role e agency_id são obrigatórios" });
+      }
+
+      // Apenas consultor, supervisor e master podem editar dados do cliente
+      if (!['consultant', 'supervisor', 'master'].includes(role)) {
+        return res.status(403).json({ error: "Permissão negada: apenas consultores e supervisores podem editar dados do cliente" });
+      }
+
+      // Buscar processo validando isolamento de agência (master pode editar qualquer processo)
+      const processCheck = role === 'master'
+        ? await query("SELECT id, client_id, agency_id FROM processes WHERE id = $1", [processId])
+        : await query("SELECT id, client_id, agency_id FROM processes WHERE id = $1 AND agency_id = $2", [processId, agency_id]);
+
+      if (processCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Processo não encontrado ou sem permissão" });
+      }
+
+      const clientId = processCheck.rows[0].client_id;
+
+      // Atualizar dados do usuário cliente
+      await query(
+        `UPDATE users SET
+          name  = COALESCE($1, name),
+          phone = COALESCE($2, phone),
+          email = COALESCE($3, email),
+          city  = COALESCE($4, city),
+          state = COALESCE($5, state)
+        WHERE id = $6`,
+        [name || null, phone || null, email || null, city || null, state || null, clientId]
+      );
+
+      // Atualizar destino e tipo de visto no processo
+      if (destination_id !== undefined || visa_type_id !== undefined) {
+        const updates: string[] = [];
+        const params: any[] = [];
+        let idx = 1;
+        if (destination_id !== undefined) { updates.push(`destination_id = $${idx++}`); params.push(destination_id || null); }
+        if (visa_type_id !== undefined) { updates.push(`visa_type_id = $${idx++}`); params.push(visa_type_id); }
+        params.push(processId);
+        if (updates.length > 0) {
+          await query(`UPDATE processes SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+        }
+      }
+
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

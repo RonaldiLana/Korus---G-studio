@@ -1103,6 +1103,13 @@ export default function App() {
   const [showFinancialAmountModal, setShowFinancialAmountModal] = useState(false);
   const [financialAmountInput, setFinancialAmountInput] = useState('');
 
+  // Edição dos dados do cliente (nome, contato, cidade, UF, destino, tipo de visto)
+  const [showClientInfoEdit, setShowClientInfoEdit] = useState(false);
+  const [savingClientInfo, setSavingClientInfo] = useState(false);
+  const [clientInfoForm, setClientInfoForm] = useState({
+    name: '', phone: '', email: '', city: '', state: '', destination_id: 0, visa_type_id: 0,
+  });
+
   // Process forms (assignment + staff editing)
   const [availableFormsForProcess, setAvailableFormsForProcess] = useState<any[]>([]);
   const [loadingProcessForms, setLoadingProcessForms] = useState(false);
@@ -2055,6 +2062,41 @@ export default function App() {
       }
     } catch {
       notify('Erro de conexão.', 'error');
+    }
+  };
+
+  const handleSaveClientInfo = async () => {
+    if (!selectedProcess || !user) return;
+    setSavingClientInfo(true);
+    try {
+      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/client-info`, {
+        method: 'PATCH',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: clientInfoForm.name || undefined,
+          phone: clientInfoForm.phone || undefined,
+          email: clientInfoForm.email || undefined,
+          city: clientInfoForm.city || undefined,
+          state: clientInfoForm.state || undefined,
+          destination_id: clientInfoForm.destination_id || undefined,
+          visa_type_id: clientInfoForm.visa_type_id || undefined,
+          role: user.role,
+          agency_id: user.agency_id,
+        }),
+      });
+      if (res.ok) {
+        notify('Dados do cliente atualizados!', 'success');
+        setShowClientInfoEdit(false);
+        await fetchProcessDetail(selectedProcess.id);
+        fetchProcesses();
+      } else {
+        const data = await res.json().catch(() => null);
+        notify(data?.error || 'Erro ao salvar dados.', 'error');
+      }
+    } catch {
+      notify('Erro de conexão.', 'error');
+    } finally {
+      setSavingClientInfo(false);
     }
   };
 
@@ -7068,6 +7110,138 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* ─── Card: Dados do Cliente ─────────────────────────────── */}
+                  <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                    <div className="flex items-center justify-between mb-5">
+                      <h4 className="font-black uppercase tracking-widest text-xs flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-brand-primary inline-block" />
+                        Dados do Cliente
+                      </h4>
+                      {user?.role !== 'analyst' && (
+                        <button
+                          onClick={() => {
+                            setClientInfoForm({
+                              name: selectedProcess.client_name || '',
+                              phone: selectedProcess.client_phone || '',
+                              email: selectedProcess.client_email || '',
+                              city: selectedProcess.client_city || '',
+                              state: selectedProcess.client_state || '',
+                              destination_id: selectedProcess.destination_id || 0,
+                              visa_type_id: selectedProcess.visa_type_id || 0,
+                            });
+                            setShowClientInfoEdit(true);
+                          }}
+                          className="text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors"
+                        >
+                          <Pencil size={12} />
+                          EDITAR
+                        </button>
+                      )}
+                    </div>
+
+                    {showClientInfoEdit && user?.role !== 'analyst' ? (
+                      /* ── Modo Edição ── */
+                      <div className="bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)] space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {[
+                            { label: 'Nome', key: 'name', type: 'text' },
+                            { label: 'Telefone', key: 'phone', type: 'text' },
+                            { label: 'E-mail', key: 'email', type: 'email' },
+                            { label: 'Cidade', key: 'city', type: 'text' },
+                            { label: 'UF', key: 'state', type: 'text' },
+                          ].map(({ label, key, type }) => (
+                            <div key={key}>
+                              <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">{label}</label>
+                              <input
+                                type={type}
+                                value={(clientInfoForm as any)[key]}
+                                onChange={(e) => setClientInfoForm(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
+                              />
+                            </div>
+                          ))}
+                          <div>
+                            <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Destino</label>
+                            <select
+                              value={clientInfoForm.destination_id}
+                              onChange={(e) => setClientInfoForm(prev => ({ ...prev, destination_id: Number(e.target.value) }))}
+                              className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
+                            >
+                              <option value={0}>Selecione um destino</option>
+                              {destinations.filter(d => d.is_active).map(d => (
+                                <option key={d.id} value={d.id}>{d.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Tipo de Visto</label>
+                            <select
+                              value={clientInfoForm.visa_type_id}
+                              onChange={(e) => setClientInfoForm(prev => ({ ...prev, visa_type_id: Number(e.target.value) }))}
+                              className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
+                            >
+                              <option value={0}>Selecione um tipo de visto</option>
+                              {visaTypes.map(v => (
+                                <option key={v.id} value={v.id}>{v.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {selectedProcess.plan_price != null && (
+                            <div>
+                              <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Valor do Plano</label>
+                              <p className="text-sm font-bold text-emerald-400 py-2">
+                                {Number(selectedProcess.plan_price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            onClick={handleSaveClientInfo}
+                            disabled={savingClientInfo}
+                            className="px-5 py-2.5 brand-gradient text-black rounded-xl font-black text-xs hover:opacity-90 transition-all disabled:opacity-50 brand-shadow"
+                          >
+                            {savingClientInfo ? 'Salvando...' : 'Salvar'}
+                          </button>
+                          <button
+                            onClick={() => setShowClientInfoEdit(false)}
+                            className="px-5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl font-black text-xs hover:opacity-80 transition-all"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* ── Modo Visualização ── */
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-5 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
+                        {[
+                          { label: 'Nome', value: selectedProcess.client_name },
+                          { label: 'Telefone', value: selectedProcess.client_phone },
+                          { label: 'E-mail', value: selectedProcess.client_email },
+                          { label: 'Cidade', value: selectedProcess.client_city },
+                          { label: 'UF', value: selectedProcess.client_state },
+                          { label: 'Destino', value: selectedProcess.destination_name },
+                          { label: 'Tipo de Visto', value: selectedProcess.visa_name },
+                          {
+                            label: 'Valor do Plano',
+                            value: selectedProcess.plan_price != null
+                              ? Number(selectedProcess.plan_price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                              : null,
+                            highlight: true,
+                          },
+                        ].map(({ label, value, highlight }) => (
+                          <div key={label}>
+                            <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">{label}</p>
+                            <p className={`text-sm font-bold truncate ${highlight ? 'text-emerald-400' : 'text-[var(--text-main)]'}`}>
+                              {value || <span className="text-[var(--text-muted)] font-normal italic">—</span>}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* ─── Fim Card Dados do Cliente ─────────────────────────── */}
 
                   {/* Descrição do Processo Simplificado */}
                   {selectedProcess.description && (

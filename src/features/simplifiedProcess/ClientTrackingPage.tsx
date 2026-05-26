@@ -80,6 +80,10 @@ export const ClientTrackingPage: React.FC = () => {
       url.searchParams.set('agency', agencyId);
     }
 
+    console.log(`[ClientTrackingPage] Fetching from: ${url.toString()}`);
+    console.log(`[ClientTrackingPage] window.location.origin: ${window.location.origin}`);
+    console.log(`[ClientTrackingPage] API_URL: ${API_URL}`);
+
     fetch(url.toString())
       .then(async (res) => {
         if (!res.ok) { 

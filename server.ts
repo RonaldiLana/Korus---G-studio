@@ -325,6 +325,20 @@ async function startServer() {
 
   const app = express();
 
+  // 🔄 REDIRECT MIDDLEWARE: www.korus.me → api.korus.me (em caso de Static Site estar servindo)
+  app.use((req, res, next) => {
+    const host = req.get('host') || '';
+    
+    // Se requisição chegar em www.korus.me, redireciona para api.korus.me
+    if (host === 'www.korus.me' || host === 'korus.me') {
+      const newUrl = `https://api.korus.me${req.originalUrl}`;
+      console.log(`[REDIRECT] ${host}${req.originalUrl} → api.korus.me`);
+      return res.redirect(301, newUrl);
+    }
+    
+    next();
+  });
+
   // CORS: permitir frontend em produção e localhost
   app.use(cors({
     origin: [

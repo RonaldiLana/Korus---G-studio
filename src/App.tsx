@@ -3319,6 +3319,11 @@ export default function App() {
     </>
   );
 
+  // Página pública de acompanhamento do processo simplificado
+  if (window.location.pathname.startsWith('/acompanhamento/')) {
+    return <ClientTrackingPage />;
+  }
+
   if (publicAgency && !user) {
     return (
       <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] flex items-center justify-center p-6 relative overflow-hidden">
@@ -3489,11 +3494,6 @@ export default function App() {
         {renderGlobalOverlays()}
       </div>
     );
-  }
-
-  // Página pública de acompanhamento do processo simplificado
-  if (window.location.pathname.includes('/acompanhamento/')) {
-    return <ClientTrackingPage />;
   }
 
   if (!user) {

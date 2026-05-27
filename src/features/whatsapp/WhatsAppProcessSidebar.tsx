@@ -331,7 +331,6 @@ export const WhatsAppProcessSidebar: React.FC<WhatsAppProcessSidebarProps> = ({
                   >
                     <option value="">Selecione um tipo...</option>
                     {visaTypes
-                      .filter((v) => Number(v.destination_id) === Number(form.destination_id))
                       .map((v) => (
                         <option key={v.id} value={v.id}>
                           {v.name}

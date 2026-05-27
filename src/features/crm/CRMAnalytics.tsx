@@ -107,7 +107,7 @@ const DonutChartCard: React.FC<{
                   fontSize: 12,
                   color: 'var(--text-main, #fff)',
                 }}
-                formatter={(value: number, name: string) => [
+                formatter={(value: any, name: any) => [
                   `${value} (${total > 0 ? Math.round((value / total) * 100) : 0}%)`,
                   name,
                 ]}

@@ -3854,7 +3854,6 @@ export default function App() {
                 {view === 'agency_panel' && 'Painel Agência'}
                 {view === 'pipefy' && 'Pipefy'}
                 {view === 'crm' && 'CRM'}
-                {view === 'whatsapp' && 'WhatsApp'}
                 {view === 'client_registry' && 'Cadastro de Clientes'}
               </h2>
               <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">

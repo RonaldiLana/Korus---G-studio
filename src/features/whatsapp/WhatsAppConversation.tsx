@@ -1,13 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { Phone, Video, MoreVertical } from 'lucide-react';
-import { WhatsAppConversation, WhatsAppMessage } from '../../types';
+import type { WhatsAppConversation, WhatsAppMessage } from '../../types';
 
 interface WhatsAppConversationProps {
   conversation: WhatsAppConversation | undefined;
   messages: WhatsAppMessage[];
 }
 
-export const WhatsAppConversation: React.FC<WhatsAppConversationProps> = ({
+export const WhatsAppConversationComponent: React.FC<WhatsAppConversationProps> = ({
   conversation,
   messages,
 }) => {

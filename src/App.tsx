@@ -78,6 +78,7 @@ import { NotificationPopup, CrmNotification } from './features/crm/NotificationP
 import { WhatsAppPanel } from './features/whatsapp/WhatsAppPanel';
 import { SimplifiedProcessModal } from './features/simplifiedProcess/SimplifiedProcessModal';
 import { ClientTrackingPage } from './features/simplifiedProcess/ClientTrackingPage';
+import { ProcessPopupPage } from './features/simplifiedProcess/ProcessPopupPage';
 import { ClientsRegistryPanel } from './features/clientsRegistry/ClientsRegistryPanel';
 
 /**
@@ -428,6 +429,41 @@ export default function App() {
    */
   useEffect(() => {
     restoreSession();
+  }, []);
+
+  /**
+   * 🔄 Sincronize view com URL pathname
+   */
+  useEffect(() => {
+    const pathname = window.location.pathname;
+    
+    // Mapeia pathname para view
+    const pathToViewMap: Record<string, typeof view> = {
+      '/dashboard': 'dashboard',
+      '/clients': 'clients',
+      '/agencies': 'agencies',
+      '/finance': 'finance',
+      '/audit': 'audit',
+      '/settings': 'settings',
+      '/leads': 'leads',
+      '/team': 'team',
+      '/pipefy': 'pipefy',
+      '/forms': 'forms',
+      '/crm': 'crm',
+      '/whatsapp': 'whatsapp',
+      '/client_registry': 'client_registry',
+    };
+
+    for (const [path, viewName] of Object.entries(pathToViewMap)) {
+      if (pathname === path || pathname.startsWith(path + '/')) {
+        console.log(`[ROUTE] ${pathname} => view: ${viewName}`);
+        setView(viewName as any);
+        return;
+      }
+    }
+
+    // Se nenhuma rota corresponder, volta para dashboard
+    setView('dashboard');
   }, []);
 
   const toggleTheme = () => {
@@ -3322,6 +3358,11 @@ export default function App() {
   // Página pública de acompanhamento do processo simplificado
   if (window.location.pathname.startsWith('/acompanhamento/')) {
     return <ClientTrackingPage />;
+  }
+
+  // Página de popup para criar processo (abre em popup window separada)
+  if (window.location.pathname === '/processo-popup') {
+    return <ProcessPopupPage />;
   }
 
   if (publicAgency && !user) {

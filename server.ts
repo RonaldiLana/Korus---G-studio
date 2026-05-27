@@ -325,14 +325,16 @@ async function startServer() {
 
   const app = express();
 
-  // 🔄 REDIRECT MIDDLEWARE: www.korus.me → api.korus.me (em caso de Static Site estar servindo)
+  // 🔄 REDIRECT MIDDLEWARE: www.korus.me → api.korus.me (apenas para /api e /uploads, não para SPA routes)
   app.use((req, res, next) => {
     const host = req.get('host') || '';
+    const path = req.path;
     
-    // Se requisição chegar em www.korus.me, redireciona para api.korus.me
-    if (host === 'www.korus.me' || host === 'korus.me') {
+    // Se requisição chegar em www.korus.me E for API/uploads, redireciona para api.korus.me
+    // Caso contrário, serve a SPA em www.korus.me
+    if ((host === 'www.korus.me' || host === 'korus.me') && (path.startsWith('/api') || path.startsWith('/uploads'))) {
       const newUrl = `https://api.korus.me${req.originalUrl}`;
-      console.log(`[REDIRECT] ${host}${req.originalUrl} → api.korus.me`);
+      console.log(`[REDIRECT API] ${host}${req.originalUrl} → api.korus.me`);
       return res.redirect(301, newUrl);
     }
     
@@ -4261,6 +4263,20 @@ async function startServer() {
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // SPA FALLBACK: Serve static files from dist/, then fallback to index.html for SPA routing
+  const distPath = path.join(__dirname, 'dist');
+  if (fs.existsSync(distPath)) {
+    console.log(`[BOOT] ✓ Servindo SPA from ${distPath}`);
+    app.use(express.static(distPath));
+    // Fallback para SPA routes: redireciona para index.html para que React Router funcione
+    app.get('*', (req, res) => {
+      // Não serve assets do SPA para rotas de API
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'Not Found' });
+      }
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);

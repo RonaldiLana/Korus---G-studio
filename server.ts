@@ -608,7 +608,7 @@ async function startServer() {
       if (!token) return res.status(400).json({ error: "Token inválido" });
 
       const result = await query(
-        `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at, p.agency_id,
+        `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at, p.agency_id, p.tracking_token,
                 d.name AS destination_name, d.flag AS destination_flag, d.image AS destination_image,
                 v.name AS visa_type_name,
                 pl.name AS plan_name, pl.price AS plan_price,
@@ -643,7 +643,44 @@ async function startServer() {
         console.warn("[TRACK PROCESS] Erro ao buscar documentos:", err.message);
       }
 
-      return res.json({ ...proc, documents });
+      // Buscar formulários vinculados ao processo
+      let forms: any[] = [];
+      try {
+        console.log("[TRACK PROCESS] Buscando formulários para process_id:", proc.id);
+        const formsResult = await query(
+          `SELECT pf.id AS pf_id, f.id AS form_id, f.title, f.fields, 
+                  fr.id AS response_id, fr.data AS response_data, fr.status AS response_status, fr.updated_at
+           FROM process_forms pf
+           JOIN forms f ON pf.form_id = f.id
+           LEFT JOIN form_responses fr ON fr.process_id = pf.process_id AND fr.form_id = pf.form_id
+           WHERE pf.process_id = $1
+           ORDER BY pf.assigned_at DESC`,
+          [proc.id]
+        );
+        console.log("[TRACK PROCESS] Formulários encontrados:", formsResult.rows.length);
+        forms = formsResult.rows.map((row: any) => {
+          try {
+            return {
+              pf_id: row.pf_id,
+              form_id: row.form_id,
+              title: row.title,
+              fields: row.fields ? JSON.parse(row.fields) : [],
+              response_id: row.response_id,
+              response_data: row.response_data ? JSON.parse(row.response_data) : {},
+              response_status: row.response_status || 'open',
+              updated_at: row.updated_at
+            };
+          } catch (parseErr: any) {
+            console.error("[TRACK PROCESS] Erro ao parsear formulário:", parseErr.message);
+            throw parseErr;
+          }
+        });
+      } catch (err: any) {
+        console.warn("[TRACK PROCESS] Erro ao buscar formulários:", err.message);
+      }
+
+      console.log("[TRACK PROCESS] Retornando resposta com forms:", forms.length);
+      return res.json({ ...proc, documents, forms });
     } catch (err: any) {
       console.error("[TRACK PROCESS]", err);
       return res.status(500).json({ error: err.message });
@@ -1652,6 +1689,59 @@ async function startServer() {
     } catch (e) {
       console.error('Error uploading document:', e);
       res.status(500).json({ error: "Failed to upload document" });
+    }
+  });
+
+  // POST /api/documents/track/:token — Cliente envia documentação via link de acompanhamento (sem auth)
+  app.post("/api/documents/track/:token", upload.single('file'), async (req, res) => {
+    try {
+      const { token } = req.params;
+      const { name } = req.body;
+      const file = req.file;
+
+      if (!token || !file || !name) {
+        return res.status(400).json({ error: "Token, arquivo e nome são obrigatórios" });
+      }
+
+      // Buscar processo pelo tracking token
+      const procResult = await query(
+        "SELECT id FROM processes WHERE tracking_token = $1",
+        [token]
+      );
+
+      if (procResult.rows.length === 0) {
+        return res.status(404).json({ error: "Processo não encontrado" });
+      }
+
+      const processId = procResult.rows[0].id;
+      const url = `${BACKEND_URL}/uploads/${file.filename}`;
+
+      // Verificar limite de 5 documentos (cliente pode enviar mais que agência)
+      const countResult = await query(
+        "SELECT COUNT(*) FROM documents WHERE process_id = $1",
+        [processId]
+      );
+      const docCount = parseInt(countResult.rows[0].count, 10);
+      if (docCount >= 5) {
+        return res.status(400).json({ error: "Limite de 5 documentos por processo atingido." });
+      }
+
+      // Inserir documento com status 'pending' (aguardando revisão da agência)
+      const result = await query(
+        "INSERT INTO documents (process_id, name, url, status) VALUES ($1, $2, $3, 'pending') RETURNING id, uploaded_at",
+        [processId, name, url]
+      );
+
+      return res.status(201).json({
+        id: result.rows[0].id,
+        url,
+        status: 'pending',
+        uploaded_at: result.rows[0].uploaded_at,
+        message: '✅ Documento enviado com sucesso! A agência irá revisar em breve.'
+      });
+    } catch (err: any) {
+      console.error("[DOCUMENT TRACK UPLOAD]", err);
+      return res.status(500).json({ error: err.message || "Erro ao enviar documento" });
     }
   });
   // Plans CRUD

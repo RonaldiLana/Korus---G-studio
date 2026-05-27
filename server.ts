@@ -4263,15 +4263,19 @@ async function startServer() {
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // SPA FALLBACK: Serve static files from dist/, then fallback to index.html for SPA routing
   // IMPORTANTE: Este middleware deve estar DEPOIS de todas as rotas de API
   const distPath = path.join(__dirname, 'dist');
   if (fs.existsSync(distPath)) {
     console.log(`[BOOT] ✓ Servindo SPA from ${distPath}`);
     app.use(express.static(distPath));
-    // Fallback para SPA routes: redireciona para index.html para que React Router funcione
-    // Este middleware só é executado se nenhuma rota anterior correspondeu
-    app.get('*', (req, res) => {
+    // Fallback para SPA routes: middleware que redireciona para index.html
+    app.use((req, res, next) => {
+      // Não serve para rotas de API (elas já foram processadas)
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'Not Found' });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

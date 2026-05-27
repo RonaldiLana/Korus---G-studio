@@ -4269,14 +4269,30 @@ async function startServer() {
   const distPath = path.join(__dirname, 'dist');
   if (fs.existsSync(distPath)) {
     console.log(`[BOOT] ✓ Servindo SPA from ${distPath}`);
-    app.use(express.static(distPath));
-    // Fallback para SPA routes: middleware que redireciona para index.html
+    // Serve arquivos estáticos com fallback para index.html para SPA routing
+    app.use(express.static(distPath, {
+      setHeaders: (res, path) => {
+        // Cache busting: arquivos JS/CSS não devem fazer cache agressivo
+        if (path.endsWith('.js') || path.endsWith('.css')) {
+          res.set('Cache-Control', 'no-cache');
+        }
+      }
+    }));
+    // Fallback para SPA routes: qualquer rota não-estática redireciona para index.html
+    // Assim React Router pode lidar com o roteamento
     app.use((req, res, next) => {
       // Não serve para rotas de API (elas já foram processadas)
       if (req.path.startsWith('/api')) {
         return res.status(404).json({ error: 'Not Found' });
       }
-      res.sendFile(path.join(distPath, 'index.html'));
+      // Rota SPA: servir index.html
+      const indexPath = path.join(distPath, 'index.html');
+      res.sendFile(indexPath, (err) => {
+        if (err) {
+          console.error(`[SPA FALLBACK ERROR] ${req.path}:`, err.message);
+          return res.status(500).json({ error: 'Internal Server Error' });
+        }
+      });
     });
   }
 

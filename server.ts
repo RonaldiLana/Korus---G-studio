@@ -4265,36 +4265,8 @@ async function startServer() {
   // ─────────────────────────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────────
   // SPA FALLBACK: Serve static files from dist/, then fallback to index.html for SPA routing
-  // IMPORTANTE: Este middleware deve estar DEPOIS de todas as rotas de API
-  const distPath = path.join(__dirname, 'dist');
-  if (fs.existsSync(distPath)) {
-    console.log(`[BOOT] ✓ Servindo SPA from ${distPath}`);
-    // Serve arquivos estáticos com fallback para index.html para SPA routing
-    app.use(express.static(distPath, {
-      setHeaders: (res, path) => {
-        // Cache busting: arquivos JS/CSS não devem fazer cache agressivo
-        if (path.endsWith('.js') || path.endsWith('.css')) {
-          res.set('Cache-Control', 'no-cache');
-        }
-      }
-    }));
-    // Fallback para SPA routes: qualquer rota não-estática redireciona para index.html
-    // Assim React Router pode lidar com o roteamento
-    app.use((req, res, next) => {
-      // Não serve para rotas de API (elas já foram processadas)
-      if (req.path.startsWith('/api')) {
-        return res.status(404).json({ error: 'Not Found' });
-      }
-      // Rota SPA: servir index.html
-      const indexPath = path.join(distPath, 'index.html');
-      res.sendFile(indexPath, (err) => {
-        if (err) {
-          console.error(`[SPA FALLBACK ERROR] ${req.path}:`, err.message);
-          return res.status(500).json({ error: 'Internal Server Error' });
-        }
-      });
-    });
-  }
+  // NOTE: SPA fallback is already handled at lines 3700-3737
+  // Não adicionar middleware duplicado aqui que pudesse interferir com as rotas de API
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[BOOT] ✓ Servidor rodando em http://localhost:${PORT}`);

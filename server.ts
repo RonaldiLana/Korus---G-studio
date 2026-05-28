@@ -3713,8 +3713,10 @@ async function startServer() {
 
   // SPA fallback: serve index.html for any non-API route (must be AFTER all route definitions)
   app.use((req, res, next) => {
+    console.log(`[MIDDLEWARE] Path: ${req.path}, Method: ${req.method}`);
     // Skip if it's an API route or already handled
     if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+      console.log(`[MIDDLEWARE] Pulando para próximo middleware: ${req.path}`);
       return next();
     }
     

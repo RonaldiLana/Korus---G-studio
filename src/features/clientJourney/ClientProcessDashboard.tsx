@@ -47,7 +47,7 @@ const getStepStatus = (process: Process, stepId: string) => {
 export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, processes }) => {
   const API_URL =
     import.meta.env.VITE_API_URL?.trim() ||
-    'https://korus-backend-a55k.onrender.com';
+    window.location.origin;
 
   // Garante que URLs relativas (/uploads/...) sejam resolvidas contra o backend
   const resolveFileUrl = (url: string | null | undefined): string => {

@@ -70,7 +70,7 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
   );
 
   const trackingLink = successData
-    ? `${window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
+    ? `${(import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
     : '';
 
   const checkEmail = async () => {

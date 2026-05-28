@@ -34,7 +34,7 @@ export const WhatsAppChatContainer: React.FC<WhatsAppChatContainerProps> = ({
     if (typeof window !== 'undefined') {
       const left = window.screenX + 1450; // Posiciona à direita do WhatsApp
       const top = window.screenY;
-      const publicBase = (import.meta.env.VITE_PUBLIC_URL as string | undefined) || window.location.origin;
+      const publicBase = (import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin;
       processPopupRef.current = window.open(
         `${publicBase}/processo-popup?agency=${agencyId}`,
         'KorusProcesso',

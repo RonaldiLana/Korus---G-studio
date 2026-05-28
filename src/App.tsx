@@ -7293,7 +7293,7 @@ export default function App() {
 
                   {/* Link de Acompanhamento — visível para consultores/supervisores/master/analista */}
                   {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (() => {
-                    const publicBase = (import.meta.env.VITE_PUBLIC_URL as string | undefined) || window.location.origin;
+                    const publicBase = (import.meta.env.VITE_API_URL as string | undefined) || window.location.origin;
                     const trackingUrl = `${publicBase}/acompanhamento/${selectedProcess.tracking_token}`;
                     return (
                       <div className="mt-6 pt-6 border-t border-[var(--border-color)]">

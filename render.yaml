@@ -9,8 +9,8 @@ services:
       - key: NODE_ENV
         value: production
       - key: VITE_API_URL
-        value: https://api.korus.me
+        value: https://korus.me
       - key: VITE_PUBLIC_URL
-        value: https://api.korus.me
+        value: https://korus.me
       - key: BACKEND_URL
-        value: https://api.korus.me
+        value: https://korus.me

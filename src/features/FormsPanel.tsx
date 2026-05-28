@@ -3,7 +3,7 @@ import { Plus, Trash2, Save, X, ClipboardList, ChevronDown, ChevronUp, Edit2, Ch
 import { motion, AnimatePresence } from 'motion/react';
 
 // const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
-const API_URL = import.meta.env.VITE_API_URL?.trim() || 'https://api.korus.me';
+const API_URL = import.meta.env.VITE_API_URL?.trim() || 'https://korus.me';
 
 async function apiRequest(url: string, options: RequestInit = {}) {
   const res = await fetch(url, options);

@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 
 // URL pública do backend — usada para gerar URLs absolutas de arquivos
 // const BACKEND_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
-const BACKEND_URL = (process.env.BACKEND_URL || 'https://api.korus.me').replace(/\/$/, '');
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://korus.me').replace(/\/$/, '');
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, "uploads");
@@ -325,16 +325,16 @@ async function startServer() {
 
   const app = express();
 
-  // 🔄 REDIRECT MIDDLEWARE: www.korus.me → api.korus.me (apenas para /api e /uploads, não para SPA routes)
+  // 🔄 REDIRECT MIDDLEWARE: www.korus.me → korus.me (apenas para /api e /uploads, não para SPA routes)
   app.use((req, res, next) => {
     const host = req.get('host') || '';
     const path = req.path;
     
-    // Se requisição chegar em www.korus.me E for API/uploads, redireciona para api.korus.me
+    // Se requisição chegar em www.korus.me E for API/uploads, redireciona para korus.me
     // Caso contrário, serve a SPA em www.korus.me
-    if ((host === 'www.korus.me' || host === 'korus.me') && (path.startsWith('/api') || path.startsWith('/uploads'))) {
-      const newUrl = `https://api.korus.me${req.originalUrl}`;
-      console.log(`[REDIRECT API] ${host}${req.originalUrl} → api.korus.me`);
+    if ((host === 'www.korus.me') && (path.startsWith('/api') || path.startsWith('/uploads'))) {
+      const newUrl = `https://korus.me${req.originalUrl}`;
+      console.log(`[REDIRECT API] ${host}${req.originalUrl} → korus.me`);
       return res.redirect(301, newUrl);
     }
     

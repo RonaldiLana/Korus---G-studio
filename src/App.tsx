@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { fixLegacyUrl } from './utils';
 // ===================== INTEGRAÇÃO API =====================
 // const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
 const API_URL =
@@ -7294,7 +7295,9 @@ export default function App() {
                   {/* Link de Acompanhamento — visível para consultores/supervisores/master/analista */}
                   {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (() => {
                     const publicBase = (import.meta.env.VITE_API_URL as string | undefined) || window.location.origin;
-                    const trackingUrl = `${publicBase}/acompanhamento/${selectedProcess.tracking_token}`;
+                    let trackingUrl = `${publicBase}/acompanhamento/${selectedProcess.tracking_token}`;
+                    // Corrige domínios antigos armazenados no banco de dados
+                    trackingUrl = fixLegacyUrl(trackingUrl);
                     return (
                       <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
                         <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3 flex items-center gap-1.5">

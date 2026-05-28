@@ -2,6 +2,7 @@ import React from 'react';
 import { X, UserPlus, AlertTriangle, Copy, CheckCircle2, Link } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Destination, VisaType, Plan } from '../../types';
+import { fixLegacyUrl } from '../../utils';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -70,7 +71,9 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
   );
 
   const trackingLink = successData
-    ? `${(import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
+    ? fixLegacyUrl(
+        `${(import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
+      )
     : '';
 
   const checkEmail = async () => {

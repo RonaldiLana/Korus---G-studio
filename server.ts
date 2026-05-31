@@ -3710,6 +3710,10 @@ async function startServer() {
     const distPath = path.join(__dirname, "dist");
     const indexPath = path.join(distPath, "index.html");
     
+    console.log(`[SPA CONFIG] distPath: ${distPath}`);
+    console.log(`[SPA CONFIG] indexPath: ${indexPath}`);
+    console.log(`[SPA CONFIG] index.html exists: ${fs.existsSync(indexPath)}`);
+    
     // Serve static files (CSS, JS, images, etc.)
     app.use(express.static(distPath, { maxAge: '1d' }));
     
@@ -3719,15 +3723,21 @@ async function startServer() {
       
       // Skip if it's an API route or file upload
       if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+        console.log(`[SPA FALLBACK] Skipping API/uploads route`);
         return next();
       }
       
       // For all other routes (including /acompanhamento/*), serve index.html
       console.log(`[SPA FALLBACK] Servindo index.html para: ${req.path}`);
+      if (!fs.existsSync(indexPath)) {
+        console.error(`[SPA FALLBACK ERROR] index.html not found at: ${indexPath}`);
+        return res.status(404).json({ error: "index.html not found" });
+      }
+      
       res.sendFile(indexPath, (err: any) => {
         if (err) {
           console.error("[SPA FALLBACK ERROR]", err.message);
-          res.status(404).json({ error: "Not found" });
+          res.status(500).json({ error: err.message });
         }
       });
     });

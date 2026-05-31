@@ -11,6 +11,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    outDir: 'dist',
+    // Ensure public files are copied to dist
+    copyPublicDir: true,
+  },
   server: {
     port: 3000,
     host: '0.0.0.0',

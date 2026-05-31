@@ -3706,41 +3706,31 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production: SPA fallback FIRST, then static files
-    // This ensures /acompanhamento/* and other SPA routes are served by index.html
+    // In production: serve static files AND SPA fallback
+    const distPath = path.join(__dirname, "dist");
+    const indexPath = path.join(distPath, "index.html");
     
-    // SPA fallback: serve index.html for any non-API route
+    // Serve static files (CSS, JS, images, etc.)
+    app.use(express.static(distPath, { maxAge: '1d' }));
+    
+    // SPA fallback: serve index.html for any non-API/non-static route
     app.use((req, res, next) => {
-      console.log(`[MIDDLEWARE] Path: ${req.path}, Method: ${req.method}`);
+      console.log(`[SPA FALLBACK] Path: ${req.path}`);
+      
       // Skip if it's an API route or file upload
       if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
-        console.log(`[MIDDLEWARE] Pulando SPA fallback: ${req.path}`);
         return next();
       }
       
-      // Check if file exists in dist first
-      const distPath = path.join(__dirname, "dist");
-      const filePath = path.join(distPath, req.path);
-      
-      // If it looks like a static file (has extension), try to serve it
-      if (req.path.includes('.')) {
-        return next();
-      }
-      
-      // For SPA routes (no file extension), serve index.html
-      const indexPath = path.join(distPath, "index.html");
+      // For all other routes (including /acompanhamento/*), serve index.html
       console.log(`[SPA FALLBACK] Servindo index.html para: ${req.path}`);
-      return res.sendFile(indexPath, (err: any) => {
+      res.sendFile(indexPath, (err: any) => {
         if (err) {
           console.error("[SPA FALLBACK ERROR]", err.message);
           res.status(404).json({ error: "Not found" });
         }
       });
     });
-    
-    // Then serve static files
-    const distPath = path.join(__dirname, "dist");
-    app.use(express.static(distPath, { maxAge: '1d' }));
   }
 
   // Handler de erros do multer (tamanho/tipo de arquivo)

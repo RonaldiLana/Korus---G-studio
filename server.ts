@@ -3706,35 +3706,42 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production: serve dist folder with static files
-    const distPath = path.join(__dirname, "dist");
-    app.use(express.static(distPath, { maxAge: '1d' }));
-  }
-
-  // SPA fallback: serve index.html for any non-API route (must be AFTER all route definitions)
-  app.use((req, res, next) => {
-    console.log(`[MIDDLEWARE] Path: ${req.path}, Method: ${req.method}`);
-    // Skip if it's an API route or already handled
-    if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
-      console.log(`[MIDDLEWARE] Pulando para próximo middleware: ${req.path}`);
-      return next();
-    }
+    // In production: SPA fallback FIRST, then static files
+    // This ensures /acompanhamento/* and other SPA routes are served by index.html
     
-    // For SPA routes in production, serve index.html
-    if (process.env.NODE_ENV === "production") {
+    // SPA fallback: serve index.html for any non-API route
+    app.use((req, res, next) => {
+      console.log(`[MIDDLEWARE] Path: ${req.path}, Method: ${req.method}`);
+      // Skip if it's an API route or file upload
+      if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+        console.log(`[MIDDLEWARE] Pulando SPA fallback: ${req.path}`);
+        return next();
+      }
+      
+      // Check if file exists in dist first
       const distPath = path.join(__dirname, "dist");
+      const filePath = path.join(distPath, req.path);
+      
+      // If it looks like a static file (has extension), try to serve it
+      if (req.path.includes('.')) {
+        return next();
+      }
+      
+      // For SPA routes (no file extension), serve index.html
       const indexPath = path.join(distPath, "index.html");
+      console.log(`[SPA FALLBACK] Servindo index.html para: ${req.path}`);
       return res.sendFile(indexPath, (err: any) => {
         if (err) {
-          console.error("[SPA FALLBACK]", err.message);
+          console.error("[SPA FALLBACK ERROR]", err.message);
           res.status(404).json({ error: "Not found" });
         }
       });
-    }
+    });
     
-    // In development, let Vite handle it
-    next();
-  });
+    // Then serve static files
+    const distPath = path.join(__dirname, "dist");
+    app.use(express.static(distPath, { maxAge: '1d' }));
+  }
 
   // Handler de erros do multer (tamanho/tipo de arquivo)
   app.use((err: any, _req: any, res: any, next: any) => {

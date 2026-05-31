@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 
 // URL pública do backend — usada para gerar URLs absolutas de arquivos
 // const BACKEND_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
-const BACKEND_URL = (process.env.BACKEND_URL || 'https://korus.me').replace(/\/$/, '');
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://api.korus.me').replace(/\/$/, '');
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, "uploads");

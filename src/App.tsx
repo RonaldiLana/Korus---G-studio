@@ -2,9 +2,12 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { fixLegacyUrl } from './utils';
 // ===================== INTEGRAÇÃO API =====================
 // const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
+// Use runtime detection: if served from api.korus.me, use that; otherwise use VITE_API_URL or fallback
 const API_URL =
   import.meta.env.VITE_API_URL?.trim() ||
-  'https://korus.me';
+  (typeof window !== 'undefined' && window.location.hostname.includes('api.korus.me')
+    ? 'https://api.korus.me'
+    : 'https://api.korus.me');
 
 // Resolve URLs relativas (/uploads/...) contra o backend
 const resolveFileUrl = (url: string | null | undefined): string => {

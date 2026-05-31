@@ -2,7 +2,12 @@ import React from 'react';
 import { MapPin, FileText, Download, Clock, CheckCircle2, AlertCircle, Save, Upload, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+// Use runtime detection: if served from api.korus.me, use that; otherwise use VITE_API_URL
+const API_URL =
+  import.meta.env.VITE_API_URL?.trim() ||
+  (typeof window !== 'undefined' && window.location.hostname.includes('api.korus.me')
+    ? 'https://api.korus.me'
+    : 'https://api.korus.me');
 
 interface FormField {
   id: string;

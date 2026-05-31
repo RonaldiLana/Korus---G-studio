@@ -360,7 +360,30 @@ async function startServer() {
 
   app.use(express.json());
   app.use(cors());
-  app.use("/uploads", express.static(uploadsDir));
+  
+  // Debug: Log uploads directory configuration
+  console.log(`[UPLOADS] Directory: ${uploadsDir}`);
+  console.log(`[UPLOADS] Exists: ${fs.existsSync(uploadsDir)}`);
+  console.log(`[UPLOADS] Is Directory: ${fs.existsSync(uploadsDir) ? fs.statSync(uploadsDir).isDirectory() : false}`);
+  
+  // Middleware para servir arquivos de upload
+  app.use("/uploads", (req, res, next) => {
+    const fullPath = path.join(uploadsDir, req.path);
+    console.log(`[UPLOADS] GET ${req.path}`);
+    console.log(`[UPLOADS] Full path: ${fullPath}`);
+    console.log(`[UPLOADS] File exists: ${fs.existsSync(fullPath)}`);
+    next();
+  });
+  app.use("/uploads", express.static(uploadsDir, { 
+    maxAge: '1d',
+    etag: false
+  }));
+  
+  // 404 handler para arquivos não encontrados em /uploads
+  app.use('/uploads', (req, res) => {
+    console.log(`[UPLOADS 404] File not found: ${req.path}`);
+    res.status(404).json({ error: 'Arquivo não encontrado' });
+  });
 
   app.use((req, _res, next) => {
     if (req.url.startsWith('/xapi/')) {
@@ -3719,11 +3742,8 @@ async function startServer() {
     
     // SPA fallback: serve index.html for any non-API/non-static route
     app.use((req, res, next) => {
-      console.log(`[SPA FALLBACK] Path: ${req.path}`);
-      
-      // Skip if it's an API route or file upload
+      // Skip if it's an API route, uploads, or a file that exists
       if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
-        console.log(`[SPA FALLBACK] Skipping API/uploads route`);
         return next();
       }
       

@@ -72,7 +72,7 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
 
   const trackingLink = successData
     ? fixLegacyUrl(
-        `${(import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
+        `https://api.korus.me/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
       )
     : '';
 
@@ -198,7 +198,7 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
                     <Link size={10} /> Link de Acompanhamento
                   </p>
                   <div className="flex items-center gap-2">
-                    <p className="flex-1 text-xs text-emerald-400 font-bold break-all">{trackingLink}</p>
+                    <a href={trackingLink} target="_blank" rel="noopener noreferrer" className="flex-1 text-xs text-emerald-400 font-bold break-all hover:text-emerald-300 transition-colors underline">{trackingLink}</a>
                     <button
                       onClick={copyLink}
                       className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black transition-all ${copied ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}

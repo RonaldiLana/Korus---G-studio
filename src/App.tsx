@@ -7297,8 +7297,7 @@ export default function App() {
 
                   {/* Link de Acompanhamento — visível para consultores/supervisores/master/analista */}
                   {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (() => {
-                    const publicBase = (import.meta.env.VITE_API_URL as string | undefined) || window.location.origin;
-                    let trackingUrl = `${publicBase}/acompanhamento/${selectedProcess.tracking_token}`;
+                    let trackingUrl = `https://api.korus.me/acompanhamento/${selectedProcess.tracking_token}`;
                     // Corrige domínios antigos armazenados no banco de dados
                     trackingUrl = fixLegacyUrl(trackingUrl);
                     return (
@@ -7307,7 +7306,7 @@ export default function App() {
                           <LinkIcon size={10} /> Link de Acompanhamento do Cliente
                         </p>
                         <div className="flex items-center gap-2 p-3 bg-[var(--bg-input)]/60 border border-[var(--border-color)] rounded-2xl">
-                          <p className="flex-1 text-xs text-emerald-400 font-bold break-all">{trackingUrl}</p>
+                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="flex-1 text-xs text-emerald-400 font-bold break-all hover:text-emerald-300 transition-colors underline cursor-pointer">{trackingUrl}</a>
                           <button
                             onClick={() => {
                               navigator.clipboard.writeText(trackingUrl);

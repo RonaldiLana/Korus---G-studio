@@ -62,7 +62,7 @@ export const WhatsAppProcessSidebar: React.FC<WhatsAppProcessSidebarProps> = ({
 
   const trackingLink = successData
     ? fixLegacyUrl(
-        `${(import.meta.env.VITE_API_URL as string | undefined)?.trim() || window.location.origin}/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
+        `https://api.korus.me/acompanhamento/${successData.trackingUrl.replace('/acompanhamento/', '')}`
       )
     : '';
 
@@ -193,12 +193,15 @@ export const WhatsAppProcessSidebar: React.FC<WhatsAppProcessSidebarProps> = ({
                   Link de Acompanhamento
                 </p>
                 <div className="flex items-center gap-2 bg-[var(--bg-input)] rounded-xl px-4 py-3 border border-[var(--border-color)]">
-                  <input
-                    type="text"
-                    readOnly
-                    value={trackingLink}
-                    className="flex-1 bg-transparent text-sm text-[var(--text-main)] outline-none overflow-hidden text-ellipsis"
-                  />
+                  <a
+                    href={trackingLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 bg-transparent text-sm text-emerald-400 outline-none overflow-hidden text-ellipsis hover:text-emerald-300 transition-colors underline cursor-pointer"
+                    title="Abrir link de rastreamento"
+                  >
+                    {trackingLink}
+                  </a>
                   <button
                     onClick={copyLink}
                     className="flex-shrink-0 p-2 hover:bg-[var(--border-color)] rounded-lg transition-colors"

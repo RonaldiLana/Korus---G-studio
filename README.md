@@ -4,7 +4,11 @@
 
 Este projeto foi migrado de SQLite para PostgreSQL para suporte a produção no Render.
 
+<<<<<<< HEAD
 <!-- Backup 31/05/2026 -->
+=======
+<!-- Force deploy at 2026-06-01 -->
+>>>>>>> 13bae05a2bdcfa21113737acba4b85bd073389a4
 
 ### Configuração
 

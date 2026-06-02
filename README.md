@@ -4,6 +4,8 @@
 
 Este projeto foi migrado de SQLite para PostgreSQL para suporte a produção no Render.
 
+<!-- Backup 31/05/2026 -->
+
 ### Configuração
 
 1. Copie o arquivo `.env.example` para `.env`:

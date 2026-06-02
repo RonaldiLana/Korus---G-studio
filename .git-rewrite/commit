@@ -1,0 +1,54 @@
+tree c810c410a339b12d19d11f0631d1613710c056fc
+parent 0ad29fdc0036e7e2f79c096e4adde5849b40caca
+author thiagooliiveira <ronaldbuiu@live.com> 1775703475 -0300
+committer thiagooliiveira <ronaldbuiu@live.com> 1775703475 -0300
+
+fix: Corrigir raiz do problema - API_URL vazia e fetches com undefined
+
+PROBLEMA DIAGNOSTICADO:
+- API_URL vazio no bundle publicado → URLs relativas /api/...
+- Fetches disparando antes do user estar pronto → undefined em role/user_id/agency_id
+- useEffect rodando com dependency array impreciso
+
+SOLUÇÃO IMPLEMENTADA:
+
+1. App.tsx - Console.log debug:
+   ✅ console.log('[BUILD] API_URL =', API_URL) na linha 364
+   ✅ Ajuda identificar se VITE_API_URL está setado no ambiente
+
+2. App.tsx - fetchProcesses (linhas 881-911):
+   ✅ Early return se !user?.id || !user?.role
+   ✅ Verificação se non-master precisa de agency_id válido
+   ✅ encodeURIComponent() em valores de query para evitar undefined
+   ✅ Log de debug do URL construído
+
+3. App.tsx - fetchExpenses (linhas 913-930):
+   ✅ Early return se !user?.id
+   ✅ Non-master exige agency_id válido
+   ✅ encodeURIComponent() em values
+   ✅ Logs descritivos
+
+4. App.tsx - fetchRevenues (linhas 932-949):
+   ✅ Mesmo padrão de proteção que fetchExpenses
+
+5. App.tsx - useEffect (linhas 1615-1657):
+   ✅ Mudança de dependency array:
+      - DE: [user, view, isFinanceModuleEnabled]
+      - PARA: [user?.id, user?.role, view, isFinanceModuleEnabled]
+   ✅ Só executa quando user?.id E user?.role existem
+   ✅ Adicionado check explícito e log no início
+
+6. ClientJourneyFlow.tsx (linha 49):
+   ✅ console.log debug para API_URL
+   ✅ Verificar se user data está válido
+
+7. ClientProcessDashboard.tsx (linha 42):
+   ✅ console.log debug para API_URL
+
+RESULTADO:
+✅ 0 URLs com role=undefined
+✅ 0 URLs com user_id=undefined
+✅ 0 URLs com agency_id=undefined
+✅ npm run build: PASSED
+✅ Bundle compilado: index-CbrL2OBa.js (23:56:57)
+✅ Console.log ajuda debugar API_URL no frontend publicado

@@ -1,34 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { fixLegacyUrl } from './utils';
-// ===================== INTEGRAÇÃO API =====================
-// const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
-// Use runtime detection: if served from api.korus.me, use that; otherwise use VITE_API_URL or fallback
-const API_URL =
-  import.meta.env.VITE_API_URL?.trim() ||
-  (typeof window !== 'undefined' && window.location.hostname.includes('api.korus.me')
-    ? 'https://api.korus.me'
-    : 'https://api.korus.me');
-
-// Always use production API URL to avoid localhost redirect issues
-// Resolve URLs relativas (/uploads/...) contra o backend
-const resolveFileUrl = (url: string | null | undefined): string => {
-  if (!url) return '';
-  if (url.startsWith('http')) return url;
-  return `https://api.korus.me${url}`;
-};
-
-/**
- * Helper global para requisições API
- */
-async function apiRequest(url: string, options: RequestInit = {}) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const text = await res.text();
-    console.error('API error:', text);
-    throw new Error(text);
-  }
-  return res.json();
-}
+import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   Contact,
@@ -65,63 +35,149 @@ import {
   Settings,
   Target,
   Key,
-  Trello,
-  X,
-  Menu,
-  Mail,
-  Send,
-  ArrowLeft,
-  Smartphone
+  Trello
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 import { PipefyPanel } from './features/PipefyPanel';
-import { FormsPanel } from './features/FormsPanel';
-import { CRMPanel } from './features/crm/CRMPanel';
-import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
-import { WhatsAppPanel } from './features/whatsapp/WhatsAppPanel';
-import { SimplifiedProcessModal } from './features/simplifiedProcess/SimplifiedProcessModal';
-import { ClientTrackingPage } from './features/simplifiedProcess/ClientTrackingPage';
-import { ProcessPopupPage } from './features/simplifiedProcess/ProcessPopupPage';
-import { ClientsRegistryPanel } from './features/clientsRegistry/ClientsRegistryPanel';
+
+// Korus Logo Component
+const KorusLogo = ({ size = 40, className = "" }: { size?: number, className?: string }) => (
+  <div className={`relative flex items-center justify-center ${className}`} style={{ width: size, height: size }}>
+    <svg viewBox="0 0 100 100" className="w-full h-full">
+      <defs>
+        <linearGradient id="korusGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#00ff88" />
+          <stop offset="100%" stopColor="#00d4ff" />
+        </linearGradient>
+      </defs>
+      <path 
+        d="M50 5 L15 20 V45 C15 70 50 95 50 95 C50 95 85 70 85 45 V20 L50 5Z" 
+        fill="none" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="4"
+      />
+      <ellipse 
+        cx="50" cy="55" rx="45" ry="15" 
+        fill="none" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="2" 
+        transform="rotate(-15 50 55)"
+        strokeDasharray="4 2"
+      />
+      <path 
+        d="M40 30 V70 M40 50 L60 30 M40 50 L60 70" 
+        stroke="url(#korusGradient)" 
+        strokeWidth="6" 
+        strokeLinecap="round" 
+        strokeLinejoin="round"
+      />
+      <path 
+        d="M75 50 C75 45 80 40 85 40 C90 40 95 45 95 50 C95 55 85 65 85 65 C85 65 75 55 75 50Z" 
+        fill="url(#korusGradient)"
+      />
+    </svg>
+  </div>
+);
+
+// ============================================================================
+// PERMISSION & AUTHORIZATION UTILITIES
+// ============================================================================
 
 /**
- * Check if user is consultant, supervisor, or master
+ * Parse agency modules from JSON string
  */
-const isConsultantSupervisorOrMaster = (user?: User | null): boolean => {
-  if (!user) return false;
-  const role = user.role;
-  return role === 'consultant' || role === 'supervisor' || role === 'master';
+const parseAgencyModules = (modulesString?: string): { finance: boolean; chat: boolean; pipefy: boolean } => {
+  if (!modulesString) return { finance: true, chat: true, pipefy: true };
+  try {
+    return JSON.parse(modulesString);
+  } catch {
+    return { finance: true, chat: true, pipefy: true };
+  }
 };
 
 /**
- * Check if user is a client
+ * Check if user is master
  */
-const isClient = (user?: User | null): boolean => {
+const isMaster = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Check if user has admin access (master or supervisor)
+ */
+const hasAdminAccess = (user?: User | null): boolean => {
+  return user?.role === 'master' || user?.role === 'supervisor';
+};
+
+/**
+ * Check if user can manage agencies (only master)
+ */
+const canManageAgencies = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Check if user has global data access (master has access to all, others limited to their agency)
+ */
+const canAccessGlobalData = (user?: User | null): boolean => {
+  return user?.role === 'master';
+};
+
+/**
+ * Get effective agency ID - master can view/manage all, others limited to theirs
+ */
+const getEffectiveAgencyId = (user?: User | null, viewAgencyId?: number | null): number | null | undefined => {
+  // Master has no agency restriction
+  if (isMaster(user)) return undefined;
+  // Use provided view context or user's agency
+  return viewAgencyId || user?.agency_id;
+};
+
+/**
+ * Check if user can access finances module
+ */
+const canAccessFinanceModule = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'client';
+  if (isMaster(user)) return true;
+  if (user.role === 'supervisor' || user.role === 'gerente_financeiro') return true;
+  const modules = parseAgencyModules(user.agency_modules);
+  return modules.finance || false;
+};
+
+/**
+ * Check if user can access pipefy module
+ */
+const canAccessPipefyModule = (user?: User | null): boolean => {
+  if (!user) return false;
+  if (isMaster(user)) return true;
+  if (user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst') {
+    const modules = parseAgencyModules(user.agency_modules);
+    return modules.pipefy || false;
+  }
+  return false;
 };
 
 /**
  * Check if user can view/edit audit logs (only master)
  */
 const canViewAudit = (user?: User | null): boolean => {
-  return (user?.role === 'master');
+  return isMaster(user);
 };
 
 /**
  * Check if user can view/edit global settings (only master)
  */
 const canViewSettings = (user?: User | null): boolean => {
-  return (user?.role === 'master');
+  return isMaster(user);
 };
 
 /**
  * Check if user can view agencies panel (master or supervisor)
  */
 const canViewAgenciesPanel = (user?: User | null): boolean => {
-  return (user?.role === 'master') || user?.role === 'supervisor';
+  return isMaster(user) || user?.role === 'supervisor';
 };
 
 /**
@@ -129,7 +185,7 @@ const canViewAgenciesPanel = (user?: User | null): boolean => {
  */
 const canEditProcess = (user?: User | null, processStatus?: string): boolean => {
   if (!user || processStatus === 'completed') return false;
-  return user.role === 'consultant' || (user?.role === 'master' || user?.role === 'supervisor');
+  return user.role === 'consultant' || hasAdminAccess(user);
 };
 
 /**
@@ -137,75 +193,12 @@ const canEditProcess = (user?: User | null, processStatus?: string): boolean => 
  */
 const canViewProcessFinancial = (user?: User | null): boolean => {
   if (!user) return false;
-  return user.role === 'consultant' || (user?.role === 'master' || user?.role === 'supervisor');
-};
-
-/**
- * Determine recommended view based on user role
- */
-const getRecommendedInitialView = (user?: User | null): 'dashboard' | 'agencies' | 'settings' | 'clients' => {
-  if (!user) return 'dashboard';
-  
-  if ((user?.role === 'master')) {
-    return 'agencies'; // Master starts at agencies management
-  }
-  
-  const role = user.role;
-  if (role === 'supervisor' || role === 'gerente_financeiro') {
-    return 'clients'; // Supervisors start at client/process list
-  }
-  
-  return 'dashboard'; // Default for others
+  return user.role === 'consultant' || hasAdminAccess(user);
 };
 
 // ============================================================================
 // COMPONENTS
 // ============================================================================
-
-const KorusLogo = ({ size = 32 }: { size?: number }) => (
-  <div style={{ width: size, height: size }} className="flex items-center justify-center">
-    <svg viewBox="0 0 200 220" fill="none" xmlns="http://www.w3.org/2000/svg" width={size} height={size}>
-      <defs>
-        <linearGradient id="korusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#10b981" />
-          <stop offset="50%" stopColor="#06b6d4" />
-          <stop offset="100%" stopColor="#22d3ee" />
-        </linearGradient>
-        <linearGradient id="korusGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#22c55e" />
-          <stop offset="100%" stopColor="#10b981" />
-        </linearGradient>
-      </defs>
-      {/* Shield outer */}
-      <path d="M100 10 L175 45 C175 45 180 130 100 195 C20 130 25 45 25 45 Z" stroke="url(#korusGrad)" strokeWidth="6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-      {/* Shield inner accent */}
-      <path d="M100 30 L158 58 C158 58 162 125 100 178 C38 125 42 58 42 58 Z" stroke="url(#korusGrad2)" strokeWidth="3" fill="none" opacity="0.5" strokeLinecap="round" strokeLinejoin="round"/>
-      {/* Letter K */}
-      <path d="M78 75 L78 145 M78 110 L122 75 M78 110 L122 145" stroke="url(#korusGrad)" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-      {/* Location pin */}
-      <circle cx="152" cy="158" r="8" stroke="url(#korusGrad2)" strokeWidth="3" fill="none"/>
-      <circle cx="152" cy="158" r="3" fill="url(#korusGrad2)"/>
-      <path d="M152 166 L152 180" stroke="url(#korusGrad2)" strokeWidth="3" strokeLinecap="round"/>
-      {/* Orbit arc */}
-      <path d="M60 185 Q100 205 152 175" stroke="url(#korusGrad2)" strokeWidth="3" fill="none" strokeLinecap="round"/>
-    </svg>
-  </div>
-);
-
-const canAccessPipefyModule = (user?: User | null): boolean => {
-  if (!user) return false;
-  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
-};
-
-const canAccessCRMModule = (user?: User | null): boolean => {
-  if (!user) return false;
-  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
-};
-
-const canAccessWhatsAppModule = (user?: User | null): boolean => {
-  if (!user) return false;
-  return user.role !== 'client';
-};
 
 // Components
 const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
@@ -317,109 +310,17 @@ type ConfirmDialogState = {
   onConfirm: (() => Promise<void> | void) | null;
 };
 
-// Helper para formatação de valores em BRL
-const formatCurrency = (value: number | string): string => {
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  return (isNaN(num) ? 0 : num).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL'
-  });
-};
-
-// Helper para resolver URLs de logo (relativas -> absolutas)
-const resolveLogoUrl = (url: string | null | undefined): string => {
-  if (!url || !url.trim()) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${API_URL}${url}`;
-};
-
 export default function App() {
-  const lazyLoadTrackerRef = useRef<Record<string, boolean>>({});
-
-  const clearInvalidAuthData = () => {
-    localStorage.removeItem('korus-token');
-    localStorage.removeItem('korus-user');
-    setToken(null);
-    setUser(null);
-  };
-
-  /**
-   * Restore session from localStorage on app start
-   */
-  const restoreSession = () => {
-    try {
-      const storedToken = localStorage.getItem('korus-token');
-      const storedUserRaw = localStorage.getItem('korus-user');
-
-      if (!storedUserRaw) {
-        console.log('[AUTH] No stored session found');
-        clearInvalidAuthData();
-        return;
-      }
-
-      const parsedUser = JSON.parse(storedUserRaw);
-
-      if (!(parsedUser?.id && parsedUser?.role)) {
-        console.error('[AUTH] Stored user is invalid:', parsedUser);
-        clearInvalidAuthData();
-        return;
-      }
-
-      const normalizedUser: User = {
-        ...parsedUser,
-        role: parsedUser.role,
-      } as User;
-
-      if (!(normalizedUser.role === 'master') && !normalizedUser.agency_id) {
-        console.error('[AUTH] Non-master user missing agency_id:', normalizedUser);
-        clearInvalidAuthData();
-        return;
-      }
-
-      if (storedToken && storedToken.trim().length > 0) {
-        console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role, 'token:', storedToken.substring(0, 10) + '...');
-      } else {
-        console.log('[AUTH] Session restored without token:', normalizedUser.email, normalizedUser.role);
-      }
-      setToken(storedToken || null);
-      setUser(normalizedUser);
-      // Inicializa agencyModules imediatamente da sessão salva (evita flash com defaults)
-      if (normalizedUser.agency_modules && normalizedUser.role !== 'master') {
-        try {
-          const m = typeof normalizedUser.agency_modules === 'string'
-            ? JSON.parse(normalizedUser.agency_modules)
-            : normalizedUser.agency_modules;
-          setAgencyModules({
-            finance: m.finance !== false,
-            chat: m.chat !== false,
-            pipefy: m.pipefy !== false,
-            leads: m.leads !== false,
-            crm: m.crm !== false,
-            whatsapp: m.whatsapp === true,
-            simplified_process: m.simplified_process === true,
-            clients: m.clients === true,
-          });
-        } catch {}
-      }
-      const recommendedView = getRecommendedInitialView(normalizedUser);
-      setView(recommendedView);
-    } catch (error) {
-      console.error('[AUTH] Error restoring session:', error);
-      clearInvalidAuthData();
-    }
-  };
-
+  const API_URL = import.meta.env.VITE_API_URL || '';
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [leads, setLeads] = useState<ClientOverview[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
   const [clientResetHistory, setClientResetHistory] = useState<any[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isProcessingAgency, setIsProcessingAgency] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('korus-theme') as 'dark' | 'light';
@@ -427,48 +328,6 @@ export default function App() {
       setTheme(savedTheme);
       document.documentElement.classList.toggle('light', savedTheme === 'light');
     }
-  }, []);
-
-  /**
-   * Restore session on app initialization
-   */
-  useEffect(() => {
-    restoreSession();
-  }, []);
-
-  /**
-   * 🔄 Sincronize view com URL pathname
-   */
-  useEffect(() => {
-    const pathname = window.location.pathname;
-    
-    // Mapeia pathname para view
-    const pathToViewMap: Record<string, typeof view> = {
-      '/dashboard': 'dashboard',
-      '/clients': 'clients',
-      '/agencies': 'agencies',
-      '/finance': 'finance',
-      '/audit': 'audit',
-      '/settings': 'settings',
-      '/leads': 'leads',
-      '/team': 'team',
-      '/pipefy': 'pipefy',
-      '/forms': 'forms',
-      '/crm': 'crm',
-      '/whatsapp': 'whatsapp',
-      '/client_registry': 'client_registry',
-    };
-
-    for (const [path, viewName] of Object.entries(pathToViewMap)) {
-      if (pathname === path || pathname.startsWith(path + '/')) {
-        console.log(`[ROUTE] ${pathname} => view: ${viewName}`);
-        setView(viewName as any);
-        return;
-      }
-    }
-
-    // Se nenhuma rota corresponder, volta para dashboard
-    setView('dashboard');
   }, []);
 
   const toggleTheme = () => {
@@ -479,16 +338,7 @@ export default function App() {
   };
   const [visaTypes, setVisaTypes] = useState<VisaType[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [processNotifications, setProcessNotifications] = useState<any[]>([]);
-  const [crmNotifications, setCrmNotifications] = useState<CrmNotification[]>([]);
   const [selectedProcess, setSelectedProcess] = useState<any>(null);
-  const [clientsSearchTerm, setClientsSearchTerm] = useState('');
-  const [clientsProcessSearchTerm, setClientsProcessSearchTerm] = useState('');
-  const [showClientsFilters, setShowClientsFilters] = useState(false);
-  const [clientsProcessStatusFilter, setClientsProcessStatusFilter] = useState('');
-  const [clientsProcessInternalStatusFilter, setClientsProcessInternalStatusFilter] = useState('');
-  const [clientsProcessConsultantFilter, setClientsProcessConsultantFilter] = useState('');
-  const [clientsProcessPaymentFilter, setClientsProcessPaymentFilter] = useState('');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [showDestinationModal, setShowDestinationModal] = useState(false);
   const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
@@ -529,245 +379,82 @@ export default function App() {
     destination_id: null as number | null
   });
 
-  const clientsProcessConsultantOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (Array.isArray(processes) ? processes : [])
-            .map((p) => p?.consultant_name)
-            .filter(Boolean)
-        )
-      ) as string[],
-    [processes]
-  );
-
-  const clientsProcessInternalStatusOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (Array.isArray(processes) ? processes : [])
-            .map((p) => p?.internal_status)
-            .filter(Boolean)
-        )
-      ) as string[],
-    [processes]
-  );
-
-  const filteredClientProcesses = useMemo(() => {
-    const source = Array.isArray(processes) ? processes : [];
-    const term = clientsProcessSearchTerm.trim().toLowerCase();
-
-    return source.filter((process) => {
-      const matchSearch =
-        !term ||
-        (process?.client_name || '').toLowerCase().includes(term) ||
-        (process?.visa_name || '').toLowerCase().includes(term) ||
-        (process?.consultant_name || '').toLowerCase().includes(term) ||
-        (process?.internal_status || '').toLowerCase().includes(term) ||
-        String(process?.id || '').includes(term);
-
-      const matchStatus = !clientsProcessStatusFilter || process?.status === clientsProcessStatusFilter;
-      const matchInternalStatus =
-        !clientsProcessInternalStatusFilter || process?.internal_status === clientsProcessInternalStatusFilter;
-      const matchConsultant =
-        !clientsProcessConsultantFilter || process?.consultant_name === clientsProcessConsultantFilter;
-      const matchPayment = !clientsProcessPaymentFilter || process?.payment_status === clientsProcessPaymentFilter;
-
-      return matchSearch && matchStatus && matchInternalStatus && matchConsultant && matchPayment;
-    });
-  }, [
-    processes,
-    clientsProcessSearchTerm,
-    clientsProcessStatusFilter,
-    clientsProcessInternalStatusFilter,
-    clientsProcessConsultantFilter,
-    clientsProcessPaymentFilter,
-  ]);
-
-  // ========== HELPER: Determine scoped agency ID for API calls ==========
-  const getScopedAgencyId = (): number | null => {
-    // Master user has global access
-    if ((user?.role === 'master')) {
-      // If viewing a specific agency panel, use that agency
-      if (view === 'agency_panel' && agencySettings?.id) {
-        return agencySettings.id;
-      }
-      // Otherwise, master doesn't need agency filter for global views
-      return null;
-    }
-    // Non-master users are limited to their agency
-    return user?.agency_id || null;
-  };
-
   const fetchPlans = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
-
-    try {
-      const url = agencyId
-        ? `${API_URL}/api/plans?agency_id=${agencyId}`
-        : `${API_URL}/api/plans`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setPlans(data);
-    } catch (error) {
-      console.error('[FETCH] fetchPlans error:', error);
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/plans?agency_id=${agencyId}`);
+    const data = await res.json();
+    setPlans(data);
   };
 
   const savePlan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
 
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
+    const url = editingPlan ? `/api/plans/${editingPlan.id}` : '/api/plans';
+    const method = editingPlan ? 'PUT' : 'POST';
+    const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
 
-    try {
-      const url = editingPlan
-        ? `${API_URL}/api/plans/${editingPlan.id}`
-        : `${API_URL}/api/plans`;
-      const method = editingPlan ? 'PUT' : 'POST';
-      const body = editingPlan ? planForm : { ...planForm, agency_id: agencyId };
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) return;
+    if (res.ok) {
       setShowPlanModal(false);
       fetchPlans();
       notify('Plano salvo com sucesso!', 'success');
-    } catch (error) {
-      console.error('[AUTH] savePlan error:', error);
     }
   };
 
   const deletePlan = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este plano?', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/plans/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchPlans();
-          notify('Plano excluído!', 'success');
-        }
-      } catch (error) {
-        console.error('[AUTH] deletePlan error:', error);
+      const res = await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchPlans();
+        notify('Plano excluído!', 'success');
       }
     });
   };
 
   const fetchFormFields = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
-
-    try {
-      const url = agencyId
-        ? `${API_URL}/api/form-fields?agency_id=${agencyId}`
-        : `${API_URL}/api/form-fields`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setFormFields(data);
-    } catch (error) {
-      console.error('[AUTH] fetchFormFields error:', error);
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/form-fields?agency_id=${agencyId}`);
+    const data = await res.json();
+    setFormFields(data);
   };
 
   const saveFormField = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
 
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
+    const url = editingFormField ? `/api/form-fields/${editingFormField.id}` : '/api/form-fields';
+    const method = editingFormField ? 'PUT' : 'POST';
+    const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
 
-    try {
-      const url = editingFormField
-        ? `${API_URL}/api/form-fields/${editingFormField.id}`
-        : `${API_URL}/api/form-fields`;
-      const method = editingFormField ? 'PUT' : 'POST';
-      const body = editingFormField ? formFieldForm : { ...formFieldForm, agency_id: agencyId };
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) return;
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
       setShowFormFieldModal(false);
       fetchFormFields();
       notify('Campo de formulário salvo com sucesso!', 'success');
-    } catch (error) {
-      console.error('[AUTH] saveFormField error:', error);
     }
   };
 
   const deleteFormField = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este campo de formulário?', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/form-fields/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchFormFields();
-          notify('Campo excluído!', 'success');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteFormField error:', error);
+      const res = await fetch(`/api/form-fields/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchFormFields();
+        notify('Campo excluído!', 'success');
       }
     });
   };
@@ -780,10 +467,6 @@ export default function App() {
     slug: '', 
     has_finance: true, 
     has_pipefy: true,
-    has_leads: true,
-    has_crm: true,
-    has_whatsapp: false,
-    has_simplified_process: false,
     admin_name: '', 
     admin_email: '', 
     admin_password: '' 
@@ -829,13 +512,7 @@ export default function App() {
     pre_form_questions: []
   });
   const [agencyTab, setAgencyTab] = useState<'geral' | 'configuracoes' | 'clientes'>('geral');
-  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos' | 'email'>('destinos');
-  const [smtpConfig, setSmtpConfig] = useState({ api_key: '', from_email: '', from_name: '' });
-  const [smtpHasPassword, setSmtpHasPassword] = useState(false);
-  const [smtpSaving, setSmtpSaving] = useState(false);
-  const [smtpTesting, setSmtpTesting] = useState(false);
-  const [smtpTestEmail, setSmtpTestEmail] = useState('');
-  const [smtpMessage, setSmtpMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos'>('destinos');
   const [forms, setForms] = useState<Form[]>([]);
   const [showVisaTypeModal, setShowVisaTypeModal] = useState(false);
   const [editingVisaType, setEditingVisaType] = useState<VisaType | null>(null);
@@ -845,264 +522,127 @@ export default function App() {
   const [formForm, setFormForm] = useState({ visa_type_id: 0, title: '', fields: [] as any[] });
 
   const fetchForms = async (visaTypeId: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/forms/${visaTypeId}`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setForms(data);
-    } catch (error) {
-      console.error('[AUTH] fetchForms error:', error);
-    }
+    const res = await fetch(`/api/forms/${visaTypeId}`);
+    const data = await res.json();
+    setForms(data);
   };
 
   const saveVisaType = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
-
-    try {
-      const url = editingVisaType
-        ? `${API_URL}/api/visa-types/${editingVisaType.id}`
-        : `${API_URL}/api/visa-types`;
-      const method = editingVisaType ? 'PUT' : 'POST';
-      const body = editingVisaType ? visaTypeForm : { ...visaTypeForm, agency_id: agencyId };
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) return;
+    const url = editingVisaType ? `/api/visa-types/${editingVisaType.id}` : '/api/visa-types';
+    const method = editingVisaType ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...visaTypeForm, agency_id: user?.agency_id })
+    });
+    if (res.ok) {
       setShowVisaTypeModal(false);
       fetchVisaTypes();
       notify('Tipo de visto salvo com sucesso!', 'success');
-    } catch (error) {
-      console.error('[AUTH] saveVisaType error:', error);
     }
   };
 
   const deleteVisaType = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este tipo de visto? Isso excluirá todos os formulários vinculados.', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/visa-types/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchVisaTypes();
-          notify('Tipo de visto excluído!', 'success');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteVisaType error:', error);
+      const res = await fetch(`/api/visa-types/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchVisaTypes();
+        notify('Tipo de visto excluído!', 'success');
       }
     });
   };
 
   const fetchDestinations = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
-
-    try {
-      const url = agencyId
-        ? `${API_URL}/api/destinations?agency_id=${agencyId}`
-        : `${API_URL}/api/destinations`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setDestinations(data);
-    } catch (error) {
-      console.error('[AUTH] fetchDestinations error:', error);
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/destinations?agency_id=${agencyId}`);
+    const data = await res.json();
+    setDestinations(data);
   };
 
   const saveDestination = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
+    const agencyId = user?.agency_id || (view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
 
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
+    const url = editingDestination ? `/api/destinations/${editingDestination.id}` : '/api/destinations';
+    const method = editingDestination ? 'PUT' : 'POST';
+    const body = editingDestination ? destinationForm : { ...destinationForm, agency_id: agencyId };
 
-    try {
-      const url = editingDestination
-        ? `${API_URL}/api/destinations/${editingDestination.id}`
-        : `${API_URL}/api/destinations`;
-      const method = editingDestination ? 'PUT' : 'POST';
-      const body = editingDestination ? destinationForm : { ...destinationForm, agency_id: agencyId };
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) return;
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
       setShowDestinationModal(false);
       fetchDestinations();
       notify('Destino salvo com sucesso!', 'success');
-    } catch (error) {
-      console.error('[AUTH] saveDestination error:', error);
     }
   };
 
   const deleteDestination = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este destino?', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/destinations/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchDestinations();
-          notify('Destino excluído!', 'success');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteDestination error:', error);
+      const res = await fetch(`/api/destinations/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchDestinations();
+        notify('Destino excluído!', 'success');
       }
     });
   };
 
   const saveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    try {
-      const url = editingForm
-        ? `${API_URL}/api/forms/${editingForm.id}`
-        : `${API_URL}/api/forms`;
-      const method = editingForm ? 'PUT' : 'POST';
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formForm),
-      });
-      if (!response.ok) return;
+    const url = editingForm ? `/api/forms/${editingForm.id}` : '/api/forms';
+    const method = editingForm ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formForm)
+    });
+    if (res.ok) {
       setShowFormModal(false);
       if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
       notify('Formulário salvo com sucesso!', 'success');
-    } catch (error) {
-      console.error('[AUTH] saveForm error:', error);
     }
   };
 
   const handleDeleteForm = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir este formulário?', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/forms/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
-          notify('Formulário excluído!', 'success');
-        }
-      } catch (error) {
-        console.error('[AUTH] handleDeleteForm error:', error);
+      const res = await fetch(`/api/forms/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (formForm.visa_type_id) fetchForms(formForm.visa_type_id);
+        notify('Formulário excluído!', 'success');
       }
     });
   };
 
   const validateFinancial = async (processId: number, status: 'confirmed' | 'pending') => {
     requestConfirmation(
-      status === 'confirmed'
-        ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.'
+      status === 'confirmed' 
+        ? 'Deseja confirmar o recebimento deste pagamento? O processo avançará para a próxima etapa.' 
         : 'Deseja recusar este comprovante? O cliente precisará enviar um novo.',
       async () => {
-        if (!(user?.id && user?.role)) {
-          console.warn('[AUTH] Blocked protected request: invalid session');
-          return;
-        }
-
-        try {
-          const validateUrl = `${API_URL}/api/financials/validate`;
-          const res = await fetch(validateUrl, {
-            method: 'POST',
-            headers: {
-              'Authorization': token ? `Bearer ${token}` : '',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ process_id: processId, status }),
-          });
-          if (res.ok) {
-            notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
-            const updatedProcessUrl = `${API_URL}/api/processes/${processId}`;
-            const updatedProcessRes = await fetch(updatedProcessUrl, {
-              method: 'GET',
-              headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-            });
-            if (!updatedProcessRes.ok) return;
-            const updatedProcess = await updatedProcessRes.json();
-            setSelectedProcess(updatedProcess);
-            fetchProcesses();
-          }
-        } catch (error) {
-          console.error('[AUTH] validateFinancial error:', error);
+        const res = await fetch(`${API_URL}/api/financials/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ process_id: processId, status })
+        });
+        if (res.ok) {
+          notify(status === 'confirmed' ? 'Pagamento confirmado!' : 'Comprovante recusado.', 'success');
+          // Refresh process details
+          const updatedProcessRes = await fetch(`/api/processes/${processId}`);
+          const updatedProcess = await updatedProcessRes.json();
+          setSelectedProcess(updatedProcess);
+          fetchProcesses();
         }
       }
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false });
-  const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
-  const [spPlanId, setSpPlanId] = useState('');
-  const [savingSpPlan, setSavingSpPlan] = useState(false);
-  const [spPlanMsg, setSpPlanMsg] = useState('');
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean }>({ finance: true, chat: true });
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -1139,29 +679,9 @@ export default function App() {
   const [showFormEditModal, setShowFormEditModal] = useState(false);
   const [editingFormResponse, setEditingFormResponse] = useState<any>(null);
   const [formEditData, setFormEditData] = useState<any>({});
-  const [showPreFormEditModal, setShowPreFormEditModal] = useState(false);
-  const [preFormEditData, setPreFormEditData] = useState<Record<string, any>>({});
-  const [showFinancialAmountModal, setShowFinancialAmountModal] = useState(false);
-  const [financialAmountInput, setFinancialAmountInput] = useState('');
 
-  // Edição dos dados do cliente (nome, contato, cidade, UF, destino, tipo de visto)
-  const [showClientInfoEdit, setShowClientInfoEdit] = useState(false);
-  const [savingClientInfo, setSavingClientInfo] = useState(false);
-  const [clientInfoForm, setClientInfoForm] = useState({
-    name: '', phone: '', email: '', city: '', state: '', destination_id: 0, visa_type_id: 0,
-  });
-
-  // Process forms (assignment + staff editing)
-  const [availableFormsForProcess, setAvailableFormsForProcess] = useState<any[]>([]);
-  const [loadingProcessForms, setLoadingProcessForms] = useState(false);
-  const [showAssignFormModal, setShowAssignFormModal] = useState(false);
-  const [selectedFormToAssign, setSelectedFormToAssign] = useState<number | null>(null);
-  const [showProcessFormResponseModal, setShowProcessFormResponseModal] = useState(false);
-  const [editingProcessFormResponse, setEditingProcessFormResponse] = useState<any>(null);
-  const [processFormResponseData, setProcessFormResponseData] = useState<Record<string, any>>({});
-
-  // Finance access check - master always has access; others depend on agencyModules.finance
-  const isFinanceModuleEnabled = user?.role === 'master' || agencyModules.finance;
+  // Finance access check - now uses centralized function instead of local variable
+  const isFinanceModuleEnabled = canAccessFinanceModule(user) || agencyModules.finance;
 
   const notify = (message: string, type: ToastType = 'info') => {
     const id = Date.now() + Math.floor(Math.random() * 10000);
@@ -1183,8 +703,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const targetSelector = 'button, a, input, select, textarea, [role="button"]';
-
     const buildTestId = (element: HTMLElement, index: number) => {
       const baseText = (
         element.getAttribute('aria-label') ||
@@ -1204,30 +722,15 @@ export default function App() {
       return `auto-${element.tagName.toLowerCase()}-${baseText || index}`;
     };
 
-    const applyAutoTestIds = (root: ParentNode = document) => {
-      const elements = root.querySelectorAll<HTMLElement>(targetSelector);
-      if (elements.length === 0) return;
-
+    const applyAutoTestIds = () => {
+      const elements = document.querySelectorAll<HTMLElement>('button, a, input, select, textarea, [role="button"]');
       const seen = new Set<string>();
-      document.querySelectorAll<HTMLElement>('[data-testid]').forEach((el) => {
-        const existingId = el.getAttribute('data-testid');
-        if (existingId) seen.add(existingId);
-      });
 
-      let generatedCount = 0;
-
-      elements.forEach((element) => {
-        const existing = element.getAttribute('data-testid');
-        if (existing) {
-          seen.add(existing);
-          return;
-        }
-
-        const baseTestId = buildTestId(element, generatedCount++);
-        let testId = baseTestId;
+      elements.forEach((element, index) => {
+        let testId = element.getAttribute('data-testid') || buildTestId(element, index);
         let suffix = 1;
         while (seen.has(testId)) {
-          testId = `${baseTestId}-${suffix}`;
+          testId = `${buildTestId(element, index)}-${suffix}`;
           suffix += 1;
         }
         seen.add(testId);
@@ -1235,533 +738,196 @@ export default function App() {
       });
     };
 
-    const pendingRoots = new Set<ParentNode>();
-    let rafId: number | null = null;
-
-    const scheduleApply = (root?: ParentNode) => {
-      if (root) pendingRoots.add(root);
-      if (rafId !== null) return;
-
-      rafId = window.requestAnimationFrame(() => {
-        rafId = null;
-        if (pendingRoots.size === 0) {
-          applyAutoTestIds(document);
-          return;
-        }
-
-        const roots = Array.from(pendingRoots);
-        pendingRoots.clear();
-        roots.forEach((currentRoot) => applyAutoTestIds(currentRoot));
-      });
-    };
-
-    applyAutoTestIds(document);
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (node instanceof HTMLElement) {
-            scheduleApply(node);
-          }
-        });
-      });
-    });
+    applyAutoTestIds();
+    const observer = new MutationObserver(() => applyAutoTestIds());
     observer.observe(document.body, { childList: true, subtree: true });
 
-    return () => {
-      observer.disconnect();
-      if (rafId !== null) window.cancelAnimationFrame(rafId);
-    };
+    return () => observer.disconnect();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    console.log('[LOGIN] Attempting login with:', loginForm.email);
-
+    console.log('Tentando login com:', loginForm.email);
     try {
       const res = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm),
       });
-      const responseData = await res.json();
-      const loggedUser = responseData?.user ?? responseData;
-
-      if (!loggedUser?.id || !loggedUser?.role) {
-        console.error('Invalid login response:', responseData);
-        setError('Erro ao carregar usuário');
-        return;
+      if (res.ok) {
+        const userData = await res.json();
+        console.log('Login bem-sucedido:', userData);
+        setUser(userData);
+      } else {
+        const errorData = await res.json();
+        console.error('Erro no login:', errorData);
+        setError('Credenciais inválidas');
       }
-
-      localStorage.setItem('korus-user', JSON.stringify(loggedUser));
-      localStorage.setItem('korus-token', responseData?.token || '');
-      setUser(loggedUser);
-      // Inicializa agencyModules imediatamente do login (evita flash com defaults)
-      if (loggedUser.agency_modules && loggedUser.role !== 'master') {
-        try {
-          const m = typeof loggedUser.agency_modules === 'string'
-            ? JSON.parse(loggedUser.agency_modules)
-            : loggedUser.agency_modules;
-          setAgencyModules({
-            finance: m.finance !== false,
-            chat: m.chat !== false,
-            pipefy: m.pipefy !== false,
-            leads: m.leads !== false,
-            crm: m.crm !== false,
-            whatsapp: m.whatsapp === true,
-            simplified_process: m.simplified_process === true,
-            clients: m.clients === true,
-          });
-        } catch {}
-      }
-      setToken(responseData?.token || null);
-      const recommendedView = getRecommendedInitialView(loggedUser);
-      setView(recommendedView);
     } catch (err) {
+      console.error('Erro de conexão:', err);
       setError('Erro ao conectar com o servidor');
-      clearInvalidAuthData();
     }
   };
 
   const fetchProcesses = async () => {
-    if (!user || !user.id || !user.role) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !user.agency_id) return;
-    let url = `${API_URL}/api/processes?role=${encodeURIComponent(String(user.role))}&user_id=${encodeURIComponent(String(user.id))}`;
-    if (agencyId !== null && agencyId !== undefined) {
-      url += `&agency_id=${encodeURIComponent(String(agencyId))}`;
-    }
-    try {
-      const data = await apiRequest(url, { headers: { 'Authorization': token ? `Bearer ${token}` : '' } });
-      console.log('[DEBUG] PROCESS DATA:', data);
-      setProcesses(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setProcesses([]);
-    }
+    if (!user) return;
+    const res = await fetch(`/api/processes?agency_id=${user.agency_id || ''}&role=${user.role}&user_id=${user.id}`);
+    const data = await res.json();
+    setProcesses(data);
   };
 
   const fetchAgencies = async () => {
-    if (!(user?.id && user?.role) || !(user?.role === 'master')) return;
-    try {
-      const response = await fetch(`${API_URL}/api/agencies`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setAgencies(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchAgencies error:', err);
-    }
+    if (!canManageAgencies(user)) return;
+    const res = await fetch(`${API_URL}/api/agencies`);
+    const data = await res.json();
+    setAgencies(data);
   };
 
   const fetchExpenses = async () => {
-    if (!user || !user.id || !user.role) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !user.agency_id) return;
-    let url = agencyId ? `${API_URL}/api/expenses?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/expenses`;
-    try {
-      const data = await apiRequest(url, { headers: { 'Authorization': token ? `Bearer ${token}` : '' } });
-      setExpenses(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setExpenses([]);
-    }
+    const url = isMaster(user) ? '/api/expenses' : `/api/expenses?agency_id=${user?.agency_id}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    setExpenses(data);
   };
 
   const fetchRevenues = async () => {
-    if (!user || !user.id || !user.role) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !user.agency_id) return;
-    let url = agencyId ? `${API_URL}/api/revenues?agency_id=${encodeURIComponent(String(agencyId))}` : `${API_URL}/api/revenues`;
-    try {
-      const data = await apiRequest(url, { headers: { 'Authorization': token ? `Bearer ${token}` : '' } });
-      setRevenues(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setRevenues([]);
-    }
+    const url = isMaster(user) ? '/api/revenues' : `/api/revenues?agency_id=${user?.agency_id}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    setRevenues(data);
   };
 
   const fetchAuditLogs = async () => {
-    if (!canViewAudit(user) || !(user?.id && user?.role)) return;
-    try {
-      const response = await fetch(`${API_URL}/api/audit-logs`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setAuditLogs(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchAuditLogs error:', err);
-    }
-  };
-
-  const fetchProcessNotifications = async () => {
-    if (!user || isClient(user)) return;
-    const agencyId = user.agency_id;
-    if (!agencyId) return;
-    try {
-      const data = await apiRequest(`${API_URL}/api/process-notifications?agency_id=${agencyId}`, {
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      setProcessNotifications(Array.isArray(data) ? data : []);
-    } catch (_) {}
-  };
-
-  const fetchCrmNotifications = async () => {
-    if (!user) return;
-    const role = user.role;
-    if (!['supervisor', 'consultant', 'analyst', 'gerente_financeiro'].includes(role)) return;
-    const agencyId = user.agency_id;
-    if (!agencyId) return;
-    try {
-      const res = await fetch(`${API_URL}/api/crm-notifications?agency_id=${agencyId}`, {
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCrmNotifications(Array.isArray(data) ? data : []);
-      }
-    } catch (_) {}
-  };
-
-  const handleDismissNotification = async (id: number) => {
-    setCrmNotifications((prev) => prev.filter((n) => n.id !== id));
-    try {
-      await fetch(`${API_URL}/api/crm-notifications/${id}/read`, {
-        method: 'PATCH',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-    } catch (_) {}
-  };
-
-  const handleDismissAllNotifications = async () => {
-    const agencyId = user?.agency_id;
-    if (!agencyId) return;
-    setCrmNotifications([]);
-    try {
-      await fetch(`${API_URL}/api/crm-notifications/read-all`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ agency_id: agencyId }),
-      });
-    } catch (_) {}
-  };
-
-  const clearAuditLogs = async () => {
-    if (user?.role !== 'master' || !(user?.id && user?.role)) {
-      notify('Apenas o usuário master pode excluir logs.', 'error');
-      return;
-    }
-    requestConfirmation('Tem certeza que deseja excluir todos os logs de auditoria? Esta ação não pode ser desfeita.', async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/audit-logs?user_id=${user.id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (res.ok) {
-          setAuditLogs([]);
-          notify('Logs de auditoria excluídos com sucesso!', 'success');
-        } else {
-          notify('Não foi possível excluir os logs.', 'error');
-        }
-      } catch {
-        notify('Erro de conexão.', 'error');
-      }
-    });
+    if (!canViewAudit(user)) return;
+    const res = await fetch(`${API_URL}/api/audit-logs`);
+    const data = await res.json();
+    setAuditLogs(data);
   };
 
   const fetchGlobalUsers = async () => {
-    if (!(user?.role === 'master') || !(user?.id && user?.role)) return;
-    try {
-      const response = await fetch(`${API_URL}/api/global-users`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      setGlobalUsers(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchGlobalUsers error:', err);
-    }
+    if (!canManageAgencies(user)) return;
+    const res = await fetch(`${API_URL}/api/global-users`);
+    const data = await res.json();
+    setGlobalUsers(data);
   };
 
   const fetchAgencyUsers = async () => {
-    if (!(user?.id && user?.role)) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) return;
-    try {
-      const url = agencyId ? `${API_URL}/api/agency-users?agency_id=${agencyId}` : `${API_URL}/api/agency-users`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setAgencyUsers([]);
-        return;
-      }
-      const data = await response.json();
-      setAgencyUsers(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchAgencyUsers error:', err);
-      setAgencyUsers([]);
-    }
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/agency-users?agency_id=${agencyId}`);
+    const data = await res.json();
+    setAgencyUsers(data);
   };
 
   const fetchAgencySettings = async () => {
-    if (!(user?.id && user?.role)) return;
-    
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) return;
-    
-    if (agencyId === null && view !== 'agency_panel') return;
-    
-    let url = `${API_URL}/api/agencies`;
-    if (agencyId !== null && agencyId !== undefined) {
-      url = `${API_URL}/api/agencies/${agencyId}`;
-    }
-    
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      
-      const agencyData = Array.isArray(data) ? data[0] : data;
-      if (!agencyData) return;
-      
-      let parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
-      try {
-        parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
-      } catch {
-        parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
-      }
-
-      setAgencyModules({
-        finance: Boolean(parsedModules.finance),
-        chat: parsedModules.chat !== false,
-        pipefy: parsedModules.pipefy !== false,
-        leads: parsedModules.leads !== false,
-        crm: (parsedModules as any).crm !== false,
-        whatsapp: (parsedModules as any).whatsapp === true,
-        simplified_process: (parsedModules as any).simplified_process === true,
-        clients: (parsedModules as any).clients === true,
-      });
-
-      let destinations = [];
-      let pre_form_questions = [];
-      try {
-        destinations = agencyData.destinations ? (typeof agencyData.destinations === 'string' ? JSON.parse(agencyData.destinations) : agencyData.destinations) : [];
-        pre_form_questions = agencyData.pre_form_questions ? (typeof agencyData.pre_form_questions === 'string' ? JSON.parse(agencyData.pre_form_questions) : agencyData.pre_form_questions) : [];
-      } catch (e) {
-        console.error('Error parsing agency settings:', e);
-      }
-
-      setAgencySettings({
-        id: agencyData.id,
-        name: agencyData.name || '',
-        logo_url: agencyData.logo_url || '',
-        slug: agencyData.slug || '',
-        admin_email: agencyData.admin_email || user?.email || '',
-        destinations,
-        pre_form_questions,
-      });
-
-      // Carregar configuração Resend junto com os dados da agência
-      if (agencyData.id) {
-        try {
-          const smtpRes = await fetch(`${API_URL}/api/agencies/${agencyData.id}/smtp`, {
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-          });
-          if (smtpRes.ok) {
-            const smtpData = await smtpRes.json();
-            setSmtpConfig({
-              api_key: '',
-              from_email: smtpData.resend_config?.from_email || '',
-              from_name: smtpData.resend_config?.from_name || '',
-            });
-            setSmtpHasPassword(smtpData.has_api_key || false);
-          }
-        } catch { /* silencioso */ }
-      }
-    } catch (err) {
-      console.error('[FETCH] fetchAgencySettings error:', err);
-    }
-  };
-
-  const handleSaveSmtp = async () => {
-    const agencyId = agencySettings.id;
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
     if (!agencyId) return;
-    setSmtpSaving(true);
-    setSmtpMessage(null);
+    const res = await fetch(`\\/api/agencies/\$\{agencyId\}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    let parsedModules = { finance: true, chat: true };
     try {
-      const res = await fetch(`${API_URL}/api/agencies/${agencyId}/smtp`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-        body: JSON.stringify(smtpConfig),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setSmtpMessage({ type: 'success', text: 'Configuração salva com sucesso!' });
-      if (smtpConfig.api_key) setSmtpHasPassword(true);
-      // Limpa campo de API key após salvar
-      setSmtpConfig(prev => ({ ...prev, api_key: '' }));
-    } catch (e: any) {
-      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao salvar.' });
-    } finally {
-      setSmtpSaving(false);
+      parsedModules = { ...parsedModules, ...(JSON.parse(data.modules || '{}') || {}) };
+    } catch {
+      parsedModules = { finance: true, chat: true };
     }
-  };
 
-  const handleTestSmtp = async () => {
-    const agencyId = agencySettings.id;
-    if (!agencyId || !smtpTestEmail) return;
-    setSmtpTesting(true);
-    setSmtpMessage(null);
+    setAgencyModules({
+      finance: Boolean(parsedModules.finance),
+      chat: parsedModules.chat !== false,
+    });
+
+    let destinations = [];
+    let pre_form_questions = [];
     try {
-      const res = await fetch(`${API_URL}/api/agencies/${agencyId}/smtp/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ test_email: smtpTestEmail }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Falha no teste');
-      }
-      setSmtpMessage({ type: 'success', text: `E-mail de teste enviado para ${smtpTestEmail}!` });
-    } catch (e: any) {
-      setSmtpMessage({ type: 'error', text: e.message || 'Erro ao enviar e-mail de teste.' });
-    } finally {
-      setSmtpTesting(false);
+      destinations = data.destinations ? (typeof data.destinations === 'string' ? JSON.parse(data.destinations) : data.destinations) : [];
+      pre_form_questions = data.pre_form_questions ? (typeof data.pre_form_questions === 'string' ? JSON.parse(data.pre_form_questions) : data.pre_form_questions) : [];
+    } catch (e) {
+      console.error('Error parsing agency settings:', e);
     }
+
+    setAgencySettings({
+      id: data.id,
+      name: data.name || '',
+      logo_url: data.logo_url || '',
+      slug: data.slug || '',
+      admin_email: data.admin_email || user?.email ||'',
+      destinations,
+      pre_form_questions,
+    });
   };
 
   const fetchTasks = async () => {
-    if (!(user?.id && user?.role)) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) return;
-    try {
-      const url = agencyId ? `${API_URL}/api/tasks?agency_id=${agencyId}` : `${API_URL}/api/tasks`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setTasks([]);
-        return;
-      }
-      const data = await response.json();
-      setTasks(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchTasks error:', err);
-      setTasks([]);
-    }
+    // Get effective agency ID (master can view any agency, others limited to theirs)
+    const agencyId = user?.agency_id || (isMaster(user) && view === 'agency_panel' && agencySettings.id);
+    if (!agencyId) return;
+    const res = await fetch(`/api/tasks?agency_id=${agencyId}`);
+    const data = await res.json();
+    setTasks(data);
   };
 
   const fetchVisaTypes = async () => {
-    if (!(user?.id && user?.role)) return;
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) return;
-    try {
-      const url = agencyId ? `${API_URL}/api/visa-types?agency_id=${agencyId}` : `${API_URL}/api/visa-types`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setVisaTypes([]);
-        return;
-      }
-      const data = await response.json();
-      setVisaTypes(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchVisaTypes error:', err);
-      setVisaTypes([]);
-    }
+    // Master can view visa types globally, others limited to their agency
+    if (!isMaster(user) && !user?.agency_id) return;
+    const res = await fetch(`/api/visa-types?agency_id=${user?.agency_id || ''}`);
+    const data = await res.json();
+    setVisaTypes(data);
   };
 
   const handleStartProcess = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const currentUser = user;
-    if (!currentUser) {
-      console.warn('[AUTH] Blocked protected request: missing user');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/processes/start`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_id: currentUser.id,
-          agency_id: currentUser.agency_id,
-          visa_type_id: startProcessData.visa_type_id,
-          is_dependent: startProcessData.is_dependent,
-        }),
-      });
-      if (!response.ok) return;
+    if (!user) return;
+    const res = await fetch(`${API_URL}/api/processes/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: user.id,
+        agency_id: user.agency_id,
+        visa_type_id: startProcessData.visa_type_id,
+        is_dependent: startProcessData.is_dependent
+      })
+    });
+    if (res.ok) {
       setShowStartModal(false);
       fetchProcesses();
-    } catch (error) {
-      console.error('[AUTH] handleStartProcess error:', error);
     }
   };
 
   const createAgency = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     console.log('createAgency function called');
     setIsProcessingAgency(true);
+    const url = editingAgency ? `/api/agencies/${editingAgency.id}` : '/api/agencies';
+    const method = editingAgency ? 'PUT' : 'POST';
+    
     try {
-      const url = editingAgency
-        ? `${API_URL}/api/agencies/${editingAgency.id}`
-        : `${API_URL}/api/agencies`;
-      const method = editingAgency ? 'PUT' : 'POST';
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newAgency),
       });
-      if (response.ok) {
-        await fetchAgencies();
+      if (res.ok) {
+        fetchAgencies();
         setShowAgencyModal(false);
         setEditingAgency(null);
-        setNewAgency({
-          name: '',
-          slug: '',
-          has_finance: true,
+        setNewAgency({ 
+          name: '', 
+          slug: '', 
+          has_finance: true, 
           has_pipefy: true,
-          has_leads: true,
-          has_crm: true,
-          has_whatsapp: false,
-          has_simplified_process: false,
-          admin_name: '',
-          admin_email: '',
-          admin_password: '',
+          admin_name: '', 
+          admin_email: '', 
+          admin_password: '' 
         });
         notify(editingAgency ? 'Agência atualizada com sucesso!' : 'Agência criada com sucesso!', 'success');
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao processar agência', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao processar agência', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] createAgency error:', error);
+    } catch (err) {
       notify('Erro de conexão ao processar agência', 'error');
     } finally {
       setIsProcessingAgency(false);
@@ -1770,25 +936,11 @@ export default function App() {
 
   const deleteAgency = async (id: number) => {
     requestConfirmation('Tem certeza que deseja excluir esta agência?', async () => {
-      if (!(user?.id && user?.role)) {
-        console.warn('[AUTH] Blocked protected request: invalid session');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/api/agencies/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchAgencies();
-          notify('Agência excluída com sucesso!', 'success');
-        } else {
-          const data = await response.json().catch(() => null);
-          notify(data?.error || 'Não foi possível excluir a agência.', 'error');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteAgency error:', error);
+      const res = await fetch(`/api/agencies/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchAgencies();
+        notify('Agência excluída com sucesso!', 'success');
+      } else {
         notify('Não foi possível excluir a agência.', 'error');
       }
     });
@@ -1836,11 +988,6 @@ export default function App() {
   const handleMasterAgencyLogoUpload = async (agency: Agency, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      event.target.value = '';
-      return;
-    }
 
     try {
       const formData = new FormData();
@@ -1848,7 +995,6 @@ export default function App() {
 
       const uploadResponse = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
         body: formData,
       });
 
@@ -1858,36 +1004,23 @@ export default function App() {
         return;
       }
 
-
-      // Buscar as pre_form_questions atuais para não sobrescrever
-      let preFormQuestions: any[] = [];
-      if (agencySettings && agencySettings.id === agency.id) {
-        preFormQuestions = agencySettings.pre_form_questions || [];
-      }
-
-      const updateResponse = await fetch(`${API_URL}/api/agencies/${agency.id}/settings`, {
+      const updateResponse = await fetch(`/api/agencies/${agency.id}/settings`, {
         method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: agency.name,
           logo_url: uploadData.url,
-          pre_form_questions: preFormQuestions,
         }),
       });
 
       if (updateResponse.ok) {
         notify('Logo da agência atualizada com sucesso!', 'success');
         fetchAgencies();
-        fetchAgencySettings();
       } else {
-        const updateData = await updateResponse.json().catch(() => null);
-        notify(updateData?.error || 'Falha ao salvar logo da agência.', 'error');
+        const updateData = await updateResponse.json();
+        notify(updateData.error || 'Falha ao salvar logo da agência.', 'error');
       }
     } catch (error) {
-      console.error('[AUTH] handleMasterAgencyLogoUpload error:', error);
       notify('Erro de conexão ao atualizar a logo da agência.', 'error');
     } finally {
       event.target.value = '';
@@ -1901,35 +1034,28 @@ export default function App() {
   };
 
   const submitAgencyPasswordReset = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
     if (!agencyToResetPassword || !newAdminPassword.trim()) {
       notify('Digite a nova senha para continuar.', 'error');
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/agencies/${agencyToResetPassword}/reset-password`, {
+      const res = await fetch(`/api/agencies/${agencyToResetPassword}/reset-password`, {
         method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ new_password: newAdminPassword }),
       });
-      if (response.ok) {
+      
+      if (res.ok) {
         notify('Senha resetada com sucesso!', 'success');
         setShowResetPasswordModal(false);
         setNewAdminPassword('');
         setAgencyToResetPassword(null);
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao resetar senha', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao resetar senha', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] submitAgencyPasswordReset error:', error);
+    } catch (err) {
       notify('Erro de conexão ao resetar senha', 'error');
     }
   };
@@ -1941,39 +1067,32 @@ export default function App() {
   };
 
   const submitClientPasswordReset = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
     if (!clientToResetPassword || newClientPassword.trim().length < 6) {
       notify('A nova senha do cliente deve ter no mínimo 6 caracteres.', 'error');
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/clients/${clientToResetPassword.id}/reset-password`, {
+      const res = await fetch(`/api/clients/${clientToResetPassword.id}/reset-password`, {
         method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           new_password: newClientPassword.trim(),
           reset_by_user_id: user?.id,
         }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         notify('Senha do cliente resetada com sucesso!', 'success');
         setShowClientResetPasswordModal(false);
         setClientToResetPassword(null);
         setNewClientPassword('');
         fetchClientResetHistory();
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao resetar senha do cliente.', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao resetar senha do cliente.', 'error');
       }
     } catch (error) {
-      console.error('[AUTH] submitClientPasswordReset error:', error);
       notify('Erro de conexão ao resetar senha do cliente.', 'error');
     }
   };
@@ -1985,37 +1104,30 @@ export default function App() {
   };
 
   const submitTeamPasswordReset = async () => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
     if (!teamToResetPassword || newTeamPassword.trim().length < 6) {
       notify('A nova senha deve ter no mínimo 6 caracteres.', 'error');
       return;
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/users/${teamToResetPassword.id}/reset-password`, {
+      const res = await fetch(`/api/users/${teamToResetPassword.id}/reset-password`, {
         method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           new_password: newTeamPassword.trim(),
         }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         notify('Senha da equipe resetada com sucesso!', 'success');
         setShowTeamResetPasswordModal(false);
         setTeamToResetPassword(null);
         setNewTeamPassword('');
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao resetar senha da equipe.', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao resetar senha da equipe.', 'error');
       }
     } catch (error) {
-      console.error('[AUTH] submitTeamPasswordReset error:', error);
       notify('Erro de conexão ao resetar senha da equipe.', 'error');
     }
   };
@@ -2023,121 +1135,28 @@ export default function App() {
   const handleFormEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingFormResponse || !selectedProcess) return;
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
 
     try {
-      const response = await fetch(`${API_URL}/api/form-responses`, {
+      const res = await fetch(`${API_URL}/api/form-responses`, {
         method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           process_id: selectedProcess.id,
           form_id: editingFormResponse.form_id,
-          data: formEditData,
-        }),
+          data: formEditData
+        })
       });
-      if (response.ok) {
+
+      if (res.ok) {
         notify('Formulário atualizado com sucesso!', 'success');
         setShowFormEditModal(false);
         fetchProcessDetail(selectedProcess.id);
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao atualizar formulário', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao atualizar formulário', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] handleFormEditSubmit error:', error);
+    } catch (err) {
       notify('Erro de conexão ao atualizar formulário', 'error');
-    }
-  };
-
-  const handleSavePreFormEdit = async () => {
-    if (!selectedProcess || !(user?.id && user?.role)) return;
-    try {
-      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/pre-form`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          pre_form_data: preFormEditData,
-          changed_by_user_id: user.id,
-          role: user.role,
-        }),
-      });
-      if (res.ok) {
-        notify('Pré-formulário atualizado com sucesso!', 'success');
-        setShowPreFormEditModal(false);
-        fetchProcessDetail(selectedProcess.id);
-      } else {
-        const data = await res.json().catch(() => null);
-        notify(data?.error || 'Erro ao atualizar pré-formulário', 'error');
-      }
-    } catch {
-      notify('Erro de conexão ao atualizar pré-formulário', 'error');
-    }
-  };
-
-  const handleSaveFinancialAmount = async () => {
-    if (!selectedProcess || user?.role !== 'master') return;
-    const parsed = parseFloat(financialAmountInput.replace(',', '.'));
-    if (isNaN(parsed) || parsed < 0) { notify('Valor inválido.', 'error'); return; }
-    try {
-      const res = await fetch(`${API_URL}/api/financials/${selectedProcess.id}/amount`, {
-        method: 'PATCH',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: parsed, user_id: user.id, role: user.role }),
-      });
-      if (res.ok) {
-        notify('Valor atualizado com sucesso!', 'success');
-        setShowFinancialAmountModal(false);
-        fetchProcessDetail(selectedProcess.id);
-      } else {
-        const data = await res.json().catch(() => null);
-        notify(data?.error || 'Erro ao atualizar valor.', 'error');
-      }
-    } catch {
-      notify('Erro de conexão.', 'error');
-    }
-  };
-
-  const handleSaveClientInfo = async () => {
-    if (!selectedProcess || !user) return;
-    setSavingClientInfo(true);
-    try {
-      const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/client-info`, {
-        method: 'PATCH',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: clientInfoForm.name || undefined,
-          phone: clientInfoForm.phone || undefined,
-          email: clientInfoForm.email || undefined,
-          city: clientInfoForm.city || undefined,
-          state: clientInfoForm.state || undefined,
-          destination_id: clientInfoForm.destination_id || undefined,
-          visa_type_id: clientInfoForm.visa_type_id || undefined,
-          role: user.role,
-          agency_id: user.agency_id,
-        }),
-      });
-      if (res.ok) {
-        notify('Dados do cliente atualizados!', 'success');
-        setShowClientInfoEdit(false);
-        await fetchProcessDetail(selectedProcess.id);
-        fetchProcesses();
-      } else {
-        const data = await res.json().catch(() => null);
-        notify(data?.error || 'Erro ao salvar dados.', 'error');
-      }
-    } catch {
-      notify('Erro de conexão.', 'error');
-    } finally {
-      setSavingClientInfo(false);
     }
   };
 
@@ -2161,39 +1180,27 @@ export default function App() {
 
   const handleFinanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
 
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
-
-    if (!isFinanceModuleEnabled && user?.role !== 'master') {
+    if (!isFinanceModuleEnabled && !isMaster(user)) {
       notify('Módulo financeiro desativado para esta agência. Lançamentos estão bloqueados.', 'error');
       return;
     }
 
-    const endpoint = financeTab === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
+    const endpoint = financeTab === 'payable' ? '/api/expenses' : '/api/revenues';
     const url = editingFinance ? `${endpoint}/${editingFinance.id}` : endpoint;
     const method = editingFinance ? 'PUT' : 'POST';
 
     try {
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...financeForm,
-          agency_id: agencyId,
+          agency_id: isMaster(user) ? (financeForm.agency_id || null) : user?.agency_id
         }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         setShowFinanceModal(false);
         setEditingFinance(null);
         setFinanceForm({
@@ -2202,48 +1209,35 @@ export default function App() {
           due_date: new Date().toISOString().split('T')[0],
           status: 'pending',
           category: '',
-          agency_id: '',
+          agency_id: ''
         });
         fetchExpenses();
         fetchRevenues();
         notify(editingFinance ? 'Lançamento atualizado com sucesso!' : 'Lançamento criado com sucesso!', 'success');
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Falha ao salvar lançamento financeiro.', 'error');
+        const data = await res.json();
+        notify(data.error || 'Falha ao salvar lançamento financeiro.', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] handleFinanceSubmit error:', error);
+    } catch (err) {
+      console.error('Erro ao salvar transação financeira:', err);
       notify('Erro de conexão ao salvar lançamento financeiro.', 'error');
     }
   };
 
   const deleteFinance = async (id: number, type: 'payable' | 'receivable') => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-    if (!isFinanceModuleEnabled && user?.role !== 'master') {
+    if (!isFinanceModuleEnabled && !isMaster(user)) {
       notify('Módulo financeiro desativado para esta agência. Exclusão de lançamentos bloqueada.', 'error');
       return;
     }
 
     requestConfirmation('Tem certeza que deseja excluir este registro?', async () => {
-      try {
-        const endpoint = type === 'payable' ? `${API_URL}/api/expenses` : `${API_URL}/api/revenues`;
-        const response = await fetch(`${endpoint}/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchExpenses();
-          fetchRevenues();
-          notify('Registro excluído com sucesso!', 'success');
-        } else {
-          const data = await response.json().catch(() => null);
-          notify(data?.error || 'Não foi possível excluir o registro.', 'error');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteFinance error:', error);
+      const endpoint = type === 'payable' ? '/api/expenses' : '/api/revenues';
+      const res = await fetch(`${endpoint}/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchExpenses();
+        fetchRevenues();
+        notify('Registro excluído com sucesso!', 'success');
+      } else {
         notify('Não foi possível excluir o registro.', 'error');
       }
     });
@@ -2251,68 +1245,39 @@ export default function App() {
 
   const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
+    const url = editingUser ? `/api/agency-users/${editingUser.id}` : '/api/agency-users';
+    const method = editingUser ? 'PUT' : 'POST';
 
     try {
-      const url = editingUser
-        ? `${API_URL}/api/agency-users/${editingUser.id}`
-        : `${API_URL}/api/agency-users`;
-      const method = editingUser ? 'PUT' : 'POST';
-      const body = editingUser ? userForm : { ...userForm, agency_id: agencyId };
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...userForm, agency_id: user?.agency_id }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         setShowUserModal(false);
         setEditingUser(null);
         setUserForm({ name: '', email: '', password: '', role: 'consultant' });
         fetchAgencyUsers();
         notify(editingUser ? 'Usuário atualizado com sucesso!' : 'Usuário criado com sucesso!', 'success');
       } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao salvar usuário', 'error');
+        const data = await res.json();
+        notify(data.error || 'Erro ao salvar usuário', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] handleUserSubmit error:', error);
+    } catch (err) {
+      console.error('Erro ao salvar usuário:', err);
       notify('Erro de conexão ao salvar usuário.', 'error');
     }
   };
 
   const deleteUser = async (id: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     requestConfirmation('Tem certeza que deseja excluir este usuário?', async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/agency-users/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchAgencyUsers();
-          notify('Usuário excluído com sucesso!', 'success');
-        } else {
-          const data = await response.json().catch(() => null);
-          notify(data?.error || 'Não foi possível excluir o usuário.', 'error');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteUser error:', error);
+      const res = await fetch(`/api/agency-users/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchAgencyUsers();
+        notify('Usuário excluído com sucesso!', 'success');
+      } else {
         notify('Não foi possível excluir o usuário.', 'error');
       }
     });
@@ -2320,68 +1285,36 @@ export default function App() {
 
   const handleTaskSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    const agencyId = getScopedAgencyId();
-    if (!(user?.role === 'master') && !agencyId) {
-      console.warn('[AUTH] Blocked protected request: missing agency context');
-      return;
-    }
+    const url = editingTask ? `/api/tasks/${editingTask.id}` : '/api/tasks';
+    const method = editingTask ? 'PUT' : 'POST';
 
     try {
-      const url = editingTask
-        ? `${API_URL}/api/tasks/${editingTask.id}`
-        : `${API_URL}/api/tasks`;
-      const method = editingTask ? 'PUT' : 'POST';
-      const body = editingTask ? taskForm : { ...taskForm, agency_id: agencyId };
-      const response = await fetch(url, {
+      const res = await fetch(url, {
         method,
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...taskForm, agency_id: user?.agency_id }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         setShowTaskModal(false);
         setEditingTask(null);
         setTaskForm({ title: '', description: '', is_active: true });
         fetchTasks();
         notify(editingTask ? 'Tarefa atualizada com sucesso!' : 'Tarefa criada com sucesso!', 'success');
-      } else {
-        const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao salvar tarefa', 'error');
       }
-    } catch (error) {
-      console.error('[AUTH] handleTaskSubmit error:', error);
+    } catch (err) {
+      console.error('Erro ao salvar task:', err);
       notify('Erro de conexão ao salvar tarefa.', 'error');
     }
   };
 
   const deleteTask = async (id: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     requestConfirmation('Tem certeza que deseja excluir esta tarefa?', async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/tasks/${id}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-        });
-        if (response.ok) {
-          fetchTasks();
-          notify('Tarefa excluída com sucesso!', 'success');
-        } else {
-          const data = await response.json().catch(() => null);
-          notify(data?.error || 'Não foi possível excluir a tarefa.', 'error');
-        }
-      } catch (error) {
-        console.error('[AUTH] deleteTask error:', error);
+      const res = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchTasks();
+        notify('Tarefa excluída com sucesso!', 'success');
+      } else {
         notify('Não foi possível excluir a tarefa.', 'error');
       }
     });
@@ -2389,373 +1322,109 @@ export default function App() {
 
   const sendMessage = async () => {
     if (!chatMessage.trim() || !selectedProcess) return;
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
 
     try {
-      const response = await fetch(`${API_URL}/api/messages`, {
+      const res = await fetch(`${API_URL}/api/messages`, {
         method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           process_id: selectedProcess.id,
           sender_id: user?.id,
           content: chatMessage,
-          is_proof: false,
+          is_proof: false
         }),
       });
-      if (response.ok) {
+
+      if (res.ok) {
         setChatMessage('');
         fetchProcessDetail(selectedProcess.id);
       }
-    } catch (error) {
-      console.error('[AUTH] sendMessage error:', error);
+    } catch (err) {
+      console.error('Erro ao enviar mensagem:', err);
     }
   };
 
   const toggleTask = async (taskId: number, currentStatus: string) => {
     if (!selectedProcess) return;
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-    try {
-      const response = await fetch(`${API_URL}/api/process-tasks/${taskId}/toggle`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (response.ok) {
-        fetchProcessDetail(selectedProcess.id);
-      }
-    } catch (error) {
-      console.error('[AUTH] toggleTask error:', error);
-    }
-  };
-
-  const fetchAvailableFormsForProcess = async (processId: number) => {
-    if (!user?.id) return;
-    const agencyId = getScopedAgencyId();
-    if (!agencyId) return;
-    setLoadingProcessForms(true);
-    try {
-      const res = await fetch(`${API_URL}/api/forms?agency_id=${agencyId}`, {
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableFormsForProcess(Array.isArray(data) ? data : []);
-      }
-    } catch (e) {
-      console.error('fetchAvailableFormsForProcess error:', e);
-    } finally {
-      setLoadingProcessForms(false);
-    }
-  };
-
-  const assignFormToProcess = async () => {
-    if (!selectedProcess || !selectedFormToAssign) return;
-    try {
-      const res = await fetch(`${API_URL}/api/process-forms`, {
-        method: 'POST',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ process_id: selectedProcess.id, form_id: selectedFormToAssign, assigned_by: user?.id }),
-      });
-      if (res.ok) {
-        setShowAssignFormModal(false);
-        setSelectedFormToAssign(null);
-        fetchProcessDetail(selectedProcess.id);
-        notify('Formulário vinculado ao processo!', 'success');
-      }
-    } catch (e) {
-      notify('Erro ao vincular formulário', 'error');
-    }
-  };
-
-  const removeFormFromProcess = async (processFrormId: number) => {
-    if (!selectedProcess) return;
-    try {
-      const res = await fetch(`${API_URL}/api/process-forms/${processFrormId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        fetchProcessDetail(selectedProcess.id);
-        notify('Formulário removido do processo', 'info');
-      }
-    } catch (e) {
-      notify('Erro ao remover formulário', 'error');
-    }
-  };
-
-  const moveProcessForm = async (index: number, direction: 'up' | 'down') => {
-    if (!selectedProcess?.process_forms) return;
-    const forms = [...selectedProcess.process_forms];
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= forms.length) return;
-    [forms[index], forms[swapIndex]] = [forms[swapIndex], forms[index]];
-    const orders = forms.map((f: any, i: number) => ({ id: f.id, order: i }));
-    try {
-      await fetch(`${API_URL}/api/process-forms/reorder`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ orders }),
-      });
+    const res = await fetch(`/api/process-tasks/${taskId}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (res.ok) {
       fetchProcessDetail(selectedProcess.id);
-    } catch (e) {
-      notify('Erro ao reordenar formulários', 'error');
-    }
-  };
-
-  const saveProcessFormResponse = async () => {
-    if (!editingProcessFormResponse) return;
-    try {
-      const method = editingProcessFormResponse.response_id ? 'PUT' : 'POST';
-      const url = editingProcessFormResponse.response_id
-        ? `${API_URL}/api/form-responses/${editingProcessFormResponse.response_id}`
-        : `${API_URL}/api/form-responses`;
-      const body = editingProcessFormResponse.response_id
-        ? { data: processFormResponseData }
-        : { process_id: selectedProcess?.id, form_id: editingProcessFormResponse.form_id, data: processFormResponseData };
-      const res = await fetch(url, {
-        method,
-        headers: { 'Authorization': token ? `Bearer ${token}` : '', 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        setShowProcessFormResponseModal(false);
-        setEditingProcessFormResponse(null);
-        fetchProcessDetail(selectedProcess!.id);
-        notify('Respostas salvas com sucesso!', 'success');
-      }
-    } catch (e) {
-      notify('Erro ao salvar respostas', 'error');
     }
   };
 
   const fetchProcessDetail = async (id: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
     setLoading(true);
-    try {
-      const url = `${API_URL}/api/processes/${id}`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setLoading(false);
-        return;
-      }
-      const data = await response.json();
-      if (data) {
-        setSelectedProcess(data);
-        setView('process_detail');
-      }
-    } catch (error) {
-      console.error('[AUTH] fetchProcessDetail error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openProcessEditById = async (id: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/processes/${id}`, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-
-      if (!response.ok) return;
-      const data = await response.json();
-      if (data?.id) {
-        openProcessEditModal(data as Process);
-      }
-    } catch (error) {
-      console.error('[AUTH] openProcessEditById error:', error);
-    }
+    const res = await fetch(`/api/processes/${id}`);
+    const data = await res.json();
+    setSelectedProcess(data);
+    setView('process_detail');
+    setLoading(false);
   };
 
   const fetchLeads = async () => {
-    if (!(user?.id && user?.role)) return;
-    if (!(user?.role === 'master' || user?.role === 'supervisor')) return;
-    const agencyId = getScopedAgencyId();
-    const url = agencyId
-      ? `${API_URL}/api/clients/overview?agency_id=${agencyId}`
-      : `${API_URL}/api/clients/overview`;
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setLeads([]);
-        return;
-      }
-      const data = await response.json();
-      setLeads(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchLeads error:', err);
-      setLeads([]);
-    }
+    if (!user || !hasAdminAccess(user)) return;
+    const agencyId = user.agency_id || '';
+    const res = await fetch(`/api/leads?agency_id=${agencyId}`);
+    const data = await res.json();
+    setLeads(data);
   };
 
   const fetchClientResetHistory = async () => {
-    if (!(user?.id && user?.role) || !(user?.role === 'master' || user?.role === 'supervisor') || !(user?.id && user?.role)) return;
-    const agencyId = getScopedAgencyId();
-    const url = agencyId
-      ? `${API_URL}/api/clients/password-resets?agency_id=${agencyId}`
-      : `${API_URL}/api/clients/password-resets`;
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
-      if (!response.ok) {
-        setClientResetHistory([]);
-        return;
-      }
-      const data = await response.json();
-      setClientResetHistory(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('[FETCH] fetchClientResetHistory error:', err);
+    if (!user || !hasAdminAccess(user)) return;
+    const agencyId = user.agency_id || '';
+    const res = await fetch(`/api/clients/password-resets?agency_id=${agencyId}`);
+    if (!res.ok) {
       setClientResetHistory([]);
+      return;
     }
+    const data = await res.json();
+    setClientResetHistory(data);
   };
 
   useEffect(() => {
-    if (!user?.id || !user?.role) return;
+    if (user) {
+      fetchProcesses();
 
-    // Dados críticos para liberar a tela inicial rapidamente
-    fetchProcesses();
-    fetchAgencyUsers();
-    fetchAgencySettings();
+      if (isMaster(user)) {
+        fetchAgencies();
+        fetchAuditLogs();
+        fetchGlobalUsers();
+      }
 
-    // Notificações de processos para não-clientes (polling a cada 30s)
-    let notifInterval: ReturnType<typeof setInterval> | null = null;
-    let crmNotifInterval: ReturnType<typeof setInterval> | null = null;
+      if (isMaster(user)) {
+        fetchVisaTypes();  // Master needs visa types globally
+      }
 
-    if (!isClient(user) && user.agency_id) {
-      fetchProcessNotifications();
-      notifInterval = setInterval(fetchProcessNotifications, 30000);
+      if (!isMaster(user)) fetchVisaTypes();
 
-      // CRM pop-up notifications para equipe (supervisor, consultor, analista, financeiro)
-      const isTeamMember = ['supervisor', 'consultant', 'analyst', 'gerente_financeiro'].includes(user.role);
-      if (isTeamMember) {
-        fetchCrmNotifications();
-        crmNotifInterval = setInterval(fetchCrmNotifications, 30000);
+      if (isFinanceModuleEnabled) {
+        fetchExpenses();
+        fetchRevenues();
+      }
+
+      if (hasAdminAccess(user)) {
+        fetchLeads();
+        fetchClientResetHistory();
+        fetchAgencyUsers();
+        fetchTasks();
+        fetchDestinations();
+        fetchPlans();
+        fetchFormFields();
+      }
+
+      if (user.role === 'supervisor' || user.role === 'gerente_financeiro' || user.role === 'client') {
+        fetchAgencySettings();
+        fetchDestinations();
+        fetchPlans();
+        fetchFormFields();
       }
     }
-
-    return () => {
-      if (notifInterval) clearInterval(notifInterval);
-      if (crmNotifInterval) clearInterval(crmNotifInterval);
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (!user?.id || !user?.role) return;
-
-    const scopedAgencyId = getScopedAgencyId();
-    const cachePrefix = `${user.id}:${user.role}:${scopedAgencyId ?? 'global'}`;
-    const loadOnce = (name: string, loader: () => void) => {
-      const cacheKey = `${cachePrefix}:${name}`;
-      if (lazyLoadTrackerRef.current[cacheKey]) return;
-      lazyLoadTrackerRef.current[cacheKey] = true;
-      loader();
-    };
-
-    if (view === 'dashboard' || view === 'clients' || view === 'pipefy') {
-      loadOnce('visaTypes', fetchVisaTypes);
-      loadOnce('tasks', fetchTasks);
-      loadOnce('destinations', fetchDestinations);
-    }
-
-    if (view === 'forms' || view === 'agency_panel') {
-      loadOnce('visaTypes', fetchVisaTypes);
-      loadOnce('tasks', fetchTasks);
-      loadOnce('destinations', fetchDestinations);
-      loadOnce('plans', fetchPlans);
-      loadOnce('formFields', fetchFormFields);
-    }
-
-    if (view === 'finance') {
-      loadOnce('expenses', fetchExpenses);
-      loadOnce('revenues', fetchRevenues);
-    }
-
-    if (view === 'dashboard' || view === 'leads' || view === 'crm') {
-      loadOnce('leads', fetchLeads);
-    }
-
-    if (user.role === 'master' && view === 'agencies') {
-      loadOnce('agencies', fetchAgencies);
-      loadOnce('globalUsers', fetchGlobalUsers);
-    }
-
-    if (user.role === 'master' && view === 'audit') {
-      loadOnce('auditLogs', fetchAuditLogs);
-    }
-  }, [view, user, agencySettings?.id]);
-
-  useEffect(() => {
-    if (view !== 'process_detail' || !selectedProcess) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSelectedProcess(null);
-        setView('clients');
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [view, selectedProcess]);
-
-  // Smart prefetch: após login, antecipa dados das abas mais prováveis em background.
-  // Aguarda 2 s para não competir com os dados críticos do boot.
-  useEffect(() => {
-    if (!user?.id || !user?.role) return;
-    const timer = setTimeout(() => {
-      const scopedAgencyId = getScopedAgencyId();
-      const cachePrefix = `${user.id}:${user.role}:${scopedAgencyId ?? 'global'}`;
-      const markAndLoad = (name: string, loader: () => void) => {
-        const key = `${cachePrefix}:${name}`;
-        if (lazyLoadTrackerRef.current[key]) return;
-        lazyLoadTrackerRef.current[key] = true;
-        loader();
-      };
-      // Leads: pré-carrega para supervisor/master antes de navegarem ao CRM
-      if (user.role === 'master' || user.role === 'supervisor') {
-        markAndLoad('leads', fetchLeads);
-      }
-      // Financeiro: pré-carrega para quem tem acesso ao módulo
-      if (user.role === 'supervisor' || user.role === 'gerente_financeiro') {
-        markAndLoad('expenses', fetchExpenses);
-        markAndLoad('revenues', fetchRevenues);
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [user?.id]);
+  }, [user, view, canAccessFinanceModule(user)]);
 
   const [publicAgency, setPublicAgency] = useState<Agency | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -2766,44 +1435,32 @@ export default function App() {
     const pathParts = window.location.pathname.split('/').filter(Boolean);
     const slugFromPath = pathParts[0] === 'join' && pathParts[1] ? decodeURIComponent(pathParts[1]) : null;
     const agencySlug = params.get('agency') || slugFromPath;
-
-    const loadPublicAgency = async () => {
-      if (!agencySlug) return;
-      const agencyData = await fetch(`${API_URL}/api/agencies/by-slug/${agencySlug}`).then(r => r.ok ? r.json() : null).catch(() => null);
-      if (!agencyData || agencyData.error) return;
-      setPublicAgency(agencyData);
-
-      const destData = await fetch(`${API_URL}/api/destinations?agency_id=${agencyData.id}`).then(r => r.ok ? r.json() : null).catch(() => null);
-      setDestinations(Array.isArray(destData) ? destData : []);
-    };
-
-    loadPublicAgency();
+    if (agencySlug) {
+      fetch(`/api/agencies/by-slug/${agencySlug}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!data.error) {
+            setPublicAgency(data);
+            fetch(`/api/destinations?agency_id=${data.id}`)
+              .then(res => res.json())
+              .then(destData => setDestinations(destData));
+          }
+        });
+    }
   }, []);
 
   const handleUpdateAgencySettings = async (e?: any) => {
     if (e && e.preventDefault) e.preventDefault();
-    const scopedAgencyId = getScopedAgencyId();
-    
-    // Master needs to be viewing a specific agency (agency_panel)
-    // Non-master always has their agency scope set by getScopedAgencyId
-    if (!scopedAgencyId || !(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-    
-    const targetAgencyId = scopedAgencyId;
+    if (!user?.agency_id) return;
 
     try {
-      const res = await fetch(`${API_URL}/api/agencies/${targetAgencyId}/settings`, {
+      const res = await fetch(`\\/api/agencies/\$\{agencyId\}/settings`, {
         method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: agencySettings.name || '',
           logo_url: agencySettings.logo_url || '',
-          pre_form_questions: agencySettings.pre_form_questions || [],
+          pre_form_questions: agencySettings.pre_form_questions || []
         }),
       });
       if (res.ok) {
@@ -2814,19 +1471,13 @@ export default function App() {
         notify(errorData.error || 'Falha ao atualizar configurações.', 'error');
       }
     } catch (error) {
-      console.error('[AUTH] handleUpdateAgencySettings error:', error);
+      console.error('Error updating agency settings:', error);
       notify('Erro de conexão ao atualizar configurações.', 'error');
     }
   };
 
   const saveProcess = async (e: React.FormEvent) => {
     e.preventDefault();
-    const agencyId = getScopedAgencyId();
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-    if (!(user?.role === 'master') && !agencyId) return;
 
     if (editingProcess && editingProcess.status === 'completed') {
       notify('Somente processos abertos podem ser editados.', 'error');
@@ -2834,13 +1485,11 @@ export default function App() {
     }
 
     const method = editingProcess ? 'PUT' : 'POST';
-    const url = editingProcess
-      ? `${API_URL}/api/processes/${editingProcess.id}`
-      : `${API_URL}/api/processes`;
+    const url = editingProcess ? `/api/processes/${editingProcess.id}` : '/api/processes';
 
     const payload = editingProcess
       ? {
-          visa_type_id: processForm.visa_type_id ? Number(processForm.visa_type_id) : (editingProcess.visa_type_id || null),
+          visa_type_id: Number(processForm.visa_type_id || editingProcess.visa_type_id),
           consultant_id: processForm.consultant_id ? Number(processForm.consultant_id) : null,
           analyst_id: processForm.analyst_id ? Number(processForm.analyst_id) : null,
           status: processForm.status,
@@ -2853,15 +1502,12 @@ export default function App() {
           analyst_id: processForm.analyst_id ? Number(processForm.analyst_id) : null,
           status: processForm.status,
           internal_status: processForm.internal_status,
-          agency_id: agencyId,
+          agency_id: user?.agency_id,
         };
     
     const res = await fetch(url, {
       method,
-      headers: {
-        'Authorization': token ? `Bearer ${token}` : '',
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
@@ -2881,18 +1527,10 @@ export default function App() {
   };
 
   const handleUpdateProcessStatus = async (processId: number, newStatus: Process['status']) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     try {
-      const res = await fetch(`${API_URL}/api/processes/${processId}`, {
+      const res = await fetch(`/api/processes/${processId}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : '',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
 
@@ -2903,85 +1541,14 @@ export default function App() {
         notify('Falha ao atualizar o status.', 'error');
       }
     } catch (error) {
-      console.error('[AUTH] handleUpdateProcessStatus error:', error);
       notify('Erro de conexão.', 'error');
     }
   };
 
-  const handleApproveStage = async () => {
-    if (!selectedProcess || !(user?.id && user?.role)) return;
-
-    type StageTransition = { internal_status?: string; status?: string; label: string };
-    const stageTransitions: Record<string, StageTransition> = {
-      pending:             { internal_status: 'documents_requested', status: 'analyzing',   label: 'Liberar para Cliente (Docs + Formulários)' },
-      documents_requested: { internal_status: 'reviewing',                                  label: 'Confirmar Recebimento e Avançar para Revisão' },
-      reviewing:           { internal_status: 'submitted',           status: 'final_phase', label: 'Aprovar Revisão e Submeter' },
-      submitted:           { internal_status: 'confirmed',                                  label: 'Confirmar Aprovação das Autoridades' },
-      confirmed:           { status: 'completed',                                           label: 'Concluir Processo' },
-    };
-
-    const transition = stageTransitions[selectedProcess.internal_status];
-    if (!transition) {
-      notify('Esta etapa não pode ser aprovada manualmente.', 'error');
-      return;
-    }
-
-    requestConfirmation(
-      `Confirma a ação: "${transition.label}"?`,
-      async () => {
-        try {
-          const body: Record<string, any> = { changed_by_user_id: user.id };
-          if (transition.internal_status) body.internal_status = transition.internal_status;
-          if (transition.status) body.status = transition.status;
-
-          const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}`, {
-            method: 'PUT',
-            headers: {
-              'Authorization': token ? `Bearer ${token}` : '',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-          });
-          if (res.ok) {
-            notify('Etapa aprovada com sucesso!', 'success');
-            if (transition.status === 'completed') {
-              setSelectedProcess(null);
-              setView('clients');
-              fetchProcesses();
-            } else {
-              fetchProcessDetail(selectedProcess.id);
-              fetchProcesses();
-            }
-          } else {
-            notify('Falha ao aprovar a etapa.', 'error');
-          }
-        } catch (error) {
-          console.error('[AUTH] handleApproveStage error:', error);
-          notify('Erro de conexão.', 'error');
-        }
-      }
-    );
-  };
-
   const deleteProcess = async (id: number) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
-    if (user.role !== 'master') {
-      notify('Apenas o usuário master pode excluir processos.', 'error');
-      return;
-    }
-
     requestConfirmation('Tem certeza que deseja excluir este processo? Todos os documentos e mensagens serão removidos.', async () => {
-      const res = await fetch(`${API_URL}/api/processes/${id}?user_id=${user.id}&role=${user.role}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-      });
+      const res = await fetch(`/api/processes/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        setSelectedProcess(null);
-        setView('clients');
         fetchProcesses();
         notify('Processo excluído com sucesso!', 'success');
       } else {
@@ -2991,11 +1558,6 @@ export default function App() {
   };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!(user?.id && user?.role)) {
-      console.warn('[AUTH] Blocked protected request: invalid session');
-      return;
-    }
-
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -3005,7 +1567,6 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
         body: formData,
       });
       const data = await res.json();
@@ -3016,7 +1577,7 @@ export default function App() {
         notify(data.error || 'Falha ao enviar logo.', 'error');
       }
     } catch (err) {
-      console.error('[AUTH] handleLogoUpload error:', err);
+      console.error('Erro no upload:', err);
       notify('Erro de conexão durante o upload da logo.', 'error');
     }
   };
@@ -3061,11 +1622,6 @@ export default function App() {
 
   const renderGlobalOverlays = () => (
     <>
-      <NotificationPopup
-        notifications={crmNotifications}
-        onDismiss={handleDismissNotification}
-        onDismissAll={handleDismissAllNotifications}
-      />
       <div
         data-testid="global-toast-container"
         className="fixed top-4 right-4 z-[120] w-full max-w-sm px-4 space-y-3 pointer-events-none"
@@ -3360,16 +1916,6 @@ export default function App() {
     </>
   );
 
-  // Página pública de acompanhamento do processo simplificado
-  if (window.location.pathname.startsWith('/acompanhamento/')) {
-    return <ClientTrackingPage />;
-  }
-
-  // Página de popup para criar processo (abre em popup window separada)
-  if (window.location.pathname === '/processo-popup') {
-    return <ProcessPopupPage />;
-  }
-
   if (publicAgency && !user) {
     return (
       <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] flex items-center justify-center p-6 relative overflow-hidden">
@@ -3384,26 +1930,18 @@ export default function App() {
           className="w-full max-w-md bg-[var(--bg-card)]/50 p-10 rounded-[40px] border border-[var(--border-color)] shadow-2xl backdrop-blur-xl relative z-10"
         >
           <div className="flex justify-center mb-10">
-            {publicAgency.logo_url && publicAgency.logo_url.trim() !== '' ? (
+            {publicAgency.logo_url ? (
               <img 
                 src={publicAgency.logo_url} 
                 alt={publicAgency.name} 
                 className="h-16 object-contain"
                 referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                  const fallback = document.getElementById('public-agency-logo-fallback');
-                  if (fallback) fallback.style.display = 'flex';
-                }}
               />
-            ) : null}
-            <div 
-              id="public-agency-logo-fallback"
-              style={{ display: publicAgency.logo_url && publicAgency.logo_url.trim() !== '' ? 'none' : 'flex' }}
-              className="w-16 h-16 brand-gradient rounded-2xl items-center justify-center text-black font-black text-2xl"
-            >
-              {(publicAgency?.name || "A").charAt(0).toUpperCase()}
-            </div>
+            ) : (
+              <div className="w-16 h-16 brand-gradient rounded-2xl flex items-center justify-center text-black font-black text-2xl">
+                {(publicAgency?.name || "A").charAt(0).toUpperCase()}
+              </div>
+            )}
           </div>
           
           <div className="text-center mb-10">
@@ -3598,7 +2136,7 @@ export default function App() {
           
           <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
             <p className="text-[10px] text-[var(--text-muted)] text-center uppercase tracking-widest font-bold">
-              Korus Visa Consulting • 2026
+              Korus Visa Consulting • 2024
             </p>
           </div>
         </motion.div>
@@ -3608,15 +2146,15 @@ export default function App() {
   }
 
   // New Client Journey Flow
-  if (isClient(user)) {
+  if (user?.role === 'client') {
     return (
       <ClientJourneyFlow 
         user={user} 
-        onLogout={() => clearInvalidAuthData()} 
+        onLogout={() => setUser(null)} 
         processes={processes}
         onRefreshProcesses={fetchProcesses}
         agencyName={agencySettings.name}
-        agencyLogo={resolveLogoUrl(agencySettings.logo_url)}
+        agencyLogo={agencySettings.logo_url}
         destinations={destinations}
         preFormQuestions={agencySettings.pre_form_questions}
         plans={plans}
@@ -3628,45 +2166,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] flex">
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/60 z-40 lg:hidden" 
-          onClick={() => setSidebarOpen(false)} 
-        />
-      )}
-
       {/* Sidebar */}
-      <aside className={`
-        fixed lg:static inset-y-0 left-0 z-50
-        w-72 bg-[var(--bg-card)]/95 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col
-        transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
-        <div className="flex items-center justify-between gap-3 mb-10 px-2">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-shrink-0" style={{ width: 32, height: 32 }}>
-              <KorusLogo size={32} />
-              {!(user?.role === 'master') && agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
-                <img 
-                  src={resolveLogoUrl(agencySettings.logo_url)} 
-                  alt={agencySettings.name} 
-                  className="absolute inset-0 h-8 w-8 object-contain"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
-              )}
-            </div>
-            <span className="font-black text-2xl tracking-tighter brand-text-gradient">
-              {!(user?.role === 'master') && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
-            </span>
-          </div>
-          <button 
-            onClick={() => setSidebarOpen(false)} 
-            className="lg:hidden p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)]"
-          >
-            <X size={20} />
-          </button>
+      <aside className="w-72 bg-[var(--bg-card)]/50 backdrop-blur-xl border-r border-[var(--border-color)] p-6 flex flex-col">
+        <div className="flex items-center gap-3 mb-10 px-2">
+          {!isMaster(user) && agencySettings.logo_url ? (
+            <img 
+              src={agencySettings.logo_url} 
+              alt={agencySettings.name} 
+              className="h-8 object-contain"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <KorusLogo size={32} />
+          )}
+          <span className="font-black text-2xl tracking-tighter brand-text-gradient">
+            {!isMaster(user) && agencySettings.name ? agencySettings.name.toUpperCase() : 'KORUS'}
+          </span>
         </div>
 
         <div className="mb-6 px-2">
@@ -3687,42 +2202,15 @@ export default function App() {
             icon={LayoutDashboard} 
             label="Dashboard" 
             active={view === 'dashboard'} 
-            onClick={() => { setView('dashboard'); setSidebarOpen(false); }} 
+            onClick={() => setView('dashboard')} 
           />
           
-          {canAccessPipefyModule(user) && (user?.role === 'master' || agencyModules.pipefy) && (
+          {canAccessPipefyModule(user) && (
             <SidebarItem 
               icon={Trello} 
               label="Pipefy teste" 
               active={view === 'pipefy'} 
-              onClick={() => { setView('pipefy'); setSidebarOpen(false); }} 
-            />
-          )}
-
-          {canAccessCRMModule(user) && (user?.role === 'master' || agencyModules.crm) && (
-            <SidebarItem 
-              icon={Trello} 
-              label="CRM" 
-              active={view === 'crm'} 
-              onClick={() => { setView('crm'); setSidebarOpen(false); }} 
-            />
-          )}
-
-          {canAccessWhatsAppModule(user) && (user?.role === 'master' || agencyModules.whatsapp) && (
-            <SidebarItem
-              icon={Smartphone}
-              label="WhatsApp"
-              active={view === 'whatsapp'}
-              onClick={() => { setView('whatsapp'); setSidebarOpen(false); }}
-            />
-          )}
-
-          {(user?.role === 'master' || (user?.role === 'supervisor' && agencyModules.clients)) && (
-            <SidebarItem
-              icon={UserPlus}
-              label="Cadastro de Clientes"
-              active={view === 'client_registry'}
-              onClick={() => { setView('client_registry'); setSidebarOpen(false); }}
+              onClick={() => setView('pipefy')} 
             />
           )}
 
@@ -3731,52 +2219,44 @@ export default function App() {
               icon={Users} 
               label="Processos" 
               active={view === 'clients'} 
-              onClick={() => { setView('clients'); setSidebarOpen(false); }} 
+              onClick={() => setView('clients')} 
             />
           )}
 
-          {(user?.role === 'master') && (
+
+          {isMaster(user) && (
             <SidebarItem 
               icon={Building2} 
               label="Agências" 
               active={view === 'agencies'} 
-              onClick={() => { setView('agencies'); setSidebarOpen(false); }} 
+              onClick={() => setView('agencies')} 
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor') && (
+          {hasAdminAccess(user) && (
             <SidebarItem 
               icon={Users} 
               label="Equipe" 
               active={view === 'team'} 
-              onClick={() => { setView('team'); setSidebarOpen(false); }} 
+              onClick={() => setView('team')} 
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor') && (
-            <SidebarItem
-              icon={ClipboardList}
-              label="Formulários"
-              active={view === 'forms'}
-              onClick={() => { setView('forms'); setSidebarOpen(false); }}
-            />
-          )}
-
-          {(user?.role === 'master' || user?.role === 'supervisor') && (user?.role === 'master' || (agencyModules && agencyModules.leads !== false)) && (
+          {hasAdminAccess(user) && (
             <SidebarItem 
               icon={Contact} 
               label="Clientes" 
               active={view === 'leads'} 
-              onClick={() => { setView('leads'); setSidebarOpen(false); }} 
+              onClick={() => setView('leads')} 
             />
           )}
 
-          {(user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro') && (user?.role === 'master' || agencyModules.finance) && (
+          {canAccessFinanceModule(user) && (
             <SidebarItem 
               icon={DollarSign} 
               label="Financeiro" 
               active={view === 'finance'} 
-              onClick={() => { setView('finance'); setSidebarOpen(false); }} 
+              onClick={() => setView('finance')} 
             />
           )}
 
@@ -3785,7 +2265,7 @@ export default function App() {
               icon={Building2}
               label="Painel Agência"
               active={view === 'agency_panel'}
-              onClick={() => { setView('agency_panel'); setSidebarOpen(false); }}
+              onClick={() => setView('agency_panel')}
             />
           )}
 
@@ -3794,7 +2274,7 @@ export default function App() {
               icon={ShieldCheck} 
               label="Auditoria" 
               active={view === 'audit'} 
-              onClick={() => { setView('audit'); setSidebarOpen(false); }} 
+              onClick={() => setView('audit')} 
             />
           )}
 
@@ -3803,7 +2283,7 @@ export default function App() {
               icon={ClipboardList} 
               label="Configurações" 
               active={view === 'settings'} 
-              onClick={() => { setView('settings'); setSidebarOpen(false); }} 
+              onClick={() => setView('settings')} 
             />
           )}
         </nav>
@@ -3819,7 +2299,7 @@ export default function App() {
             </div>
           </div>
           <button 
-            onClick={() => clearInvalidAuthData()}
+            onClick={() => setUser(null)}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10 transition-all"
           >
             <LogOut size={20} />
@@ -3829,76 +2309,40 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className={`flex-1 relative bg-[var(--bg-main)] min-w-0 ${
-        view === 'whatsapp' ? 'p-0 overflow-hidden' : 'overflow-y-auto p-4 sm:p-6 lg:p-10'
-      }`}>
-        {view !== 'whatsapp' && (
-          <div className="absolute top-0 right-0 w-[30%] h-[30%] bg-emerald-500/5 blur-[100px] rounded-full pointer-events-none" />
-        )}
+      <main className="flex-1 overflow-y-auto p-10 relative bg-[var(--bg-main)]">
+        <div className="absolute top-0 right-0 w-[30%] h-[30%] bg-emerald-500/5 blur-[100px] rounded-full pointer-events-none" />
         
-        {view !== 'whatsapp' && (
-        <header className="flex justify-between items-center mb-6 lg:mb-10 relative z-10 gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Hamburger menu button for mobile */}
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] flex-shrink-0"
-            >
-              <Menu size={20} />
-            </button>
-            <div className="min-w-0">
-              <h2 className="text-2xl sm:text-4xl font-black tracking-tighter truncate">
-                {view === 'dashboard' && 'Dashboard'}
-                {view === 'clients' && 'Processos'}
-                {view === 'agencies' && 'Agências'}
-                {view === 'process_detail' && 'Processo'}
-                {view === 'finance' && 'Financeiro'}
-                {view === 'audit' && 'Auditoria'}
-                {view === 'settings' && 'Configurações'}
-                {view === 'leads' && 'Clientes'}
-                {view === 'agency_panel' && 'Painel Agência'}
-                {view === 'pipefy' && 'Pipefy'}
-                {view === 'crm' && 'CRM'}
-                {view === 'client_registry' && 'Cadastro de Clientes'}
-              </h2>
-              <div className="hidden sm:flex items-center gap-2 text-[var(--text-muted)] mt-1">
-                <MapPin size={14} />
-                <span className="text-sm font-medium">Korus Central • {new Date().toLocaleDateString()}</span>
-              </div>
+        <header className="flex justify-between items-center mb-10 relative z-10">
+          <div>
+            <h2 className="text-4xl font-black tracking-tighter">
+              {view === 'dashboard' && 'Dashboard'}
+              {view === 'clients' && 'Gestão de Processos'}
+              {view === 'agencies' && 'Gestão de Agências'}
+              {view === 'process_detail' && 'Detalhes do Processo'}
+              {view === 'finance' && 'Financeiro'}
+              {view === 'audit' && 'Logs de Auditoria'}
+              {view === 'settings' && 'Configurações'}
+              {view === 'leads' && 'Gestão de Clientes'}
+              {view === 'agency_panel' && 'Painel da Agência'}
+              {view === 'pipefy' && 'Pipefy teste'}
+            </h2>
+            <div className="flex items-center gap-2 text-[var(--text-muted)] mt-1">
+              <MapPin size={14} />
+              <span className="text-sm font-medium">Korus Central • {new Date().toLocaleDateString()}</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
-            <div className="relative hidden md:block">
+          <div className="flex items-center gap-4">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
-              <input
+              <input 
                 data-testid="global-search-input"
-                type="text"
-                value={view === 'leads' ? clientsSearchTerm : view === 'clients' ? clientsProcessSearchTerm : ''}
-                onChange={e => {
-                  if (view === 'leads') setClientsSearchTerm(e.target.value);
-                  if (view === 'clients') setClientsProcessSearchTerm(e.target.value);
-                }}
-                placeholder={
-                  view === 'leads'
-                    ? 'Buscar por nome, e-mail ou telefone...'
-                    : view === 'clients'
-                    ? 'Buscar por cliente, visto, consultor ou ID...'
-                    : 'Buscar...'
-                }
-                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-48 lg:w-80 text-sm"
+                type="text" 
+                placeholder="Buscar..." 
+                className="pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all w-64 text-sm"
               />
             </div>
-            {(view === 'clients' || view === 'dashboard') && agencyModules.simplified_process && user?.role !== 'client' && user?.role !== 'gerente_financeiro' && (
-              <button
-                onClick={() => setShowSimplifiedProcessModal(true)}
-                className="border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold transition-all text-sm"
-              >
-                <Plus size={18} />
-                <span className="hidden sm:inline">Processo Simplificado</span>
-              </button>
-            )}
-            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user?.role === 'master' || user?.role === 'supervisor') && (
+            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && hasAdminAccess(user) && (
               <button 
                 data-testid="new-process-button"
                 onClick={() => {
@@ -3913,51 +2357,26 @@ export default function App() {
                   });
                   setShowProcessModal(true);
                 }}
-                className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
+                className="brand-gradient text-black px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow"
               >
                 <Plus size={18} />
-                <span className="hidden sm:inline">Novo Processo</span>
+                <span>Novo Processo</span>
               </button>
             )}
-            {view === 'agencies' && (user?.role === 'master') && (
+            {view === 'agencies' && isMaster(user) && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, has_whatsapp: false, has_simplified_process: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
-                className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
+                onClick={() => setShowAgencyModal(true)}
+                className="brand-gradient text-black px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow"
               >
                 <Plus size={18} />
-                <span className="hidden sm:inline">Nova Agência</span>
+                <span>Nova Agência</span>
               </button>
             )}
           </div>
         </header>
-        )}
 
-        {(view === 'clients' || view === 'leads') && (
-          <div className="md:hidden mb-6 relative z-10">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={18} />
-              <input
-                data-testid="global-search-input-mobile"
-                type="text"
-                value={view === 'leads' ? clientsSearchTerm : clientsProcessSearchTerm}
-                onChange={e => {
-                  if (view === 'leads') setClientsSearchTerm(e.target.value);
-                  if (view === 'clients') setClientsProcessSearchTerm(e.target.value);
-                }}
-                placeholder={
-                  view === 'leads'
-                    ? 'Buscar por nome, e-mail ou telefone...'
-                    : 'Buscar por cliente, visto, consultor ou ID...'
-                }
-                className="w-full pl-10 pr-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-sm"
-              />
-            </div>
-          </div>
-        )}
-
-        <div className={view === 'whatsapp' ? 'h-full' : ''}>
-          <AnimatePresence mode="wait">
+        <AnimatePresence mode="wait">
           {view === 'dashboard' && (
             <motion.div 
               key="dashboard"
@@ -3967,29 +2386,24 @@ export default function App() {
               className="space-y-8"
             >
               {/* Stats Grid */}
-              {(() => {
-                const safeProcesses = Array.isArray(processes) ? processes : [];
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {[
-                      { label: 'Processos Ativos', value: safeProcesses.length, icon: FileText, color: 'text-emerald-400' },
-                      { label: 'Aguardando Docs', value: safeProcesses.filter(p => p?.internal_status === 'documents_requested').length, icon: Clock, color: 'text-amber-400' },
-                      { label: 'Em Análise', value: safeProcesses.filter(p => p?.status === 'analyzing').length, icon: Search, color: 'text-blue-400' },
-                      { label: 'Concluídos', value: safeProcesses.filter(p => p?.status === 'completed').length, icon: CheckCircle2, color: 'text-emerald-500' },
-                    ].map((stat, i) => (
-                      <div key={`stat-${i}`} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] shadow-xl">
-                        <div className="flex justify-between items-start mb-4">
-                          <div className={`p-3 bg-[var(--bg-input)] rounded-2xl ${stat.color}`}>
-                            <stat.icon size={24} />
-                          </div>
-                        </div>
-                        <p className="text-[var(--text-muted)] font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
-                        <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { label: 'Processos Ativos', value: processes.length, icon: FileText, color: 'text-emerald-400' },
+                  { label: 'Aguardando Docs', value: processes.filter(p => p.internal_status === 'documents_requested').length, icon: Clock, color: 'text-amber-400' },
+                  { label: 'Em Análise', value: processes.filter(p => p.status === 'analyzing').length, icon: Search, color: 'text-blue-400' },
+                  { label: 'Concluídos', value: processes.filter(p => p.status === 'completed').length, icon: CheckCircle2, color: 'text-emerald-500' },
+                ].map((stat, i) => (
+                  <div key={i} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] shadow-xl">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`p-3 bg-[var(--bg-input)] rounded-2xl ${stat.color}`}>
+                        <stat.icon size={24} />
                       </div>
-                    ))}
+                    </div>
+                    <p className="text-[var(--text-muted)] font-black uppercase text-[10px] tracking-widest">{stat.label}</p>
+                    <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
                   </div>
-                );
-              })()}
+                ))}
+              </div>
 
               <div className="bg-[var(--bg-card)]/50 border border-[var(--border-color)] p-6 rounded-3xl">
                 <div className="flex items-center gap-4 mb-4">
@@ -3999,7 +2413,7 @@ export default function App() {
                   <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Aguardando Docs</span>
                 </div>
                 <p className="text-5xl font-black">
-                  {(Array.isArray(processes) ? processes : []).filter(p => p?.internal_status === 'documents_requested').length}
+                  {processes.filter(p => p.internal_status === 'documents_requested').length}
                 </p>
               </div>
 
@@ -4011,7 +2425,7 @@ export default function App() {
                   <span className="text-[var(--text-muted)] font-bold text-xs uppercase tracking-widest">Concluídos</span>
                 </div>
                 <p className="text-5xl font-black">
-                  {(Array.isArray(processes) ? processes : []).filter(p => p?.status === 'completed').length}
+                  {processes.filter(p => p.status === 'completed').length}
                 </p>
               </div>
 
@@ -4024,10 +2438,10 @@ export default function App() {
                   </div>
                   
                   <div className="space-y-4">
-                    {(Array.isArray(processes) ? processes : []).slice(0, 5).map((process, idx) => (
+                    {processes.slice(0, 5).map(process => (
                       <div 
-                        key={process?.id ?? `process-${idx}`}
-                        onClick={() => process?.id && fetchProcessDetail(process.id)}
+                        key={process.id} 
+                        onClick={() => fetchProcessDetail(process.id)}
                         className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/30 transition-all cursor-pointer group"
                       >
                         <div className="flex items-center justify-between">
@@ -4036,125 +2450,61 @@ export default function App() {
                               <FileText size={24} />
                             </div>
                             <div>
-                              <h4 className="font-bold text-lg text-[var(--text-main)]">{process?.visa_name || 'Visto em Processamento'}</h4>
-                              <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process?.client_name || 'Cliente'}</p>
+                              <h4 className="font-bold text-lg text-[var(--text-main)]">{process.visa_name || 'Visto em Processamento'}</h4>
+                              <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process.client_name || 'Cliente'}</p>
                             </div>
                           </div>
                           <div className="text-right">
-                            <StatusBadge status={process?.status || 'pending'} />
+                            <StatusBadge status={process.status} />
                             <p className="text-[10px] text-[var(--text-muted)] font-bold mt-2 uppercase tracking-widest">
-                              Iniciado em {process?.created_at ? new Date(process.created_at).toLocaleDateString() : 'N/A'}
+                              Iniciado em {new Date(process.created_at).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
                       </div>
                     ))}
-                    {(Array.isArray(processes) ? processes : []).length === 0 && (
+                    {processes.length === 0 && (
                       <div className="text-center py-20 bg-[var(--bg-card)]/30 rounded-[40px] border border-dashed border-[var(--border-color)]">
                         <FileText className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={64} />
                         <h4 className="text-[var(--text-muted)] font-bold">Nenhum processo encontrado.</h4>
+                        {/* Start modal button removed as clients are handled separately */}
                       </div>
                     )}
                   </div>
                 </div>
 
                 <div className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-black tracking-tight">Notificações</h3>
-                    {processNotifications.length > 0 && (
-                      <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg">
-                        {processNotifications.length} atividades
-                      </span>
-                    )}
-                  </div>
-                  <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] space-y-6 max-h-[400px] overflow-y-auto custom-scrollbar">
-                    {processNotifications.length === 0 ? (
-                      <div className="text-center py-8">
-                        <CheckCircle2 className="mx-auto text-[var(--text-muted)] opacity-20 mb-3" size={36} />
-                        <p className="text-[var(--text-muted)] text-sm font-bold">Nenhuma atividade recente.</p>
-                      </div>
-                    ) : processNotifications.map((notif: any, i: number) => {
-                      const isCreated = notif.action === 'process_created' || notif.action === 'process_started';
-                      const isConsultant = notif.details?.includes('consultor assumiu');
-                      const Icon = isCreated ? FileText : isConsultant ? Users : ClipboardList;
-                      const color = isCreated ? 'text-cyan-400' : isConsultant ? 'text-emerald-400' : 'text-amber-400';
-                      const timeAgo = (() => {
-                        const diff = Date.now() - new Date(notif.created_at).getTime();
-                        const mins = Math.floor(diff / 60000);
-                        if (mins < 60) return `${mins}min atrás`;
-                        const hrs = Math.floor(mins / 60);
-                        if (hrs < 24) return `${hrs}h atrás`;
-                        return `${Math.floor(hrs / 24)}d atrás`;
-                      })();
-                      const STATUS_PT: Record<string, string> = {
-                        started: 'Iniciado',
-                        waiting_payment: 'Aguardando Pagamento',
-                        payment_confirmed: 'Pagamento Confirmado',
-                        analyzing: 'Em Análise',
-                        final_phase: 'Fase Final',
-                        completed: 'Concluído',
-                        pending: 'Pendente',
-                        proof_received: 'Comprovante Enviado',
-                        documents_requested: 'Documentos Solicitados',
-                        reviewing: 'Em Revisão',
-                        submitted: 'Submetido',
-                        confirmed: 'Confirmado',
-                      };
-                      const formatNotifText = (details: string, action: string, processId?: number): string => {
-                        if (!details) {
-                          if (action === 'process_created') return 'Novo processo criado';
-                          if (action === 'process_started') return 'Processo iniciado pelo cliente';
-                          return 'Atividade registrada';
-                        }
-                        // Remove prefixo "Processo #N:"
-                        let text = details.replace(/^Processo #\d+:\s*/, '').trim();
-                        // Consultor assumiu
-                        if (text.includes('consultor assumiu')) return 'Consultor assumiu o processo';
-                        // Pre-form editado
-                        if (action === 'pre_form_edited') return 'Pré-formulário editado pela equipe';
-                        // Traduz tokens de status no texto
-                        text = text.replace(/status_interno\s+([\w_]+)\s*→\s*([\w_]+)/g, (_: string, from: string, to: string) =>
-                          `Etapa interna: ${STATUS_PT[from] || from} → ${STATUS_PT[to] || to}`
-                        );
-                        text = text.replace(/status\s+([\w_]+)\s*→\s*([\w_]+)/g, (_: string, from: string, to: string) =>
-                          `Status: ${STATUS_PT[from] || from} → ${STATUS_PT[to] || to}`
-                        );
-                        // Se ainda sobrou algo técnico como "Process ID: N"
-                        if (/^process id:/i.test(text)) return `Processo #${processId || ''} atualizado`;
-                        return text;
-                      };
-                      const notifText = formatNotifText(notif.details, notif.action, notif.process_id);
-                      return (
-                        <div key={`notif-${notif.id}-${i}`} className="flex gap-4 group cursor-pointer">
-                          <div className={`mt-1 flex-shrink-0 ${color}`}>
-                            <Icon size={18} />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-emerald-400 transition-colors leading-snug">
-                              {notifText}
-                            </p>
-                            {notif.client_name && (
-                              <p className="text-[10px] text-emerald-400 font-bold mt-0.5">{notif.client_name}</p>
-                            )}
-                            <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest mt-1">{timeAgo}</p>
-                          </div>
+                  <h3 className="text-xl font-black tracking-tight">Notificações</h3>
+                  <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] space-y-6">
+                    {[
+                      { text: 'Seu documento "Passaporte" foi aprovado.', time: '2h atrás', icon: CheckCircle2, color: 'text-emerald-400' },
+                      { text: 'Nova mensagem do seu consultor.', time: '5h atrás', icon: MessageSquare, color: 'text-blue-400' },
+                      { text: 'Pagamento confirmado com sucesso.', time: '1d atrás', icon: DollarSign, color: 'text-emerald-500' },
+                    ].map((notif, i) => (
+                      <div key={i} className="flex gap-4 group cursor-pointer">
+                        <div className={`mt-1 ${notif.color}`}>
+                          <notif.icon size={18} />
                         </div>
-                      );
-                    })}
+                        <div>
+                          <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-emerald-500 transition-colors">{notif.text}</p>
+                          <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest mt-1">{notif.time}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {view === 'finance' && (user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'gerente_financeiro') && (
+          {view === 'finance' && canAccessFinanceModule(user) && (
             <motion.div 
               key="finance"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               className="space-y-8"
             >
-              {!isFinanceModuleEnabled && !(user?.role === 'master') && (
+              {!isFinanceModuleEnabled && !isMaster(user) && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3" data-testid="finance-module-disabled-warning">
                   <p className="text-sm font-bold text-amber-300">
                     O módulo financeiro desta agência está desativado. Você pode visualizar os dados, mas não pode lançar novas contas.
@@ -4171,10 +2521,10 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1">
-                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
+                    ${revenues.reduce((acc, curr) => acc + curr.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
-                    {(Array.isArray(revenues) ? revenues : []).filter(r => r?.status === 'pending').length} pendentes
+                    {revenues.filter(r => r.status === 'pending').length} pendentes
                   </p>
                 </div>
                 <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)]">
@@ -4185,10 +2535,10 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-red-400">
-                    {formatCurrency((Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
+                    ${expenses.reduce((acc, curr) => acc + curr.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                   <p className="text-[10px] text-[var(--text-muted)] mt-2 font-bold uppercase tracking-widest">
-                    {(Array.isArray(expenses) ? expenses : []).filter(e => e?.status === 'pending').length} pendentes
+                    {expenses.filter(e => e.status === 'pending').length} pendentes
                   </p>
                 </div>
                 <div className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)]">
@@ -4199,7 +2549,7 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="text-3xl font-black mt-1 text-cyan-400">
-                    {formatCurrency((Array.isArray(revenues) ? revenues : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0) - (Array.isArray(expenses) ? expenses : []).reduce((acc, curr) => acc + (Number(curr?.amount) || 0), 0))}
+                    ${(revenues.reduce((acc, curr) => acc + curr.amount, 0) - expenses.reduce((acc, curr) => acc + curr.amount, 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </h3>
                 </div>
               </div>
@@ -4222,9 +2572,9 @@ export default function App() {
                   </div>
                   <button 
                     data-testid="finance-new-entry-button"
-                    disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                    disabled={!isFinanceModuleEnabled && !isMaster(user)}
                     onClick={() => {
-                      if (!isFinanceModuleEnabled && user?.role !== 'master') {
+                      if (!isFinanceModuleEnabled && !isMaster(user)) {
                         notify('Módulo financeiro desativado para esta agência.', 'error');
                         return;
                       }
@@ -4241,7 +2591,7 @@ export default function App() {
                       setShowFinanceModal(true);
                     }}
                     className={`brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 ${
-                      !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-50 cursor-not-allowed' : ''
+                      !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     <Plus size={16} />
@@ -4280,7 +2630,7 @@ export default function App() {
                           </td>
                           <td className="px-6 py-4">
                             <p className={`font-black ${financeTab === 'receivable' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {formatCurrency(item.amount)}
+                              ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </p>
                           </td>
                           <td className="px-6 py-4">
@@ -4295,9 +2645,9 @@ export default function App() {
                           <td className="px-6 py-4 text-right">
                             <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button 
-                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
                                 onClick={() => {
-                                  if (!isFinanceModuleEnabled && user?.role !== 'master') {
+                                  if (!isFinanceModuleEnabled && !isMaster(user)) {
                                     notify('Módulo financeiro desativado para esta agência.', 'error');
                                     return;
                                   }
@@ -4314,17 +2664,16 @@ export default function App() {
                                   setShowFinanceModal(true);
                                 }}
                                 className={`p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all ${
-                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
-                                title="Editar lançamento"
                               >
-                                <Pencil size={14} />
+                                <Search size={14} />
                               </button>
                               <button 
-                                disabled={!isFinanceModuleEnabled && user?.role !== 'master'}
+                                disabled={!isFinanceModuleEnabled && !isMaster(user)}
                                 onClick={() => deleteFinance(item.id, financeTab)}
                                 className={`p-2 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all ${
-                                  !isFinanceModuleEnabled && user?.role !== 'master' ? 'opacity-40 cursor-not-allowed' : ''
+                                  !isFinanceModuleEnabled && !isMaster(user) ? 'opacity-40 cursor-not-allowed' : ''
                                 }`}
                               >
                                 <Trash2 size={14} />
@@ -4348,15 +2697,15 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'agencies' && (user?.role === 'master') && (
+          {view === 'agencies' && isMaster(user) && (
             <motion.div 
               key="agencies"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
             >
-              {(Array.isArray(agencies) ? agencies : []).map(agency => (
-                <div key={agency?.id ?? `agency-${agency?.name}`} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/50 transition-all group">
+              {agencies.map(agency => (
+                <div key={agency.id} className="bg-[var(--bg-card)]/50 p-6 rounded-3xl border border-[var(--border-color)] hover:border-emerald-500/50 transition-all group">
                   <div className="flex justify-between items-start mb-6">
                     <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl group-hover:brand-gradient group-hover:text-black transition-all w-14 h-14 flex items-center justify-center overflow-hidden">
                       {agency.logo_url ? (
@@ -4382,15 +2731,10 @@ export default function App() {
                             slug: agency.slug,
                             has_finance: modules.finance,
                             has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
-                            has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
-                            has_crm: modules.crm !== undefined ? modules.crm : true,
-                            has_whatsapp: modules.whatsapp === true,
-                            has_simplified_process: modules.simplified_process === true,
-                            has_clients: modules.clients === true,
                             admin_name: '',
                             admin_email: '',
                             admin_password: ''
-                          } as any);
+                          });
                           setShowAgencyModal(true);
                         }}
                         className="p-2 hover:bg-[var(--bg-input)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
@@ -4442,9 +2786,6 @@ export default function App() {
                       )}
                       {JSON.parse(agency.modules || '{}').pipefy && (
                         <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">Pipefy</span>
-                      )}
-                      {(JSON.parse(agency.modules || '{}').leads !== undefined ? JSON.parse(agency.modules || '{}').leads : JSON.parse(agency.modules || '{}').chat) !== false && (
-                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">Leads</span>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -4516,165 +2857,71 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden"
             >
-              <div className="p-6 border-b border-[var(--border-color)] bg-white/5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">
-                    Exibindo: {filteredClientProcesses.length} de {(Array.isArray(processes) ? processes : []).length} processos
-                  </p>
-                  <button
-                    onClick={() => setShowClientsFilters((prev) => !prev)}
-                    className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border flex items-center gap-2 ${
-                      showClientsFilters
-                        ? 'brand-gradient text-black border-transparent'
-                        : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
-                    }`}
-                  >
-                    <Filter size={14} />
-                    Filtros
-                  </button>
-                </div>
-
-                {showClientsFilters && (
-                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-                    <select
-                      value={clientsProcessStatusFilter}
-                      onChange={(e) => setClientsProcessStatusFilter(e.target.value)}
-                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                      <option value="">Todos status</option>
-                      <option value="started">Iniciado</option>
-                      <option value="waiting_payment">Aguard. Pagamento</option>
-                      <option value="payment_confirmed">Pgto Confirmado</option>
-                      <option value="analyzing">Em Análise</option>
-                      <option value="final_phase">Fase Final</option>
-                      <option value="completed">Concluído</option>
-                    </select>
-
-                    <select
-                      value={clientsProcessInternalStatusFilter}
-                      onChange={(e) => setClientsProcessInternalStatusFilter(e.target.value)}
-                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                      <option value="">Todos status internos</option>
-                      {clientsProcessInternalStatusOptions.map((status) => (
-                        <option key={status} value={status}>{STATUS_LABELS[status] || status}</option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={clientsProcessConsultantFilter}
-                      onChange={(e) => setClientsProcessConsultantFilter(e.target.value)}
-                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                      <option value="">Todos consultores</option>
-                      {clientsProcessConsultantOptions.map((consultant) => (
-                        <option key={consultant} value={consultant}>{consultant}</option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={clientsProcessPaymentFilter}
-                      onChange={(e) => setClientsProcessPaymentFilter(e.target.value)}
-                      className="px-3 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/40"
-                    >
-                      <option value="">Todos pagamentos</option>
-                      <option value="pending">Pendente</option>
-                      <option value="proof_received">Comprovante</option>
-                      <option value="confirmed">Confirmado</option>
-                    </select>
-
-                    <button
-                      onClick={() => {
-                        setClientsProcessSearchTerm('');
-                        setClientsProcessStatusFilter('');
-                        setClientsProcessInternalStatusFilter('');
-                        setClientsProcessConsultantFilter('');
-                        setClientsProcessPaymentFilter('');
-                      }}
-                      className="px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-[var(--bg-input)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
-                    >
-                      Limpar filtros
-                    </button>
-                  </div>
-                )}
-              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
                     <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
-                      <th className="px-6 py-4">Tipo de Visto</th>
                       <th className="px-6 py-4">Cliente</th>
+                      <th className="px-6 py-4">Visto</th>
                       <th className="px-6 py-4">Consultor</th>
                       <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4">Status Interno</th>
-                      <th className="px-6 py-4">Data Início</th>
-                      {isConsultantSupervisorOrMaster(user) && <th className="px-6 py-4 text-right">Ações</th>}
+                      <th className="px-6 py-4">Etapa</th>
+                      <th className="px-6 py-4 text-right">Ação</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
-                    {filteredClientProcesses.map((process: any, idx: number) => (
-                      <tr key={process?.id ?? `proc-${idx}`} onClick={() => process?.id && fetchProcessDetail(process.id)} className="hover:bg-[var(--bg-input)] transition-all cursor-pointer">
+                    {processes.map(process => (
+                      <tr key={process.id} className="hover:bg-[var(--bg-input)] transition-all">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
-                              <FileText size={16} />
+                              {process.client_name?.charAt(0) || '?'}
                             </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="font-bold text-sm">{process?.visa_name || 'Visto'}</span>
-                              {process?.process_type === 'simplified' && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 w-fit">
-                                  ✦ Simplificado
-                                </span>
-                              )}
-                            </div>
+                            <span className="font-bold text-sm">{process.client_name || 'Desconhecido'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.client_name || '-'}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.consultant_name || <span className="opacity-40">Não atribuído</span>}</td>
-                        <td className="px-6 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.internal_status || '-'}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
-                        {isConsultantSupervisorOrMaster(user) && (
-                          <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
-                            <button
-                              onClick={async () => {
-                                if (!process?.id || !user?.id) return;
-                                try {
-                                  await apiRequest(`${API_URL}/api/processes/${process.id}`, {
-                                    method: 'PUT',
-                                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-                                    body: JSON.stringify({ consultant_id: user.id })
-                                  });
-                                  await fetchProcesses();
-                                } catch (err) {
-                                  console.error('Erro ao assumir processo:', err);
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                                process?.consultant_id === user?.id
-                                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 cursor-default'
-                                  : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:border-emerald-500/50 hover:text-emerald-400'
-                              }`}
-                              disabled={process?.consultant_id === user?.id}
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process.visa_name || process.type}</td>
+                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">{process.consultant_name || 'Não atribuído'}</td>
+                        <td className="px-6 py-4">
+                          <StatusBadge status={process.status} />
+                        </td>
+                        <td className="px-6 py-4 text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest">
+                          {STATUS_LABELS[process.internal_status] || process.internal_status}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            {(user.role === 'consultant' || hasAdminAccess(user)) && process.status !== 'completed' && (
+                              <button
+                                data-testid={`process-edit-button-${process.id}`}
+                                onClick={() => openProcessEditModal(process)}
+                                className="p-2 hover:bg-blue-500/20 rounded-lg transition-all text-blue-400"
+                                title="Editar processo aberto"
+                              >
+                                <Pencil size={18} />
+                              </button>
+                            )}
+                            <button 
+                              data-testid={`process-details-button-${process.id}`}
+                              onClick={() => fetchProcessDetail(process.id)}
+                              className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
+                              title="Ver detalhes"
                             >
-                              {process?.consultant_id === user?.id ? 'Responsável' : 'Assumir Processo'}
+                              <ChevronRight size={20} />
                             </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                    {(Array.isArray(processes) ? processes : []).length === 0 && (
-                      <tr>
-                        <td colSpan={isConsultantSupervisorOrMaster(user) ? 7 : 6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">Nenhum processo encontrado</td>
-                      </tr>
-                    )}
-                    {(Array.isArray(processes) ? processes : []).length > 0 && filteredClientProcesses.length === 0 && (
-                      <tr>
-                        <td colSpan={isConsultantSupervisorOrMaster(user) ? 7 : 6} className="px-6 py-12 text-center text-[var(--text-muted)] text-sm">
-                          Nenhum processo encontrado com os filtros atuais
+                            {hasAdminAccess(user) && (
+                              <button 
+                                data-testid={`process-delete-button-${process.id}`}
+                                onClick={() => deleteProcess(process.id)}
+                                className="p-2 hover:bg-red-500/20 rounded-lg transition-all text-red-400"
+                                title="Excluir processo"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -4697,76 +2944,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'crm' && (
-            <motion.div
-              key="crm"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="h-full"
-            >
-              <CRMPanel
-                processes={processes}
-                clients={agencyUsers}
-                onUpdateStatus={handleUpdateProcessStatus}
-                onSelectProcess={(process) => fetchProcessDetail(process.id)}
-                agencyId={getScopedAgencyId() ?? 0}
-                user={user!}
-              />
-            </motion.div>
-          )}
-
-          {view === 'whatsapp' && (
-            <motion.div
-              key="whatsapp"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="h-full"
-            >
-              <WhatsAppPanel
-                agencyId={getScopedAgencyId() ?? 0}
-                user={user!}
-                token={token || ''}
-                destinations={destinations}
-                visaTypes={visaTypes}
-                plans={plans}
-              />
-            </motion.div>
-          )}
-
-          {view === 'forms' && (user?.role === 'master' || user?.role === 'supervisor') && (
-            <motion.div
-              key="forms"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
-              <FormsPanel
-                agencyId={getScopedAgencyId()}
-                userRole={user?.role || ''}
-              />
-            </motion.div>
-          )}
-
-          {view === 'client_registry' && (user?.role === 'master' || (user?.role === 'supervisor' && agencyModules.clients)) && (
-            <motion.div
-              key="client_registry"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
-              <ClientsRegistryPanel
-                apiUrl={API_URL}
-                token={token}
-                agencyId={getScopedAgencyId() ?? 0}
-                userId={user?.id ?? 0}
-                userRole={user?.role ?? ''}
-                notify={notify}
-                destinations={destinations}
-                visaTypes={visaTypes}
-                plans={plans}
-              />
-            </motion.div>
-          )}
-
-          {view === 'leads' && (user?.role === 'master' || user?.role === 'supervisor') && (
+          {view === 'leads' && hasAdminAccess(user) && (
             <motion.div 
               key="leads"
               initial={{ opacity: 0 }}
@@ -4775,7 +2953,7 @@ export default function App() {
             >
               <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                 <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
-                  <h3 className="font-black text-lg uppercase tracking-tighter">Clientes da Agência</h3>
+                  <h3 className="font-black text-lg uppercase tracking-tighter">Leads da Agência</h3>
                   <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {leads.length}</p>
                 </div>
                 <div className="overflow-x-auto">
@@ -4787,48 +2965,13 @@ export default function App() {
                         <th className="px-6 py-4">Telefone</th>
                         <th className="px-6 py-4">Data Cadastro</th>
                         <th className="px-6 py-4">Status Processo</th>
-                        <th className="px-6 py-4">Formulário Atual</th>
                         <th className="px-6 py-4">Status Interno</th>
                         <th className="px-6 py-4 text-right">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
-                      {(() => {
-                        const term = clientsSearchTerm.trim().toLowerCase();
-                        const normalize = (s: string) => (s || '').replace(/\D/g, '');
-                        const filteredLeads = term
-                          ? leads.filter(lead =>
-                              (lead.name || '').toLowerCase().includes(term) ||
-                              (lead.email || '').toLowerCase().includes(term) ||
-                              normalize(lead.phone || '').includes(normalize(term))
-                            )
-                          : leads;
-
-                        if (leads.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={8} className="px-6 py-20 text-center">
-                                <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
-                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente cadastrado.</p>
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        if (filteredLeads.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={8} className="px-6 py-20 text-center">
-                                <Search className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
-                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente encontrado para <span className="text-emerald-400">"{clientsSearchTerm}"</span>.</p>
-                                <p className="text-[var(--text-muted)] text-xs mt-1">Tente buscar por nome, e-mail ou telefone.</p>
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        return filteredLeads.map((lead) => (
-                        <tr key={lead.id} className="hover:bg-[var(--bg-input)] transition-colors group">
+                      {leads.map((lead, idx) => (
+                        <tr key={`${lead.id}-${lead.process_id || idx}`} className="hover:bg-[var(--bg-input)] transition-colors group">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
@@ -4847,18 +2990,6 @@ export default function App() {
                               <StatusBadge status={lead.process_status} />
                             ) : (
                               <span className="text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-400/10 px-2 py-1 rounded-md">Não Iniciado</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {lead.latest_form_title ? (
-                              <div>
-                                <p className="text-xs font-bold text-[var(--text-main)] leading-tight">{lead.latest_form_title}</p>
-                                <p className="text-[10px] text-[var(--text-muted)] mt-1">
-                                  {lead.latest_form_updated_at ? new Date(lead.latest_form_updated_at).toLocaleDateString() : '-'}
-                                </p>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Sem resposta</span>
                             )}
                           </td>
                           <td className="px-6 py-4">
@@ -4884,7 +3015,8 @@ export default function App() {
                                 <>
                                   <button 
                                     onClick={() => {
-                                      if (lead.process_id) openProcessEditById(lead.process_id);
+                                      const proc = processes.find(p => p.id === lead.process_id);
+                                      if (proc) openProcessEditModal(proc);
                                     }}
                                     className="p-2 hover:bg-blue-500/20 rounded-lg transition-all text-blue-400"
                                     title="Editar Processo"
@@ -4892,7 +3024,7 @@ export default function App() {
                                     <Pencil size={18} />
                                   </button>
                                   <button 
-                                    onClick={() => lead.process_id != null && fetchProcessDetail(lead.process_id as number)}
+                                    onClick={() => fetchProcessDetail(lead.process_id)}
                                     className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
                                     title="Ver Detalhes"
                                   >
@@ -4903,8 +3035,7 @@ export default function App() {
                             </div>
                           </td>
                         </tr>
-                      ));
-                      })()}
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -4912,7 +3043,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'audit' && (user?.role === 'master') && (
+          {view === 'audit' && isMaster(user) && (
             <motion.div 
               key="audit"
               initial={{ opacity: 0 }}
@@ -4920,15 +3051,8 @@ export default function App() {
               className="space-y-8"
             >
               <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
-                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
+                <div className="p-6 border-b border-[var(--border-color)]">
                   <h3 className="font-black text-lg uppercase tracking-tighter">Logs do Sistema</h3>
-                  <button
-                    onClick={clearAuditLogs}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"
-                  >
-                    <Trash2 size={14} />
-                    Excluir Log
-                  </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
@@ -4939,12 +3063,11 @@ export default function App() {
                         <th className="px-6 py-4">Usuário</th>
                         <th className="px-6 py-4">Ação</th>
                         <th className="px-6 py-4">Detalhes</th>
-                        <th className="px-6 py-4"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-color)]">
                       {auditLogs.map(log => (
-                        <tr key={log.id} className="hover:bg-[var(--bg-input)] transition-colors group">
+                        <tr key={log.id} className="hover:bg-[var(--bg-input)] transition-colors">
                           <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {new Date(log.created_at).toLocaleString('pt-BR')}
                           </td>
@@ -4962,31 +3085,11 @@ export default function App() {
                           <td className="px-6 py-4 text-xs text-[var(--text-muted)]">
                             {log.details}
                           </td>
-                          <td className="px-6 py-4 text-right">
-                            <button
-                              onClick={async () => {
-                                const res = await fetch(`${API_URL}/api/audit-logs/${log.id}?user_id=${user?.id}`, {
-                                  method: 'DELETE',
-                                  headers: { 'Authorization': token ? `Bearer ${token}` : '' },
-                                });
-                                if (res.ok) {
-                                  setAuditLogs(prev => prev.filter(l => l.id !== log.id));
-                                  notify('Log excluído com sucesso!', 'success');
-                                } else {
-                                  notify('Não foi possível excluir o log.', 'error');
-                                }
-                              }}
-                              className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 rounded-lg text-[var(--text-muted)] hover:text-red-400 transition-all"
-                              title="Excluir este log"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </td>
                         </tr>
                       ))}
                       {auditLogs.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-6 py-20 text-center">
+                          <td colSpan={5} className="px-6 py-20 text-center">
                             <ShieldCheck className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
                             <p className="text-[var(--text-muted)] font-bold">Nenhum log registrado.</p>
                           </td>
@@ -4999,7 +3102,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'settings' && (user?.role === 'master') && (
+          {view === 'settings' && isMaster(user) && (
             <motion.div 
               key="settings-master"
               initial={{ opacity: 0 }}
@@ -5131,7 +3234,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'team' && (user?.role === 'master' || user?.role === 'supervisor') && (
+          {view === 'team' && hasAdminAccess(user) && (
             <motion.div 
               key="team"
               initial={{ opacity: 0 }}
@@ -5216,7 +3319,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'agency_panel' && canViewAgenciesPanel(user) && (
+          {view === 'agency_panel' && (isMaster(user) || user?.role === 'supervisor') && (
             <motion.div 
               key="agency-panel"
               initial={{ opacity: 0 }}
@@ -5254,13 +3357,12 @@ export default function App() {
                     <div className="p-6 space-y-5">
                       <div className="flex items-center gap-4">
                         <div className="w-16 h-16 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)] flex items-center justify-center overflow-hidden">
-                          {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' ? (
+                          {agencySettings.logo_url ? (
                             <img
-                              src={resolveLogoUrl(agencySettings.logo_url)}
+                              src={agencySettings.logo_url}
                               alt={agencySettings.name}
                               className="w-full h-full object-contain"
                               referrerPolicy="no-referrer"
-                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                           ) : (
                             <Building2 size={28} className="text-[var(--text-muted)]" />
@@ -5275,7 +3377,7 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
                           <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Administrador</p>
-                          <p className="text-sm font-bold text-[var(--text-main)]">{agencySettings.admin_email || user?.email || ''}</p>
+                          <p className="text-sm font-bold text-[var(--text-main)]">{agencySettings.admin_email || user.email}</p>
                         </div>
                         <div className="p-4 rounded-2xl bg-[var(--bg-input)] border border-[var(--border-color)]">
                           <p className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mb-1">Módulo Financeiro</p>
@@ -5344,9 +3446,9 @@ export default function App() {
                               <span className="text-xs font-bold text-[var(--text-muted)] group-hover:text-[var(--text-main)]">Upload Logo</span>
                               <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
                             </label>
-                            {agencySettings.logo_url && agencySettings.logo_url.trim() !== '' && (
+                            {agencySettings.logo_url && (
                               <div className="w-32 h-32 bg-[var(--bg-input)] rounded-2xl flex items-center justify-center p-4 border border-[var(--border-color)]">
-                                <img src={resolveLogoUrl(agencySettings.logo_url)} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                                <img src={agencySettings.logo_url} alt="Logo Preview" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                               </div>
                             )}
                           </div>
@@ -5376,7 +3478,6 @@ export default function App() {
                       { id: 'vistos', label: 'Tipos de Visto', icon: ShieldCheck },
                       { id: 'formularios', label: 'Form Builder', icon: FileText },
                       { id: 'planos', label: 'Planos', icon: DollarSign },
-                      { id: 'email', label: 'E-mail SMTP', icon: Mail },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -5685,7 +3786,7 @@ export default function App() {
                             <p className="text-xs text-[var(--text-muted)] line-clamp-2">{plan.description}</p>
                             <div className="flex flex-wrap gap-1">
                               {(Array.isArray(plan.features) ? plan.features : []).slice(0, 3).map((f, i) => (
-                                <span key={`feature-${f ?? 'empty'}-${i}`} className="text-[9px] bg-[var(--bg-input)] text-[var(--text-muted)] px-2 py-0.5 rounded-full border border-[var(--border-color)]">
+                                <span key={i} className="text-[9px] bg-[var(--bg-input)] text-[var(--text-muted)] px-2 py-0.5 rounded-full border border-[var(--border-color)]">
                                   {f}
                                 </span>
                               ))}
@@ -5912,7 +4013,7 @@ export default function App() {
                                       onClick={() => {
                                         setEditingForm(f);
                                         setFormForm({ 
-                                          visa_type_id: (f.visa_type_id as number) || 0, 
+                                          visa_type_id: f.visa_type_id, 
                                           title: f.title, 
                                           fields: f.fields || [] 
                                         });
@@ -5944,117 +4045,11 @@ export default function App() {
                       </div>
                     </div>
                   )}
-
-                  {configSubTab === 'email' && (
-                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
-                      <div className="p-6 border-b border-[var(--border-color)] flex items-center justify-between">
-                        <div>
-                          <h3 className="font-black text-lg uppercase tracking-tighter">E-mail via Resend</h3>
-                          <p className="text-xs text-[var(--text-muted)] mt-1">Configure o Resend para envio automático de e-mails aos clientes via regras de automação CRM. Funciona em qualquer servidor de hospedagem.</p>
-                        </div>
-                        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${smtpHasPassword ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
-                          {smtpHasPassword ? <Check size={12} /> : <AlertCircle size={12} />}
-                          {smtpHasPassword ? 'Configurado' : 'Não configurado'}
-                        </div>
-                      </div>
-
-                      <div className="p-6 space-y-6">
-                        {smtpMessage && (
-                          <div className={`p-4 rounded-2xl text-sm font-bold flex items-center gap-3 ${smtpMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                            {smtpMessage.type === 'success' ? <Check size={16} /> : <AlertCircle size={16} />}
-                            {smtpMessage.text}
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="md:col-span-2 space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">
-                              API Key do Resend
-                              {smtpHasPassword && <span className="ml-2 text-emerald-400">(configurada — deixe em branco para manter)</span>}
-                            </label>
-                            <input
-                              type="password"
-                              placeholder={smtpHasPassword ? 're_••••••••••••••••••••••••••••••••' : 're_xxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium font-mono"
-                              value={smtpConfig.api_key}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, api_key: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">E-mail Remetente</label>
-                            <input
-                              type="email"
-                              placeholder="noreply@suaagencia.com"
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.from_email}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, from_email: e.target.value })}
-                            />
-                            <p className="text-[10px] text-[var(--text-muted)] ml-1">Deve ser de um domínio verificado no Resend.</p>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] ml-1">Nome Remetente</label>
-                            <input
-                              type="text"
-                              placeholder="Sua Agência"
-                              className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpConfig.from_name}
-                              onChange={(e) => setSmtpConfig({ ...smtpConfig, from_name: e.target.value })}
-                            />
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={handleSaveSmtp}
-                          disabled={smtpSaving}
-                          className="w-full brand-gradient text-black font-black py-3 rounded-2xl hover:opacity-90 transition-all shadow-lg uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60"
-                        >
-                          {smtpSaving ? <Clock size={14} className="animate-spin" /> : <Check size={14} />}
-                          {smtpSaving ? 'Salvando...' : 'Salvar Configuração'}
-                        </button>
-
-                        <div className="border-t border-[var(--border-color)] pt-6 space-y-4">
-                          <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)]">Teste de Envio</h4>
-                          <div className="flex gap-3">
-                            <input
-                              type="email"
-                              placeholder="seu@email.com"
-                              className="flex-1 px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl outline-none focus:ring-2 focus:ring-violet-500 transition-all text-sm font-medium"
-                              value={smtpTestEmail}
-                              onChange={(e) => setSmtpTestEmail(e.target.value)}
-                            />
-                            <button
-                              onClick={handleTestSmtp}
-                              disabled={smtpTesting || !smtpTestEmail}
-                              className="px-6 py-3 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 font-black rounded-2xl uppercase tracking-widest text-xs flex items-center gap-2 transition-all disabled:opacity-50"
-                            >
-                              {smtpTesting ? <Clock size={14} className="animate-spin" /> : <Send size={14} />}
-                              {smtpTesting ? 'Enviando...' : 'Testar'}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="bg-[var(--bg-input)] border border-[var(--border-color)] rounded-2xl p-4 space-y-2">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] flex items-center gap-2">
-                            <Mail size={12} />
-                            Por que Resend?
-                          </p>
-                          <ul className="text-xs text-[var(--text-muted)] space-y-1 list-disc list-inside">
-                            <li>Funciona via HTTPS — sem bloqueio de porta SMTP no servidor</li>
-                            <li>Plano gratuito: <span className="text-[var(--text-main)] font-bold">3.000 e-mails/mês</span></li>
-                            <li>Alta entregabilidade e suporte a domínio próprio</li>
-                            <li>Cadastro em <span className="text-violet-400 font-bold">resend.com</span> com e-mail ou GitHub</li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </motion.div>
           )}
-          </AnimatePresence>
-        </div>
-        <AnimatePresence>
+          <AnimatePresence>
             {showUserModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
@@ -6288,109 +4283,6 @@ export default function App() {
               </div>
             )}
 
-            {showPlanModal && (
-              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-[var(--bg-card)] w-full max-w-lg rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
-                >
-                  <h3 className="text-2xl font-black mb-6">{editingPlan ? 'Editar Plano' : 'Novo Plano'}</h3>
-                  <form onSubmit={savePlan} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome</label>
-                      <input
-                        type="text"
-                        required
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={planForm.name}
-                        onChange={e => setPlanForm({ ...planForm, name: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição</label>
-                      <textarea
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-24 resize-none"
-                        value={planForm.description}
-                        onChange={e => setPlanForm({ ...planForm, description: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Preço (R$)</label>
-                      <input
-                        type="number"
-                        required
-                        min={0}
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={planForm.price}
-                        onChange={e => setPlanForm({ ...planForm, price: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Recursos (Features)</label>
-                      <div className="space-y-2">
-                        {planForm.features.map((feat, idx) => (
-                          <div key={idx} className="flex gap-2">
-                            <input
-                              type="text"
-                              className="flex-1 px-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
-                              value={feat}
-                              onChange={e => {
-                                const updated = [...planForm.features];
-                                updated[idx] = e.target.value;
-                                setPlanForm({ ...planForm, features: updated });
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setPlanForm({ ...planForm, features: planForm.features.filter((_, i) => i !== idx) })}
-                              className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => setPlanForm({ ...planForm, features: [...planForm.features, ''] })}
-                          className="w-full py-2 bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] transition-all flex items-center justify-center gap-2 border border-[var(--border-color)]"
-                        >
-                          <Plus size={12} />
-                          Adicionar Recurso
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        id="plan-recommended"
-                        checked={planForm.is_recommended}
-                        onChange={e => setPlanForm({ ...planForm, is_recommended: e.target.checked })}
-                        className="w-4 h-4 accent-emerald-500"
-                      />
-                      <label htmlFor="plan-recommended" className="text-sm font-bold text-[var(--text-main)] cursor-pointer">Marcar como Recomendado</label>
-                    </div>
-                    <div className="flex gap-3 mt-8">
-                      <button
-                        type="button"
-                        onClick={() => setShowPlanModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="submit"
-                        className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
-                      >
-                        Confirmar
-                      </button>
-                    </div>
-                  </form>
-                </motion.div>
-              </div>
-            )}
-
             {showFormModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
@@ -6499,129 +4391,6 @@ export default function App() {
                         Cancelar
                       </button>
                       <button 
-                        type="submit"
-                        className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
-                      >
-                        Confirmar
-                      </button>
-                    </div>
-                  </form>
-                </motion.div>
-              </div>
-            )}
-
-            {showFormFieldModal && (
-              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
-                >
-                  <h3 className="text-2xl font-black mb-6">{editingFormField ? 'Editar Campo' : 'Novo Campo'}</h3>
-                  <form onSubmit={saveFormField} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Rótulo</label>
-                      <input
-                        type="text"
-                        required
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={formFieldForm.label}
-                        onChange={e => setFormFieldForm({ ...formFieldForm, label: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo</label>
-                      <select
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={formFieldForm.type}
-                        onChange={e => setFormFieldForm({ ...formFieldForm, type: e.target.value as FormField['type'] })}
-                      >
-                        <option value="text">Texto</option>
-                        <option value="email">E-mail</option>
-                        <option value="phone">Telefone</option>
-                        <option value="date">Data</option>
-                        <option value="select">Seleção</option>
-                        <option value="radio">Rádio</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Ordem</label>
-                      <input
-                        type="number"
-                        min={0}
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={formFieldForm.order}
-                        onChange={e => setFormFieldForm({ ...formFieldForm, order: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Destino (opcional)</label>
-                      <select
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        value={formFieldForm.destination_id ?? ''}
-                        onChange={e => setFormFieldForm({ ...formFieldForm, destination_id: e.target.value ? Number(e.target.value) : null })}
-                      >
-                        <option value="">Todos os destinos</option>
-                        {destinations.map(d => (
-                          <option key={d.id} value={d.id}>{d.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {(formFieldForm.type === 'select' || formFieldForm.type === 'radio') && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Opções</label>
-                        <div className="space-y-2">
-                          {formFieldForm.options.map((opt, idx) => (
-                            <div key={idx} className="flex gap-2">
-                              <input
-                                type="text"
-                                className="flex-1 px-4 py-2 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
-                                value={opt}
-                                onChange={e => {
-                                  const newOpts = [...formFieldForm.options];
-                                  newOpts[idx] = e.target.value;
-                                  setFormFieldForm({ ...formFieldForm, options: newOpts });
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setFormFieldForm({ ...formFieldForm, options: formFieldForm.options.filter((_, i) => i !== idx) })}
-                                className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => setFormFieldForm({ ...formFieldForm, options: [...formFieldForm.options, ''] })}
-                            className="w-full py-2 bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] rounded-xl text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] transition-all flex items-center justify-center gap-2 border border-[var(--border-color)]"
-                          >
-                            <Plus size={12} />
-                            Adicionar Opção
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setFormFieldForm({ ...formFieldForm, required: !formFieldForm.required })}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${formFieldForm.required ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-[var(--bg-input)] text-[var(--text-muted)] border-[var(--border-color)]'}`}
-                      >
-                        {formFieldForm.required ? '★ Obrigatório' : '☆ Opcional'}
-                      </button>
-                    </div>
-                    <div className="flex gap-3 mt-8">
-                      <button
-                        type="button"
-                        onClick={() => setShowFormFieldModal(false)}
-                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-card)] transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button
                         type="submit"
                         className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg"
                       >
@@ -6846,7 +4615,7 @@ export default function App() {
                       </select>
                     </div>
 
-                    {(user?.role === 'master') && (
+                    {user?.role === 'master' && (
                       <div>
                         <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Agência</label>
                         <select 
@@ -6954,66 +4723,6 @@ export default function App() {
                                 Pipefy teste Habilitado
                               </label>
                             </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
-                                id="has_leads"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={newAgency.has_leads}
-                                onChange={e => setNewAgency({ ...newAgency, has_leads: e.target.checked })}
-                              />
-                              <label htmlFor="has_leads" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                Módulo Leads Habilitado
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
-                                id="has_crm"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={newAgency.has_crm}
-                                onChange={e => setNewAgency({ ...newAgency, has_crm: e.target.checked })}
-                              />
-                              <label htmlFor="has_crm" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                CRM Habilitado
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
-                                id="has_whatsapp"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={newAgency.has_whatsapp}
-                                onChange={e => setNewAgency({ ...newAgency, has_whatsapp: e.target.checked })}
-                              />
-                              <label htmlFor="has_whatsapp" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                WhatsApp Habilitado
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
-                                id="has_simplified_process"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={newAgency.has_simplified_process}
-                                onChange={e => setNewAgency({ ...newAgency, has_simplified_process: e.target.checked })}
-                              />
-                              <label htmlFor="has_simplified_process" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                Processo Simplificado Habilitado
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
-                                id="has_clients"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={(newAgency as any).has_clients === true}
-                                onChange={e => setNewAgency({ ...newAgency, has_clients: e.target.checked } as any)}
-                              />
-                              <label htmlFor="has_clients" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                Cadastro de Clientes Habilitado
-                              </label>
-                            </div>
                           </div>
                         </div>
   
@@ -7100,39 +4809,19 @@ export default function App() {
                 <div className="bg-[var(--bg-card)]/50 p-8 rounded-3xl border border-[var(--border-color)] shadow-xl">
                   <div className="flex justify-between items-start mb-8">
                     <div>
-                      <button
-                        onClick={() => {
-                          setSelectedProcess(null);
-                          setView('clients');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-xl transition-all text-blue-400 border border-blue-500/20 text-xs font-black uppercase tracking-widest mb-3"
-                        title="Voltar para lista de processos"
-                      >
-                        <ArrowLeft size={14} />
-                        Voltar aos Processos
-                      </button>
                       <h3 className="text-3xl font-black tracking-tight">{selectedProcess.client_name}</h3>
                       <p className="text-[var(--text-muted)] font-bold uppercase text-[10px] tracking-widest mt-1">
                         {selectedProcess.visa_name} • ID: #{selectedProcess.id}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
+                      {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
                         <button
                           onClick={() => openProcessEditModal(selectedProcess)}
                           className="p-3 bg-blue-500/10 hover:bg-blue-500/20 rounded-2xl transition-all text-blue-400 border border-blue-500/20"
                           title="Editar processo"
                         >
                           <Pencil size={20} />
-                        </button>
-                      )}
-                      {user?.role === 'master' && (
-                        <button
-                          onClick={() => deleteProcess(selectedProcess.id)}
-                          className="p-3 bg-red-500/10 hover:bg-red-500/20 rounded-2xl transition-all text-red-400 border border-red-500/20"
-                          title="Excluir processo"
-                        >
-                          <Trash2 size={20} />
                         </button>
                       )}
                       <StatusBadge status={selectedProcess.status} />
@@ -7156,331 +4845,24 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* ─── Card: Dados do Cliente ─────────────────────────────── */}
-                  <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                    <div className="flex items-center justify-between mb-5">
-                      <h4 className="font-black uppercase tracking-widest text-xs flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand-primary inline-block" />
-                        Dados do Cliente
-                      </h4>
-                      {user?.role !== 'analyst' && (
-                        <button
-                          onClick={() => {
-                            setClientInfoForm({
-                              name: selectedProcess.client_name || '',
-                              phone: selectedProcess.client_phone || '',
-                              email: selectedProcess.client_email || '',
-                              city: selectedProcess.client_city || '',
-                              state: selectedProcess.client_state || '',
-                              destination_id: selectedProcess.destination_id || 0,
-                              visa_type_id: selectedProcess.visa_type_id || 0,
-                            });
-                            setShowClientInfoEdit(true);
-                          }}
-                          className="text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors"
-                        >
-                          <Pencil size={12} />
-                          EDITAR
-                        </button>
-                      )}
-                    </div>
-
-                    {showClientInfoEdit && user?.role !== 'analyst' ? (
-                      /* ── Modo Edição ── */
-                      <div className="bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)] space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {[
-                            { label: 'Nome', key: 'name', type: 'text' },
-                            { label: 'Telefone', key: 'phone', type: 'text' },
-                            { label: 'E-mail', key: 'email', type: 'email' },
-                            { label: 'Cidade', key: 'city', type: 'text' },
-                            { label: 'UF', key: 'state', type: 'text' },
-                          ].map(({ label, key, type }) => (
-                            <div key={key}>
-                              <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">{label}</label>
-                              <input
-                                type={type}
-                                value={(clientInfoForm as any)[key]}
-                                onChange={(e) => setClientInfoForm(prev => ({ ...prev, [key]: e.target.value }))}
-                                className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
-                              />
-                            </div>
-                          ))}
-                          <div>
-                            <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Destino</label>
-                            <select
-                              value={clientInfoForm.destination_id}
-                              onChange={(e) => setClientInfoForm(prev => ({ ...prev, destination_id: Number(e.target.value) }))}
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
-                            >
-                              <option value={0}>Selecione um destino</option>
-                              {destinations.filter(d => d.is_active).map(d => (
-                                <option key={d.id} value={d.id}>{d.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Tipo de Visto</label>
-                            <select
-                              value={clientInfoForm.visa_type_id}
-                              onChange={(e) => setClientInfoForm(prev => ({ ...prev, visa_type_id: Number(e.target.value) }))}
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-3 py-2 text-sm text-[var(--text-main)] focus:outline-none focus:border-brand-primary"
-                            >
-                              <option value={0}>Selecione um tipo de visto</option>
-                              {visaTypes.map(v => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          {selectedProcess.plan_price != null && (
-                            <div>
-                              <label className="block text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">Valor do Plano</label>
-                              <p className="text-sm font-bold text-emerald-400 py-2">
-                                {Number(selectedProcess.plan_price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex gap-3 pt-2">
-                          <button
-                            onClick={handleSaveClientInfo}
-                            disabled={savingClientInfo}
-                            className="px-5 py-2.5 brand-gradient text-black rounded-xl font-black text-xs hover:opacity-90 transition-all disabled:opacity-50 brand-shadow"
-                          >
-                            {savingClientInfo ? 'Salvando...' : 'Salvar'}
-                          </button>
-                          <button
-                            onClick={() => setShowClientInfoEdit(false)}
-                            className="px-5 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl font-black text-xs hover:opacity-80 transition-all"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* ── Modo Visualização ── */
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-5 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
-                        {[
-                          { label: 'Nome', value: selectedProcess.client_name },
-                          { label: 'Telefone', value: selectedProcess.client_phone },
-                          { label: 'E-mail', value: selectedProcess.client_email },
-                          { label: 'Cidade', value: selectedProcess.client_city },
-                          { label: 'UF', value: selectedProcess.client_state },
-                          { label: 'Destino', value: selectedProcess.destination_name },
-                          { label: 'Tipo de Visto', value: selectedProcess.visa_name },
-                          {
-                            label: 'Valor do Plano',
-                            value: selectedProcess.plan_price != null
-                              ? Number(selectedProcess.plan_price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                              : null,
-                            highlight: true,
-                          },
-                        ].map(({ label, value, highlight }) => (
-                          <div key={label}>
-                            <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-1">{label}</p>
-                            <p className={`text-sm font-bold truncate ${highlight ? 'text-emerald-400' : 'text-[var(--text-main)]'}`}>
-                              {value || <span className="text-[var(--text-muted)] font-normal italic">—</span>}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {/* ─── Fim Card Dados do Cliente ─────────────────────────── */}
-
-                  {/* Descrição do Processo Simplificado */}
-                  {selectedProcess.description && (
-                    <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-2">Descrição</p>
-                      <p className="text-sm text-[var(--text-main)] leading-relaxed">{selectedProcess.description}</p>
-                    </div>
-                  )}
-
-                  {/* Link de Acompanhamento — visível para consultores/supervisores/master/analista */}
-                  {selectedProcess.process_type === 'simplified' && selectedProcess.tracking_token && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (() => {
-                    let trackingUrl = `https://api.korus.me/acompanhamento/${selectedProcess.tracking_token}`;
-                    // Corrige domínios antigos armazenados no banco de dados
-                    trackingUrl = fixLegacyUrl(trackingUrl);
-                    return (
-                      <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
-                        <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3 flex items-center gap-1.5">
-                          <LinkIcon size={10} /> Link de Acompanhamento do Cliente
-                        </p>
-                        <div className="flex items-center gap-2 p-3 bg-[var(--bg-input)]/60 border border-[var(--border-color)] rounded-2xl">
-                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="flex-1 text-xs text-emerald-400 font-bold break-all hover:text-emerald-300 transition-colors underline cursor-pointer">{trackingUrl}</a>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(trackingUrl);
-                            }}
-                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
-                          >
-                            <Copy size={13} /> Copiar
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Vincular / Alterar Plano — apenas para processos simplificados */}
-                  {selectedProcess.process_type === 'simplified' && (isConsultantSupervisorOrMaster(user) || user?.role === 'analyst') && (
-                    <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3">
-                        {selectedProcess.plan_id ? 'Alterar Plano de Consultoria' : 'Vincular Plano de Consultoria'}
-                      </p>
-                      <div className="flex gap-2">
-                        <select
-                          className="flex-1 px-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
-                          value={spPlanId}
-                          onChange={(e) => setSpPlanId(e.target.value)}
-                        >
-                          <option value="">Selecione um plano...</option>
-                          {plans.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} — {Number(p.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={async () => {
-                            if (!spPlanId) return;
-                            setSavingSpPlan(true);
-                            setSpPlanMsg('');
-                            try {
-                              const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/plan`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                                body: JSON.stringify({ plan_id: Number(spPlanId), changed_by_user_id: user?.id }),
-                              });
-                              const data = await res.json();
-                              if (!res.ok) { setSpPlanMsg(data?.error || 'Erro ao vincular plano.'); return; }
-                              setSpPlanMsg(`Plano "${data.plan_name}" vinculado com sucesso!`);
-                              fetchProcesses();
-                            } catch { setSpPlanMsg('Erro de conexão.'); } finally { setSavingSpPlan(false); }
-                          }}
-                          disabled={savingSpPlan || !spPlanId}
-                          className="px-4 py-2.5 brand-gradient text-black rounded-xl font-black text-xs hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md brand-shadow whitespace-nowrap"
-                        >
-                          {savingSpPlan ? 'Salvando...' : selectedProcess.plan_id ? 'Alterar' : 'Vincular'}
-                        </button>
-                      </div>
-                      {spPlanMsg && (
-                        <p className={`text-[10px] font-bold mt-2 ${spPlanMsg.includes('sucesso') ? 'text-emerald-400' : 'text-red-400'}`}>{spPlanMsg}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Botão de aprovação de etapa para consultor/supervisor/master, e etapas finais também para analista */}
-                  {(() => {
-                    const s = selectedProcess.internal_status;
-                    const isAnalystStage = s === 'submitted' || s === 'confirmed';
-                    const canAct = isAnalystStage
-                      ? (user?.role === 'analyst' || user?.role === 'supervisor' || user?.role === 'master')
-                      : isConsultantSupervisorOrMaster(user);
-                    return canAct;
-                  })() && selectedProcess.status !== 'completed' && (
-                    <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
-                      {(() => {
-                        const stageLabels: Record<string, string> = {
-                          pending:             'Liberar para Cliente (Docs + Formulários)',
-                          documents_requested: 'Confirmar Recebimento e Avançar para Revisão',
-                          reviewing:           'Aprovar Revisão e Submeter',
-                          submitted:           'Confirmar Aprovação das Autoridades',
-                          confirmed:           'Concluir Processo',
-                        };
-                        const label = stageLabels[selectedProcess.internal_status];
-                        if (!label) return null;
-                        const isFinal = selectedProcess.internal_status === 'confirmed';
-                        return (
-                          <button
-                            onClick={handleApproveStage}
-                            className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-black shadow-lg hover:opacity-90 transition-opacity ${
-                              isFinal
-                                ? 'bg-purple-500 text-white'
-                                : 'brand-gradient text-black brand-shadow'
-                            }`}
-                          >
-                            <ShieldCheck size={18} />
-                            {label}
-                          </button>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  {/* Pré-Formulário do Cliente */}
-                  {selectedProcess.pre_form_data && (() => {
-                    let preData: Record<string, any> = {};
-                    try {
-                      preData = typeof selectedProcess.pre_form_data === 'string'
-                        ? JSON.parse(selectedProcess.pre_form_data)
-                        : selectedProcess.pre_form_data;
-                    } catch { return null; }
-                    if (!preData || typeof preData !== 'object' || Array.isArray(preData) || Object.keys(preData).length === 0) return null;
-                    const PRE_LABELS: Record<string, string> = {
-                      fullName: 'Nome Completo', phone: 'Telefone', email: 'E-mail', city: 'Cidade',
-                      hasPassport: 'Possui Passaporte', hasVisaDenied: 'Visto Negado Anteriormente',
-                      travelDate: 'Data de Viagem', travelParty: 'Companhia de Viagem',
-                      travelGoal: 'Objetivo', visaTypeId: 'Tipo de Visto', dependentLevel: 'Tipo de Processo',
-                    };
-                    return (
-                      <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                        <div className="flex justify-between items-center mb-4">
-                          <h4 className="font-black uppercase tracking-widest text-xs">Pré-Formulário do Cliente</h4>
-                          {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
-                            <button
-                              onClick={() => { setPreFormEditData({ ...preData }); setShowPreFormEditModal(true); }}
-                              className="text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 flex items-center gap-2 transition-colors"
-                            >
-                              <Pencil size={12} />
-                              EDITAR
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
-                          {Object.entries(preData).map(([key, value]) => {
-                            if (key === 'dynamicResponses' || key === 'dependents') return null;
-                            const label = PRE_LABELS[key] || key;
-                            const display = value === true ? 'Sim' : value === false ? 'Não' : String(value || '-');
-                            return (
-                              <div key={key} className="space-y-1">
-                                <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{label}</p>
-                                <p className="text-sm font-bold text-[var(--text-main)]">{display}</p>
-                              </div>
-                            );
-                          })}
-                          {preData.dynamicResponses && typeof preData.dynamicResponses === 'object' &&
-                            Object.entries(preData.dynamicResponses).map(([fieldId, value]) => (
-                              <div key={`dyn-${fieldId}`} className="space-y-1">
-                                <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">Campo {fieldId}</p>
-                                <p className="text-sm font-bold text-[var(--text-main)]">{String(value || '-')}</p>
-                              </div>
-                            ))
-                          }
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Form Responses Section (formulários customizados respondidos) */}
-                  {selectedProcess.responses && selectedProcess.responses.filter((r: any) => r.form_id).length > 0 && (
+                  {/* Form Responses Section */}
+                  {selectedProcess.responses && selectedProcess.responses.length > 0 && (
                     <div className="mt-8 pt-8 border-t border-[var(--border-color)] space-y-8">
-                      {selectedProcess.responses.filter((r: any) => r.form_id).map((resp: any) => {
+                      {selectedProcess.responses.map((resp: any) => {
                         let data: Record<string, any> = {};
-                        let fields: any[] = [];
+                        let fields = [];
                         try {
-                          data = typeof resp.data === 'string' ? JSON.parse(resp.data) : (resp.data || {});
-                          if (typeof data !== 'object' || Array.isArray(data)) data = {};
-                        } catch { data = {}; }
-                        try {
-                          fields = typeof resp.form_fields === 'string' ? JSON.parse(resp.form_fields) : (resp.form_fields || []);
-                          if (!Array.isArray(fields)) fields = [];
-                        } catch { fields = []; }
+                          data = JSON.parse(resp.data);
+                          fields = JSON.parse(resp.form_fields || '[]');
+                        } catch (e) {
+                          return null;
+                        }
 
                         return (
                           <div key={resp.id} className="space-y-6">
                             <div className="flex justify-between items-center">
                               <h4 className="font-black uppercase tracking-widest text-xs">{resp.form_title || 'Formulário'}</h4>
-                              {isConsultantSupervisorOrMaster(user) && selectedProcess.status !== 'completed' && (
+                              {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.status !== 'completed' && (
                                 <button
                                   onClick={() => {
                                     setEditingFormResponse(resp);
@@ -7495,17 +4877,22 @@ export default function App() {
                               )}
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
-                              {fields.length > 0 ? fields.map((field: any) => (
+                              {fields.map((field: any) => (
                                 <div key={field.id} className="space-y-1">
                                   <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{field.label}</p>
-                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(data[field.id] ?? '-')}</p>
-                                </div>
-                              )) : Object.entries(data).map(([key, value]) => (
-                                <div key={key} className="space-y-1">
-                                  <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{key}</p>
-                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(value ?? '-')}</p>
+                                  <p className="text-sm font-bold text-[var(--text-main)]">{String(data[field.id] || '-')}</p>
                                 </div>
                               ))}
+                              {/* Fallback for fields not in definition but in data */}
+                              {Object.entries(data).map(([key, value]) => {
+                                if (fields.find((f: any) => f.id === key)) return null;
+                                return (
+                                  <div key={key} className="space-y-1">
+                                    <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{key}</p>
+                                    <p className="text-sm font-bold text-[var(--text-main)]">{String(value)}</p>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -7541,7 +4928,7 @@ export default function App() {
                                 {doc.status}
                               </span>
                               <button 
-                                onClick={() => window.open(resolveFileUrl(doc.url), '_blank')}
+                                onClick={() => window.open(doc.url, '_blank')}
                                 className="text-xs font-black hover:text-emerald-400 transition-colors"
                               >
                                 ABRIR
@@ -7559,20 +4946,9 @@ export default function App() {
                   </div>
 
                   {/* Financial Section */}
-                  {isConsultantSupervisorOrMaster(user) && selectedProcess.financial && (
+                  {(user.role === 'consultant' || user.role === 'supervisor' || user.role === 'master') && selectedProcess.financial && (
                     <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                      <div className="flex justify-between items-center mb-6">
-                        <h4 className="font-black uppercase tracking-widest text-xs">Financeiro & Pagamento</h4>
-                        {user?.role === 'master' && (
-                          <button
-                            onClick={() => { setFinancialAmountInput(String(selectedProcess.financial.amount ?? '')); setShowFinancialAmountModal(true); }}
-                            className="text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-amber-300 flex items-center gap-2 transition-colors"
-                          >
-                            <Pencil size={12} />
-                            CORRIGIR VALOR
-                          </button>
-                        )}
-                      </div>
+                      <h4 className="font-black uppercase tracking-widest text-xs mb-6">Financeiro & Pagamento</h4>
                       <div className="p-6 bg-[var(--bg-input)]/50 rounded-3xl border border-[var(--border-color)]">
                         <div className="flex items-center justify-between mb-6">
                           <div>
@@ -7628,95 +5004,6 @@ export default function App() {
                           </div>
                         )}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Process Forms Section - vinculação de formulários pela equipe */}
-                  {isConsultantSupervisorOrMaster(user) && (
-                    <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
-                      <div className="flex items-center justify-between mb-6">
-                        <h4 className="font-black uppercase tracking-widest text-xs">Formulários do Processo</h4>
-                        <button
-                          onClick={() => { fetchAvailableFormsForProcess(selectedProcess.id); setShowAssignFormModal(true); }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all"
-                        >
-                          <Plus size={12} /> Vincular Formulário
-                        </button>
-                      </div>
-
-                      {selectedProcess.process_forms && selectedProcess.process_forms.length > 0 ? (
-                        <div className="space-y-3">
-                          {selectedProcess.process_forms.map((pf: any, pfIdx: number) => (
-                            <div key={pf.id} className="flex items-center gap-4 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
-                              <div className="flex-1 min-w-0">
-                                <p className="font-bold text-sm truncate">{pf.form_title}</p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <div className="flex-1 max-w-[180px] h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full bg-emerald-500 rounded-full transition-all"
-                                      style={{ width: `${pf.progress || 0}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-[10px] text-[var(--text-muted)] font-bold">{pf.progress || 0}%</span>
-                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                                    pf.response_status === 'submitted'
-                                      ? 'bg-emerald-500/10 text-emerald-400'
-                                      : pf.response_status === 'in_progress'
-                                      ? 'bg-yellow-500/10 text-yellow-400'
-                                      : 'bg-white/5 text-[var(--text-muted)]'
-                                  }`}>
-                                    {pf.response_status === 'submitted' ? 'Concluído' : pf.response_status === 'in_progress' ? 'Em preenchimento' : 'Pendente'}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => {
-                                    setEditingProcessFormResponse(pf);
-                                    setProcessFormResponseData(pf.response_data || {});
-                                    setShowProcessFormResponseModal(true);
-                                  }}
-                                  className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all"
-                                  title="Ver / Editar respostas"
-                                >
-                                  <Pencil size={14} />
-                                </button>
-                                {(user?.role === 'master' || user?.role === 'supervisor') && (
-                                  <>
-                                    <button
-                                      onClick={() => moveProcessForm(pfIdx, 'up')}
-                                      disabled={pfIdx === 0}
-                                      className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
-                                      title="Mover para cima"
-                                    >
-                                      ↑
-                                    </button>
-                                    <button
-                                      onClick={() => moveProcessForm(pfIdx, 'down')}
-                                      disabled={pfIdx === selectedProcess.process_forms.length - 1}
-                                      className="p-2 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
-                                      title="Mover para baixo"
-                                    >
-                                      ↓
-                                    </button>
-                                  </>
-                                )}
-                                {(user?.role === 'master' || user?.role === 'supervisor') && (
-                                  <button
-                                    onClick={() => removeFormFromProcess(pf.id)}
-                                    className="p-2 rounded-lg hover:bg-red-500/10 text-[var(--text-muted)] hover:text-red-400 transition-all"
-                                    title="Remover formulário"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-[var(--text-muted)] font-bold py-3">Nenhum formulário vinculado a este processo.</p>
-                      )}
                     </div>
                   )}
 
@@ -7816,130 +5103,13 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* Assign Form to Process Modal */}
-          <AnimatePresence>
-            {showAssignFormModal && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
-                >
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-black">Vincular Formulário</h3>
-                    <button onClick={() => setShowAssignFormModal(false)} className="p-2 hover:bg-white/5 rounded-xl text-[var(--text-muted)]"><X size={18} /></button>
-                  </div>
-                  {loadingProcessForms ? (
-                    <p className="text-center text-[var(--text-muted)] py-4">Carregando...</p>
-                  ) : availableFormsForProcess.length === 0 ? (
-                    <p className="text-center text-[var(--text-muted)] py-4 text-sm">Nenhum formulário disponível. Crie formulários na aba "Formulários".</p>
-                  ) : (
-                    <div className="space-y-4">
-                      <select
-                        value={selectedFormToAssign || ''}
-                        onChange={e => setSelectedFormToAssign(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500"
-                      >
-                        <option value="">Selecione um formulário...</option>
-                        {availableFormsForProcess.map((f: any) => (
-                          <option key={f.id} value={f.id}>
-                            {f.title} {f.destination_name ? `(${f.destination_name})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="flex gap-3 pt-2">
-                        <button
-                          onClick={assignFormToProcess}
-                          disabled={!selectedFormToAssign}
-                          className="flex-1 py-2.5 brand-gradient text-black font-black text-sm rounded-xl hover:opacity-90 disabled:opacity-40 transition-all"
-                        >
-                          Vincular
-                        </button>
-                        <button
-                          onClick={() => setShowAssignFormModal(false)}
-                          className="flex-1 py-2.5 bg-white/5 border border-[var(--border-color)] text-[var(--text-muted)] font-bold text-sm rounded-xl hover:bg-white/10 transition-all"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
-
-          {/* Process Form Response Edit Modal */}
-          <AnimatePresence>
-            {showProcessFormResponseModal && editingProcessFormResponse && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
-                >
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-black">{editingProcessFormResponse.form_title}</h3>
-                    <button onClick={() => { setShowProcessFormResponseModal(false); setEditingProcessFormResponse(null); }} className="p-2 hover:bg-white/5 rounded-xl text-[var(--text-muted)]"><X size={18} /></button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
-                    {(editingProcessFormResponse.form_fields || []).map((field: any) => (
-                      <div key={field.id}>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">
-                          {field.label} {field.required && <span className="text-red-400">*</span>}
-                        </label>
-                        {field.type === 'textarea' ? (
-                          <textarea
-                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 min-h-[80px] text-sm"
-                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
-                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
-                          />
-                        ) : field.type === 'select' ? (
-                          <select
-                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
-                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
-                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
-                          >
-                            <option value="">Selecione...</option>
-                            {field.options?.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
-                          </select>
-                        ) : (
-                          <input
-                            type={field.type || 'text'}
-                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
-                            value={processFormResponseData[field.id] || processFormResponseData[field.label] || ''}
-                            onChange={e => setProcessFormResponseData({ ...processFormResponseData, [field.id]: e.target.value })}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={saveProcessFormResponse}
-                      className="flex-1 py-3 brand-gradient text-black font-black text-sm rounded-xl hover:opacity-90 transition-all"
-                    >
-                      Salvar Respostas
-                    </button>
-                    <button
-                      onClick={() => { setShowProcessFormResponseModal(false); setEditingProcessFormResponse(null); }}
-                      className="flex-1 py-3 bg-white/5 border border-[var(--border-color)] text-[var(--text-muted)] font-bold text-sm rounded-xl hover:bg-white/10 transition-all"
-                    >
-                      Fechar
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
-
-          {/* Form Edit Modal */}
+          {/* Start Process Modal */}
           <AnimatePresence>
             {showFormEditModal && editingFormResponse && (
               <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
                 <motion.div 
-                  key="form-edit-modal"
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
                   className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
                 >
                   <h3 className="text-2xl font-black mb-6 uppercase tracking-tight">Corrigir Informações: {editingFormResponse.form_title}</h3>
@@ -7996,168 +5166,10 @@ export default function App() {
                 </motion.div>
               </div>
             )}
-          </AnimatePresence>
 
-          {/* Pre-Form Edit Modal */}
-          <AnimatePresence>
-            {showPreFormEditModal && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-                <motion.div
-                  key="pre-form-edit-modal"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-[var(--bg-card)] w-full max-w-2xl rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl my-8"
-                >
-                  <h3 className="text-2xl font-black mb-6 uppercase tracking-tight">Editar Pré-Formulário do Cliente</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {[
-                      { key: 'fullName', label: 'Nome Completo', type: 'text' },
-                      { key: 'phone', label: 'Telefone', type: 'tel' },
-                      { key: 'email', label: 'E-mail', type: 'email' },
-                      { key: 'city', label: 'Cidade', type: 'text' },
-                      { key: 'travelDate', label: 'Data de Viagem', type: 'date' },
-                      { key: 'travelGoal', label: 'Objetivo', type: 'text' },
-                    ].map(({ key, label, type }) => (
-                      preFormEditData[key] !== undefined && (
-                        <div key={key}>
-                          <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">{label}</label>
-                          <input
-                            type={type}
-                            className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                            value={preFormEditData[key] || ''}
-                            onChange={e => setPreFormEditData({ ...preFormEditData, [key]: e.target.value })}
-                          />
-                        </div>
-                      )
-                    ))}
-                    {preFormEditData.hasPassport !== undefined && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Possui Passaporte</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
-                          value={preFormEditData.hasPassport || ''}
-                          onChange={e => setPreFormEditData({ ...preFormEditData, hasPassport: e.target.value })}
-                        >
-                          <option value="Sim">Sim</option>
-                          <option value="Não">Não</option>
-                        </select>
-                      </div>
-                    )}
-                    {preFormEditData.hasVisaDenied !== undefined && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Visto Negado Anteriormente</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
-                          value={preFormEditData.hasVisaDenied || ''}
-                          onChange={e => setPreFormEditData({ ...preFormEditData, hasVisaDenied: e.target.value })}
-                        >
-                          <option value="Sim">Sim</option>
-                          <option value="Não">Não</option>
-                        </select>
-                      </div>
-                    )}
-                    {preFormEditData.travelParty !== undefined && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Companhia de Viagem</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
-                          value={preFormEditData.travelParty || ''}
-                          onChange={e => setPreFormEditData({ ...preFormEditData, travelParty: e.target.value })}
-                        >
-                          <option value="Sozinho">Sozinho</option>
-                          <option value="Acompanhado">Acompanhado</option>
-                        </select>
-                      </div>
-                    )}
-                    {preFormEditData.dependentLevel !== undefined && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Tipo de Processo</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm appearance-none"
-                          value={preFormEditData.dependentLevel || ''}
-                          onChange={e => setPreFormEditData({ ...preFormEditData, dependentLevel: e.target.value })}
-                        >
-                          <option value="Individual">Individual</option>
-                          <option value="Casal">Casal</option>
-                          <option value="Família">Família</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-3 pt-6">
-                    <button
-                      type="button"
-                      onClick={() => setShowPreFormEditModal(false)}
-                      className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSavePreFormEdit}
-                      className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-500/20"
-                    >
-                      Salvar Alterações
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
-
-          {/* Financial Amount Edit Modal (master only) */}
-          <AnimatePresence>
-            {showFinancialAmountModal && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                <motion.div
-                  key="financial-amount-modal"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-[var(--bg-card)] w-full max-w-sm rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
-                >
-                  <h3 className="text-xl font-black mb-2 uppercase tracking-tight">Corrigir Valor do Processo</h3>
-                  <p className="text-xs text-[var(--text-muted)] font-bold mb-6">Ação restrita ao perfil Master. Será registrado em auditoria.</p>
-                  <div className="mb-6">
-                    <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Valor (R$)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-lg font-black"
-                      value={financialAmountInput}
-                      onChange={e => setFinancialAmountInput(e.target.value)}
-                      autoFocus
-                    />
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowFinancialAmountModal(false)}
-                      className="flex-1 px-6 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveFinancialAmount}
-                      className="flex-1 bg-amber-500 text-black py-3 rounded-xl font-black uppercase tracking-widest text-xs shadow-lg shadow-amber-500/20"
-                    >
-                      Salvar Valor
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
-
-          {/* Start Process Modal */}
-          <AnimatePresence>
             {showStartModal && (
               <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
                 <motion.div 
-                  key="start-process-modal"
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
@@ -8213,20 +5225,12 @@ export default function App() {
               </div>
             )}
           </AnimatePresence>
+        </AnimatePresence>
       </main>
-      {showSimplifiedProcessModal && user && (
-        <SimplifiedProcessModal
-          agencyId={getScopedAgencyId() || 0}
-          token={token || ''}
-          destinations={destinations}
-          visaTypes={visaTypes}
-          plans={plans}
-          createdByUserId={user.id}
-          onClose={() => setShowSimplifiedProcessModal(false)}
-          onSuccess={() => { fetchProcesses(); setShowSimplifiedProcessModal(false); }}
-        />
-      )}
       {renderGlobalOverlays()}
     </div>
   );
 }
+
+
+

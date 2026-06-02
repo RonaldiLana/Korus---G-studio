@@ -80,7 +80,8 @@ function getStepIndex(status: string): number {
 function resolveDocUrl(url: string): string {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `${API_URL}${url}`;
+  // Always use production API URL to avoid localhost redirect issues
+  return `https://api.korus.me${url}`;
 }
 
 interface DocumentUploadSectionProps {

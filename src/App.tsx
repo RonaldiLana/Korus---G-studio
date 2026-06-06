@@ -1845,10 +1845,14 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('logo', file);
+      formData.append('agency_id', String(agency.id));
 
       const uploadResponse = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+        headers: { 
+          'Authorization': token ? `Bearer ${token}` : '',
+          'X-Agency-Id': String(agency.id)
+        },
         body: formData,
       });
 
@@ -2999,13 +3003,23 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const agencyId = agencySettings?.id || user?.agency_id;
+    if (!agencyId) {
+      notify('ID da agência não encontrado.', 'error');
+      return;
+    }
+
     const formData = new FormData();
     formData.append('logo', file);
+    formData.append('agency_id', String(agencyId));
 
     try {
       const res = await fetch(`${API_URL}/api/upload-logo`, {
         method: 'POST',
-        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+        headers: { 
+          'Authorization': token ? `Bearer ${token}` : '',
+          'X-Agency-Id': String(agencyId)
+        },
         body: formData,
       });
       const data = await res.json();

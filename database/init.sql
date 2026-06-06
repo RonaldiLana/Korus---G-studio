@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS agencies (
   status TEXT DEFAULT 'active',
   modules TEXT DEFAULT '{"finance": true, "chat": true, "pipefy": true, "leads": true, "whatsapp": false, "simplified_process": false}',
   logo_url TEXT,
+  logo_blob BYTEA,
+  logo_mimetype TEXT,
   pre_form_questions TEXT,
   destinations TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

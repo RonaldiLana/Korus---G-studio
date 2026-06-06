@@ -393,10 +393,36 @@ async function startServer() {
   });
 
   // API Routes
-  app.post("/api/upload-logo", upload.single("logo"), (req: any, res) => {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const logoUrl = `${BACKEND_URL}/uploads/${req.file.filename}`;
-    res.json({ url: logoUrl });
+  app.post("/api/upload-logo", upload.single("logo"), async (req: any, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+      
+      // Get agency_id from authorization header or request body
+      const agencyIdFromHeader = (req.headers['x-agency-id'] as string) || null;
+      const agencyIdFromBody = req.body?.agency_id || null;
+      const agencyId = agencyIdFromHeader || agencyIdFromBody;
+      
+      if (!agencyId) {
+        return res.status(400).json({ error: "Agency ID required" });
+      }
+
+      // Read file buffer and convert to BLOB
+      const fileBuffer = req.file.buffer || fs.readFileSync(req.file.path);
+      const mimetype = req.file.mimetype;
+
+      // Save logo BLOB to database
+      await query(
+        "UPDATE agencies SET logo_blob = $1, logo_mimetype = $2 WHERE id = $3",
+        [fileBuffer, mimetype, agencyId]
+      );
+
+      // Return response with new endpoint URL
+      const logoUrl = `${BACKEND_URL}/api/agencies/${agencyId}/logo`;
+      res.json({ url: logoUrl });
+    } catch (err: any) {
+      console.error('[LOGO UPLOAD ERROR]', err);
+      res.status(500).json({ error: err.message || "Upload failed" });
+    }
   });
 
   app.get("/api/test-db", async (req, res) => {
@@ -1021,6 +1047,34 @@ async function startServer() {
       }
       res.json(agencyResult.rows[0]);
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Endpoint para servir logo da agência armazenada em BLOB
+  app.get("/api/agencies/:id/logo", async (req, res) => {
+    try {
+      const agencyId = req.params.id;
+      const result = await query(
+        "SELECT logo_blob, logo_mimetype FROM agencies WHERE id = $1",
+        [agencyId]
+      );
+
+      if (!result.rows.length || !result.rows[0].logo_blob) {
+        return res.status(404).json({ error: "Logo not found" });
+      }
+
+      const { logo_blob, logo_mimetype } = result.rows[0];
+      
+      // Set proper content type and cache headers
+      res.setHeader('Content-Type', logo_mimetype || 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day cache
+      res.setHeader('ETag', `"logo-${agencyId}"`);
+      
+      // Send binary data
+      res.send(logo_blob);
+    } catch (err: any) {
+      console.error('[LOGO GET ERROR]', err);
       res.status(500).json({ error: err.message });
     }
   });

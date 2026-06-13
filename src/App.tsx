@@ -76,7 +76,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
-import { PipefyPanel } from './features/PipefyPanel';
+
 import { FormsPanel } from './features/FormsPanel';
 import { CRMPanel } from './features/crm/CRMPanel';
 import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
@@ -192,10 +192,7 @@ const KorusLogo = ({ size = 32 }: { size?: number }) => (
   </div>
 );
 
-const canAccessPipefyModule = (user?: User | null): boolean => {
-  if (!user) return false;
-  return user.role === 'master' || user.role === 'supervisor' || user.role === 'consultant' || user.role === 'analyst';
-};
+
 
 const canAccessCRMModule = (user?: User | null): boolean => {
   if (!user) return false;
@@ -392,7 +389,6 @@ export default function App() {
           setAgencyModules({
             finance: m.finance !== false,
             chat: m.chat !== false,
-            pipefy: m.pipefy !== false,
             leads: m.leads !== false,
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
@@ -412,7 +408,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'pipefy' | 'forms' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'forms' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<ClientOverview[]>([]);
@@ -452,7 +448,7 @@ export default function App() {
       '/settings': 'settings',
       '/leads': 'leads',
       '/team': 'team',
-      '/pipefy': 'pipefy',
+
       '/forms': 'forms',
       '/crm': 'crm',
       '/whatsapp': 'whatsapp',
@@ -779,7 +775,6 @@ export default function App() {
     name: '', 
     slug: '', 
     has_finance: true, 
-    has_pipefy: true,
     has_leads: true,
     has_crm: true,
     has_whatsapp: false,
@@ -788,6 +783,12 @@ export default function App() {
     admin_email: '', 
     admin_password: '' 
   });
+
+  // Zipsign Configuration State
+  const [showZipsignConfig, setShowZipsignConfig] = useState(false);
+  const [zipsignClientId, setZipsignClientId] = useState('');
+  const [zipsignClientSecret, setZipsignClientSecret] = useState('');
+  const [isSavingZipsignConfig, setIsSavingZipsignConfig] = useState(false);
 
   // Client Start Process State
   const [showStartModal, setShowStartModal] = useState(false);
@@ -1098,7 +1099,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; pipefy: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean }>({ finance: true, chat: true, pipefy: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean }>({ finance: true, chat: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false });
   const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
   const [spPlanId, setSpPlanId] = useState('');
   const [savingSpPlan, setSavingSpPlan] = useState(false);
@@ -1305,7 +1306,6 @@ export default function App() {
           setAgencyModules({
             finance: m.finance !== false,
             chat: m.chat !== false,
-            pipefy: m.pipefy !== false,
             leads: m.leads !== false,
             crm: m.crm !== false,
             whatsapp: m.whatsapp === true,
@@ -1532,17 +1532,16 @@ export default function App() {
       const agencyData = Array.isArray(data) ? data[0] : data;
       if (!agencyData) return;
       
-      let parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
+      let parsedModules = { finance: true, chat: true, leads: true, crm: true };
       try {
         parsedModules = { ...parsedModules, ...(JSON.parse(agencyData.modules || '{}') || {}) };
       } catch {
-        parsedModules = { finance: true, chat: true, pipefy: true, leads: true, crm: true };
+        parsedModules = { finance: true, chat: true, leads: true, crm: true };
       }
 
       setAgencyModules({
         finance: Boolean(parsedModules.finance),
         chat: parsedModules.chat !== false,
-        pipefy: parsedModules.pipefy !== false,
         leads: parsedModules.leads !== false,
         crm: (parsedModules as any).crm !== false,
         whatsapp: (parsedModules as any).whatsapp === true,
@@ -1746,7 +1745,6 @@ export default function App() {
           name: '',
           slug: '',
           has_finance: true,
-          has_pipefy: true,
           has_leads: true,
           has_crm: true,
           has_whatsapp: false,
@@ -1809,6 +1807,46 @@ export default function App() {
     navigator.clipboard.writeText(link);
     notify('Link de cadastro/login de cliente copiado!', 'success');
   };
+
+  const saveZipsignConfig = async () => {
+    if (!editingAgency) return;
+    if (!zipsignClientId || !zipsignClientSecret) {
+      notify('Client ID e Client Secret são obrigatórios', 'error');
+      return;
+    }
+
+    setIsSavingZipsignConfig(true);
+    try {
+      const response = await fetch(`${API_URL}/api/agencies/${editingAgency.id}/zipsign-config`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: zipsignClientId,
+          client_secret: zipsignClientSecret,
+        }),
+      });
+
+      if (response.ok) {
+        notify('Credenciais Zipsign salvas com sucesso!', 'success');
+        setShowZipsignConfig(false);
+        setZipsignClientId('');
+        setZipsignClientSecret('');
+        await fetchAgencies();
+      } else {
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao salvar credenciais Zipsign', 'error');
+      }
+    } catch (error) {
+      console.error('[ZIPSIGN CONFIG] Error:', error);
+      notify('Erro de conexão ao salvar credenciais', 'error');
+    } finally {
+      setIsSavingZipsignConfig(false);
+    }
+  };
+
 
   const copyAgencyPanelTeamLoginLink = () => {
     const link = `${window.location.origin}/`;
@@ -2688,7 +2726,7 @@ export default function App() {
       loader();
     };
 
-    if (view === 'dashboard' || view === 'clients' || view === 'pipefy') {
+    if (view === 'dashboard' || view === 'clients') {
       loadOnce('visaTypes', fetchVisaTypes);
       loadOnce('tasks', fetchTasks);
       loadOnce('destinations', fetchDestinations);
@@ -3704,14 +3742,7 @@ export default function App() {
             onClick={() => { setView('dashboard'); setSidebarOpen(false); }} 
           />
           
-          {canAccessPipefyModule(user) && (user?.role === 'master' || agencyModules.pipefy) && (
-            <SidebarItem 
-              icon={Trello} 
-              label="Pipefy teste" 
-              active={view === 'pipefy'} 
-              onClick={() => { setView('pipefy'); setSidebarOpen(false); }} 
-            />
-          )}
+
 
           {canAccessCRMModule(user) && (user?.role === 'master' || agencyModules.crm) && (
             <SidebarItem 
@@ -3740,14 +3771,12 @@ export default function App() {
             />
           )}
 
-          {canAccessPipefyModule(user) && (
-            <SidebarItem 
-              icon={Users} 
-              label="Processos" 
-              active={view === 'clients'} 
-              onClick={() => { setView('clients'); setSidebarOpen(false); }} 
-            />
-          )}
+          <SidebarItem 
+            icon={Users} 
+            label="Processos" 
+            active={view === 'clients'} 
+            onClick={() => { setView('clients'); setSidebarOpen(false); }} 
+          />
 
           {(user?.role === 'master') && (
             <SidebarItem 
@@ -3871,7 +3900,6 @@ export default function App() {
                 {view === 'settings' && 'Configurações'}
                 {view === 'leads' && 'Clientes'}
                 {view === 'agency_panel' && 'Painel Agência'}
-                {view === 'pipefy' && 'Pipefy'}
                 {view === 'crm' && 'CRM'}
                 {view === 'client_registry' && 'Cadastro de Clientes'}
               </h2>
@@ -3912,7 +3940,7 @@ export default function App() {
                 <span className="hidden sm:inline">Processo Simplificado</span>
               </button>
             )}
-            {(view === 'clients' || view === 'dashboard' || view === 'pipefy') && (user?.role === 'master' || user?.role === 'supervisor') && (
+            {(view === 'clients' || view === 'dashboard') && (user?.role === 'master' || user?.role === 'supervisor') && (
               <button 
                 data-testid="new-process-button"
                 onClick={() => {
@@ -3936,7 +3964,7 @@ export default function App() {
             {view === 'agencies' && (user?.role === 'master') && (
               <button 
                 data-testid="new-agency-button"
-                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_pipefy: true, has_leads: true, has_crm: true, has_whatsapp: false, has_simplified_process: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
+                onClick={() => { setEditingAgency(null); setNewAgency({ name: '', slug: '', has_finance: true, has_leads: true, has_crm: true, has_whatsapp: false, has_simplified_process: false, admin_name: '', admin_email: '', admin_password: '' }); setShowAgencyModal(true); }}
                 className="brand-gradient text-black px-3 sm:px-4 py-2 rounded-xl flex items-center gap-2 font-bold hover:opacity-90 transition-all brand-shadow text-sm"
               >
                 <Plus size={18} />
@@ -4395,7 +4423,6 @@ export default function App() {
                             name: agency.name,
                             slug: agency.slug,
                             has_finance: modules.finance,
-                            has_pipefy: modules.pipefy !== undefined ? modules.pipefy : true,
                             has_leads: modules.leads !== undefined ? modules.leads : (modules.chat !== undefined ? modules.chat : true),
                             has_crm: modules.crm !== undefined ? modules.crm : true,
                             has_whatsapp: modules.whatsapp === true,
@@ -4454,9 +4481,7 @@ export default function App() {
                       {JSON.parse(agency.modules || '{}').finance && (
                         <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Financeiro</span>
                       )}
-                      {JSON.parse(agency.modules || '{}').pipefy && (
-                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">Pipefy</span>
-                      )}
+
                       {(JSON.parse(agency.modules || '{}').leads !== undefined ? JSON.parse(agency.modules || '{}').leads : JSON.parse(agency.modules || '{}').chat) !== false && (
                         <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">Leads</span>
                       )}
@@ -4692,22 +4717,6 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            </motion.div>
-          )}
-
-          {view === 'pipefy' && (
-            <motion.div 
-              key="pipefy"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="h-full"
-            >
-              <PipefyPanel 
-                processes={processes}
-                clients={agencyUsers}
-                onUpdateStatus={handleUpdateProcessStatus}
-                onSelectProcess={(process) => fetchProcessDetail(process.id)}
-              />
             </motion.div>
           )}
 
@@ -6959,18 +6968,6 @@ export default function App() {
                             <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
                               <input 
                                 type="checkbox" 
-                                id="has_pipefy"
-                                className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
-                                checked={newAgency.has_pipefy}
-                                onChange={e => setNewAgency({ ...newAgency, has_pipefy: e.target.checked })}
-                              />
-                              <label htmlFor="has_pipefy" className="text-xs font-bold text-[var(--text-muted)] cursor-pointer">
-                                Pipefy teste Habilitado
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-3 p-3 bg-[var(--bg-input)]/50 rounded-xl border border-[var(--border-color)]">
-                              <input 
-                                type="checkbox" 
                                 id="has_leads"
                                 className="w-4 h-4 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
                                 checked={newAgency.has_leads}
@@ -7074,7 +7071,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex gap-3 mt-8 pt-4 border-t border-[var(--border-color)]">
+                    <div className="flex gap-2 mt-8 pt-4 border-t border-[var(--border-color)]">
                       <button 
                         type="button"
                         onClick={() => setShowAgencyModal(false)}
@@ -7082,6 +7079,15 @@ export default function App() {
                       >
                         Cancelar
                       </button>
+                      {editingAgency && (
+                        <button 
+                          type="button"
+                          onClick={() => setShowZipsignConfig(true)}
+                          className="px-4 py-3 rounded-xl font-bold text-amber-400 hover:bg-amber-500/10 transition-all border border-amber-500/30"
+                        >
+                          ⚙️ Zipsign
+                        </button>
+                      )}
                       <button 
                         type="button"
                         disabled={isProcessingAgency}
@@ -7097,6 +7103,74 @@ export default function App() {
                       </button>
                     </div>
                   </form>
+                </motion.div>
+              </div>
+            )}
+
+            {/* Zipsign Configuration Modal */}
+            {showZipsignConfig && editingAgency && (
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
+                >
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="text-2xl">📋</div>
+                    <h3 className="text-2xl font-black">Configurar Zipsign</h3>
+                  </div>
+                  <p className="text-sm text-[var(--text-muted)] mb-6">
+                    Adicione suas credenciais OAuth2 do Zipsign para habilitar assinatura de documentos.
+                  </p>
+
+                  <div className="space-y-4 mb-8">
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Client ID</label>
+                      <input 
+                        type="text" 
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Seu Client ID do Zipsign"
+                        value={zipsignClientId}
+                        onChange={e => setZipsignClientId(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Client Secret</label>
+                      <input 
+                        type="password" 
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Seu Client Secret do Zipsign"
+                        value={zipsignClientSecret}
+                        onChange={e => setZipsignClientSecret(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-[var(--text-muted)] mb-6 p-3 bg-[var(--bg-input)]/50 rounded-lg border border-[var(--border-color)]">
+                    ℹ️ Obtenha suas credenciais em <span className="text-amber-400">app.zipsign.com.br</span> → Configurações → Integrações → OAuth2
+                  </p>
+
+                  <div className="flex gap-3">
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setShowZipsignConfig(false);
+                        setZipsignClientId('');
+                        setZipsignClientSecret('');
+                      }}
+                      className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      type="button"
+                      disabled={isSavingZipsignConfig || !zipsignClientId || !zipsignClientSecret}
+                      onClick={saveZipsignConfig}
+                      className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSavingZipsignConfig ? 'Salvando...' : 'Salvar Credenciais'}
+                    </button>
+                  </div>
                 </motion.div>
               </div>
             )}

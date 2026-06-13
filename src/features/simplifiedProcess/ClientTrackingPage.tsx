@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapPin, FileText, Download, Clock, CheckCircle2, AlertCircle, Save, Upload, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import ZipsignEmbed from '../contracts/ZipsignEmbed';
 
 // Use runtime detection: if served from api.korus.me, use that; otherwise use VITE_API_URL
 const API_URL =
@@ -263,6 +264,136 @@ const DocumentUploadSection: React.FC<DocumentUploadSectionProps> = ({
         {uploading ? 'Enviando...' : 'Enviar Documentação'}
       </button>
     </motion.div>
+  );
+};
+
+// Contract Signing Section Component
+interface ContractSigningSectionProps {
+  processId: number;
+  apiUrl: string;
+}
+
+interface Contract {
+  id: number;
+  file_name: string;
+  status: 'pending' | 'signed' | 'expired' | 'rejected';
+  signer_email: string;
+  signer_name: string;
+  zipsign_sign_url?: string;
+  created_at: string;
+  signed_at?: string;
+}
+
+const ContractSigningSection: React.FC<ContractSigningSectionProps> = ({ processId, apiUrl }) => {
+  const [contracts, setContracts] = React.useState<Contract[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [selectedContract, setSelectedContract] = React.useState<Contract | null>(null);
+
+  React.useEffect(() => {
+    const fetchContracts = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/api/processes/${processId}/contracts`);
+        if (response.ok) {
+          const data = await response.json();
+          setContracts(data.contracts || []);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar contratos:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContracts();
+  }, [processId]);
+
+  if (loading || contracts.length === 0) return null;
+
+  const pendingContracts = contracts.filter(c => c.status === 'pending');
+  const signedContracts = contracts.filter(c => c.status === 'signed');
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending': return '⏳';
+      case 'signed': return '✅';
+      case 'expired': return '⏱️';
+      case 'rejected': return '❌';
+      default: return '📄';
+    }
+  };
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.23 }}
+        className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4"
+      >
+        <h2 className="text-[10px] font-black uppercase tracking-widest text-gray-500 flex items-center gap-2">
+          📋 Documentos para Assinatura
+        </h2>
+
+        {pendingContracts.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+              ⏳ Aguardando Assinatura ({pendingContracts.length})
+            </h3>
+            {pendingContracts.map((contract) => (
+              <div
+                key={contract.id}
+                className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between hover:border-yellow-500/50 transition-all"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-white truncate">{contract.file_name}</p>
+                  <p className="text-xs text-gray-400">{contract.signer_name}</p>
+                </div>
+                {contract.zipsign_sign_url && (
+                  <button
+                    onClick={() => setSelectedContract(contract)}
+                    className="ml-4 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs font-bold transition-all"
+                  >
+                    ✍️ Assinar
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {signedContracts.length > 0 && (
+          <div className="space-y-2 pt-4 border-t border-white/10">
+            <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+              ✅ Assinados ({signedContracts.length})
+            </h3>
+            {signedContracts.map((contract) => (
+              <div
+                key={contract.id}
+                className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-center justify-between"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-white text-sm truncate">{contract.file_name}</p>
+                </div>
+                <span className="text-xs text-emerald-400 font-bold ml-2">✓ ASSINADO</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </motion.div>
+
+      {/* Zipsign Embed Modal */}
+      {selectedContract && selectedContract.zipsign_sign_url && (
+        <ZipsignEmbed
+          signUrl={selectedContract.zipsign_sign_url}
+          contractName={selectedContract.file_name}
+          onClose={() => setSelectedContract(null)}
+          onSigned={() => {
+            // Refresh contracts list
+            setSelectedContract(null);
+          }}
+        />
+      )}
+    </>
   );
 };
 
@@ -735,6 +866,9 @@ export const ClientTrackingPage: React.FC = () => {
           }}
         />
 
+        {/* Documentos para Assinatura */}
+        <ContractSigningSection processId={data.id} apiUrl={API_URL} />
+
         {/* Formulários Vinculados */}
         {data.forms && data.forms.length > 0 && (
           <motion.div
@@ -762,6 +896,9 @@ export const ClientTrackingPage: React.FC = () => {
             </div>
           </motion.div>
         )}
+
+        {/* Documentos para Assinatura */}
+        <ContractSigningSection processId={data.id} apiUrl={API_URL} />
 
         {/* Footer */}
         <div className="text-center text-[10px] text-gray-600 pb-4">

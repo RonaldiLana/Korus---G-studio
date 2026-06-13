@@ -133,6 +133,154 @@ async function sendAgencyEmail(agencyId: number, to: string, subject: string, fr
   }
 }
 
+// ─── Helpers de Zipsign (Assinatura de Documentos) ──────────────────────────
+
+interface ZipsignConfig {
+  client_id: string;
+  client_secret: string;
+  redirect_uri?: string;
+}
+
+/**
+ * Obtém access token do Zipsign usando credenciais OAuth2
+ * Doc: https://docs.zipsign.com.br/api/oauth2
+ */
+async function getZipsignAccessToken(configJson: string): Promise<string> {
+  try {
+    const config: ZipsignConfig = JSON.parse(configJson);
+    
+    const tokenResponse = await fetch('https://api.zipsign.com.br/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: config.client_id,
+        client_secret: config.client_secret,
+      }).toString(),
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Zipsign token error: ${tokenResponse.status}`);
+    }
+
+    const tokenData = await tokenResponse.json() as any;
+    return tokenData.access_token;
+  } catch (err: any) {
+    throw new Error(`Falha ao obter token Zipsign: ${err.message}`);
+  }
+}
+
+/**
+ * Cria documento de assinatura no Zipsign
+ * Doc: https://docs.zipsign.com.br/api/documentos/criar
+ */
+async function createZipsignDocument(
+  accessToken: string,
+  fileUrl: string,
+  signerEmail: string,
+  signerName: string,
+  documentName: string = 'Contrato'
+): Promise<{ document_id: string; sign_url: string }> {
+  try {
+    const docResponse = await fetch('https://api.zipsign.com.br/api/documents', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        file_url: fileUrl,
+        name: documentName,
+        signers: [
+          {
+            email: signerEmail,
+            name: signerName,
+            identifier: signerEmail, // ID único do signatário
+          },
+        ],
+        webhook_url: `${BACKEND_URL}/api/contracts/webhook`,
+        metadata: {
+          type: 'contract',
+          timestamp: new Date().toISOString(),
+        },
+      }),
+    });
+
+    if (!docResponse.ok) {
+      const err = await docResponse.json().catch(() => ({}));
+      throw new Error(`Zipsign document error: ${(err as any).message || docResponse.status}`);
+    }
+
+    const docData = await docResponse.json() as any;
+    return {
+      document_id: docData.id || docData.document_id,
+      sign_url: docData.sign_url || docData.signing_url,
+    };
+  } catch (err: any) {
+    throw new Error(`Falha ao criar documento Zipsign: ${err.message}`);
+  }
+}
+
+/**
+ * Valida assinatura de webhook do Zipsign
+ * Doc: https://docs.zipsign.com.br/webhooks/validacao
+ */
+function validateZipsignWebhookSignature(payload: string, signature: string, webhookSecret: string): boolean {
+  try {
+    const crypto = require('crypto');
+    const hash = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(payload)
+      .digest('hex');
+    return hash === signature;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Processa webhook do Zipsign (signed, rejected, expired events)
+ */
+async function handleZipsignWebhookEvent(eventData: any): Promise<void> {
+  const { document_id, status, signed_at, signer_email } = eventData;
+
+  // Map Zipsign status para nosso padrão
+  const statusMap: Record<string, string> = {
+    'signed': 'signed',
+    'rejected': 'rejected',
+    'expired': 'expired',
+    'draft': 'pending',
+  };
+
+  const contractStatus = statusMap[status] || 'pending';
+
+  try {
+    // Atualiza status do contrato no banco
+    await query(
+      `UPDATE process_contracts 
+       SET status = $1, updated_at = CURRENT_TIMESTAMP, signed_at = $2
+       WHERE zipsign_document_id = $3`,
+      [contractStatus, signed_at ? new Date(signed_at) : null, document_id]
+    );
+
+    // Log do evento
+    const contract = await query(
+      'SELECT id FROM process_contracts WHERE zipsign_document_id = $1',
+      [document_id]
+    );
+
+    if (contract.rows[0]) {
+      await query(
+        `INSERT INTO contract_signature_logs (process_contract_id, event_type, event_data, created_at)
+         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
+        [contract.rows[0].id, status, JSON.stringify({ signer_email, signed_at })]
+      );
+    }
+  } catch (err: any) {
+    console.error('Erro ao processar webhook Zipsign:', err.message);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1087,7 +1235,7 @@ async function startServer() {
     try {
       await query('BEGIN', []);
 
-      const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: req.body.has_pipefy !== undefined ? req.body.has_pipefy : true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true, simplified_process: req.body.has_simplified_process === true, clients: req.body.has_clients === true });
+      const modules = JSON.stringify({ finance: has_finance, chat: true, leads: req.body.has_leads !== undefined ? req.body.has_leads : true, crm: req.body.has_crm !== undefined ? req.body.has_crm : true, whatsapp: req.body.has_whatsapp === true, simplified_process: req.body.has_simplified_process === true, clients: req.body.has_clients === true });
       const agencyResult = await query("INSERT INTO agencies (name, slug, modules) VALUES ($1, $2, $3) RETURNING id", [name, slug, modules]);
       const agencyId = agencyResult.rows[0].id;
 
@@ -1127,13 +1275,13 @@ async function startServer() {
 
   app.put("/api/agencies/:id", async (req, res) => {
     console.log(`Recebendo requisição para atualizar agência ${req.params.id}:`, req.body);
-    const { name, slug, has_finance, has_pipefy } = req.body;
+    const { name, slug, has_finance } = req.body;
     const has_leads = req.body.has_leads !== undefined ? req.body.has_leads : true;
     const has_crm = req.body.has_crm !== undefined ? req.body.has_crm : true;
     const has_whatsapp = req.body.has_whatsapp === true;
     const has_simplified_process = req.body.has_simplified_process === true;
     const has_clients = req.body.has_clients === true;
-    const modules = JSON.stringify({ finance: has_finance, chat: true, pipefy: has_pipefy, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp, simplified_process: has_simplified_process, clients: has_clients });
+    const modules = JSON.stringify({ finance: has_finance, chat: true, leads: has_leads, crm: has_crm, whatsapp: has_whatsapp, simplified_process: has_simplified_process, clients: has_clients });
     try {
       await query("UPDATE agencies SET name = $1, slug = $2, modules = $3 WHERE id = $4", [name, slug, modules, req.params.id]);
       res.json({ success: true });
@@ -4342,6 +4490,194 @@ async function startServer() {
     } catch (err: any) {
       console.error("[CLIENTS IMPORT PREVIEW]", err);
       return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // ZIPSIGN INTEGRATION — Contract Signing
+  // ═════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * PUT /api/agencies/:id/zipsign-config
+   * Master saves Zipsign credentials (client_id, client_secret) per agency
+   */
+  app.put("/api/agencies/:id/zipsign-config", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { client_id, client_secret } = req.body;
+
+      if (!client_id || !client_secret) {
+        return res.status(400).json({ error: 'client_id e client_secret são obrigatórios' });
+      }
+
+      // Validate by trying to get token
+      const zipsignConfig = JSON.stringify({ client_id, client_secret });
+      try {
+        await getZipsignAccessToken(zipsignConfig);
+      } catch {
+        return res.status(400).json({ error: 'Credenciais Zipsign inválidas' });
+      }
+
+      // Save to database
+      await query('UPDATE agencies SET zipsign_config = $1 WHERE id = $2', [zipsignConfig, id]);
+      res.json({ success: true, message: 'Credenciais Zipsign salvas com sucesso' });
+    } catch (err: any) {
+      console.error('[ZIPSIGN CONFIG]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/contracts/upload
+   * Upload PDF file and return file URL
+   */
+  app.post("/api/contracts/upload", upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'Arquivo PDF é obrigatório' });
+      }
+
+      const fileUrl = `${BACKEND_URL}/uploads/${req.file.filename}`;
+      res.json({ success: true, file_url: fileUrl, file_name: req.file.originalname });
+    } catch (err: any) {
+      console.error('[CONTRACT UPLOAD]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/contracts/templates
+   * Save uploaded PDF as contract template for agency
+   */
+  app.post("/api/contracts/templates", async (req, res) => {
+    try {
+      const { agency_id, name, file_url } = req.body;
+
+      if (!agency_id || !name || !file_url) {
+        return res.status(400).json({ error: 'agency_id, name, file_url são obrigatórios' });
+      }
+
+      const result = await query(
+        `INSERT INTO contract_templates (agency_id, name, file_url)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (agency_id, name) DO UPDATE SET file_url = $3, updated_at = CURRENT_TIMESTAMP
+         RETURNING id, name, file_url, created_at`,
+        [agency_id, name, file_url]
+      );
+
+      res.json({ success: true, template: result.rows[0] });
+    } catch (err: any) {
+      console.error('[TEMPLATE SAVE]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/contracts/templates/:agencyId
+   * List all contract templates for agency
+   */
+  app.get("/api/contracts/templates/:agencyId", async (req, res) => {
+    try {
+      const { agencyId } = req.params;
+      const result = await query(
+        'SELECT id, name, file_url, created_at FROM contract_templates WHERE agency_id = $1 ORDER BY created_at DESC',
+        [agencyId]
+      );
+      res.json({ success: true, templates: result.rows });
+    } catch (err: any) {
+      console.error('[TEMPLATES LIST]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/processes/:id/contracts
+   * Attach contract to process and send signing link to client
+   */
+  app.post("/api/processes/:id/contracts", async (req, res) => {
+    try {
+      const { id: processId } = req.params;
+      const { file_url, file_name, signer_email, signer_name, contract_template_id, agency_id } = req.body;
+
+      if (!file_url || !signer_email || !signer_name || !agency_id) {
+        return res.status(400).json({ error: 'file_url, signer_email, signer_name, agency_id são obrigatórios' });
+      }
+
+      // Get Zipsign config
+      const agencyResult = await query('SELECT zipsign_config FROM agencies WHERE id = $1', [agency_id]);
+      if (!agencyResult.rows[0]?.zipsign_config) {
+        return res.status(400).json({ error: 'Zipsign não configurado para esta agência' });
+      }
+
+      // Get access token
+      const accessToken = await getZipsignAccessToken(agencyResult.rows[0].zipsign_config);
+
+      // Create document in Zipsign
+      const zipsignDoc = await createZipsignDocument(
+        accessToken,
+        file_url,
+        signer_email,
+        signer_name,
+        file_name || 'Contrato'
+      );
+
+      // Save to database
+      const result = await query(
+        `INSERT INTO process_contracts 
+         (agency_id, process_id, contract_template_id, file_url, file_name, status, zipsign_document_id, zipsign_sign_url, signer_email, signer_name)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)
+         RETURNING *`,
+        [agency_id, processId, contract_template_id || null, file_url, file_name, zipsignDoc.document_id, zipsignDoc.sign_url, signer_email, signer_name]
+      );
+
+      res.json({ success: true, contract: result.rows[0], sign_url: zipsignDoc.sign_url });
+    } catch (err: any) {
+      console.error('[CONTRACT CREATE]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/processes/:id/contracts
+   * List all contracts for a process
+   */
+  app.get("/api/processes/:id/contracts", async (req, res) => {
+    try {
+      const { id: processId } = req.params;
+      const result = await query(
+        `SELECT id, file_name, status, signer_email, signer_name, zipsign_sign_url, created_at, signed_at
+         FROM process_contracts
+         WHERE process_id = $1
+         ORDER BY created_at DESC`,
+        [processId]
+      );
+      res.json({ success: true, contracts: result.rows });
+    } catch (err: any) {
+      console.error('[CONTRACTS LIST]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/contracts/webhook
+   * Webhook from Zipsign with signature events (signed, rejected, expired)
+   * Validates signature and updates contract status
+   */
+  app.post("/api/contracts/webhook", async (req, res) => {
+    try {
+      const signature = req.headers['x-zipsign-signature'] as string;
+      const payload = JSON.stringify(req.body);
+
+      // TODO: Implement webhook signature validation with webhookSecret from agency config
+      // For now, we'll process all events. In production, validate:
+      // const isValid = validateZipsignWebhookSignature(payload, signature, webhookSecret);
+      // if (!isValid) return res.status(401).json({ error: 'Invalid signature' });
+
+      await handleZipsignWebhookEvent(req.body);
+      res.json({ success: true, message: 'Webhook processado' });
+    } catch (err: any) {
+      console.error('[CONTRACT WEBHOOK]', err);
+      res.status(500).json({ error: err.message });
     }
   });
 

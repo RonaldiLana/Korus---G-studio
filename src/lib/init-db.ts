@@ -244,7 +244,7 @@ async function seedInitialData() {
       `INSERT INTO agencies (name, slug, status, modules) 
        VALUES ($1, $2, $3, $4) 
        RETURNING id`,
-      ["Global Visa Solutions", "global-visa", "active", '{"finance": true, "chat": true, "pipefy": true, "leads": true, "simplified_process": false}']
+      ["Global Visa Solutions", "global-visa", "active", '{"finance": true, "chat": true, "leads": true, "simplified_process": false}']
     );
 
     const agencyId = agencyResult.rows[0].id;

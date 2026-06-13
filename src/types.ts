@@ -6,7 +6,7 @@ export interface User {
   name: string;
   role: UserRole;
   agency_id: number | null;
-  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean, leads: boolean }
+  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, leads: boolean }
   created_at: string;
 }
 
@@ -33,7 +33,7 @@ export interface Agency {
   name: string;
   slug: string;
   status: 'active' | 'suspended';
-  modules: string; // JSON string: { finance: boolean, chat: boolean, pipefy: boolean }
+  modules: string; // JSON string: { finance: boolean, chat: boolean }
   logo_url?: string;
   admin_user_id?: number | null;
   admin_name?: string | null;
@@ -302,4 +302,56 @@ export interface ActivityGroup {
   name: string;
   created_at: string;
   members: ActivityGroupMember[];
+}
+
+// ─── Zipsign Contract Signing ───────────────────────────────────────────────
+
+export interface ZipsignConfig {
+  client_id: string;
+  client_secret: string;
+}
+
+export interface ContractTemplate {
+  id: number;
+  agency_id: number;
+  name: string;
+  file_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProcessContract {
+  id: number;
+  agency_id: number;
+  process_id: number;
+  contract_template_id?: number | null;
+  file_url: string;
+  file_name: string;
+  status: 'pending' | 'signed' | 'expired' | 'rejected';
+  zipsign_document_id?: string | null;
+  zipsign_sign_url?: string | null;
+  signer_email: string;
+  signer_name: string;
+  signed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractSignatureLog {
+  id: number;
+  process_contract_id: number;
+  event_type: 'created' | 'signed' | 'rejected' | 'expired' | 'error';
+  event_data?: string | null; // JSON with additional details
+  created_at: string;
+}
+
+export interface ZipsignWebhookPayload {
+  event: 'signed' | 'rejected' | 'expired' | 'error';
+  document_id: string;
+  timestamp: string;
+  signer_email?: string;
+  signer_name?: string;
+  signed_at?: string;
+  rejection_reason?: string;
+  error_message?: string;
 }

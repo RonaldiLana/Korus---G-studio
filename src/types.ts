@@ -307,8 +307,7 @@ export interface ActivityGroup {
 // ─── Zipsign Contract Signing ───────────────────────────────────────────────
 
 export interface ZipsignConfig {
-  client_id: string;
-  client_secret: string;
+  token: string;
 }
 
 export interface ContractTemplate {

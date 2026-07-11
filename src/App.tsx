@@ -786,8 +786,7 @@ export default function App() {
 
   // Zipsign Configuration State
   const [showZipsignConfig, setShowZipsignConfig] = useState(false);
-  const [zipsignClientId, setZipsignClientId] = useState('');
-  const [zipsignClientSecret, setZipsignClientSecret] = useState('');
+  const [zipsignToken, setZipsignToken] = useState('');
   const [isSavingZipsignConfig, setIsSavingZipsignConfig] = useState(false);
 
   // Client Start Process State
@@ -1809,39 +1808,53 @@ export default function App() {
   };
 
   const saveZipsignConfig = async () => {
-    if (!editingAgency) return;
-    if (!zipsignClientId || !zipsignClientSecret) {
-      notify('Client ID e Client Secret são obrigatórios', 'error');
+    if (!editingAgency) {
+      notify('Nenhuma agência selecionada', 'error');
+      return;
+    }
+    
+    console.log('[ZIPSIGN DEBUG]', {
+      agencyId: editingAgency.id,
+      agencyName: editingAgency.name,
+      tokenLength: zipsignToken.length
+    });
+
+    if (!zipsignToken) {
+      notify('Token é obrigatório', 'error');
       return;
     }
 
     setIsSavingZipsignConfig(true);
     try {
-      const response = await fetch(`${API_URL}/api/agencies/${editingAgency.id}/zipsign-config`, {
+      const url = `${API_URL}/api/agencies/${editingAgency.id}/zipsign-config`;
+      console.log('[ZIPSIGN DEBUG] Enviando para:', url);
+      
+      const response = await fetch(url, {
         method: 'PUT',
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          client_id: zipsignClientId,
-          client_secret: zipsignClientSecret,
+          token: zipsignToken,
         }),
       });
 
+      console.log('[ZIPSIGN DEBUG] Response status:', response.status);
+
       if (response.ok) {
-        notify('Credenciais Zipsign salvas com sucesso!', 'success');
+        notify('Token Zipsign salvo com sucesso!', 'success');
         setShowZipsignConfig(false);
-        setZipsignClientId('');
-        setZipsignClientSecret('');
+        setZipsignToken('');
         await fetchAgencies();
       } else {
         const data = await response.json().catch(() => null);
-        notify(data?.error || 'Erro ao salvar credenciais Zipsign', 'error');
+        console.log('[ZIPSIGN DEBUG] Error response:', data);
+        notify(data?.error || 'Erro ao salvar token Zipsign', 'error');
       }
     } catch (error) {
       console.error('[ZIPSIGN CONFIG] Error:', error);
-      notify('Erro de conexão ao salvar credenciais', 'error');
+      notify('Erro de conexão ao salvar token', 'error');
     } finally {
       setIsSavingZipsignConfig(false);
     }
@@ -7116,38 +7129,28 @@ export default function App() {
                   className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
                 >
                   <div className="flex items-center gap-3 mb-6">
-                    <div className="text-2xl">📋</div>
-                    <h3 className="text-2xl font-black">Configurar Zipsign</h3>
+                    <div className="text-2xl">�</div>
+                    <h3 className="text-2xl font-black">Configurar ZapSign</h3>
                   </div>
                   <p className="text-sm text-[var(--text-muted)] mb-6">
-                    Adicione suas credenciais OAuth2 do Zipsign para habilitar assinatura de documentos.
+                    Cole seu Bearer Token do ZapSign para habilitar assinatura de documentos.
                   </p>
 
                   <div className="space-y-4 mb-8">
                     <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Client ID</label>
-                      <input 
-                        type="text" 
-                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        placeholder="Seu Client ID do Zipsign"
-                        value={zipsignClientId}
-                        onChange={e => setZipsignClientId(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Client Secret</label>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Bearer Token</label>
                       <input 
                         type="password" 
                         className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                        placeholder="Seu Client Secret do Zipsign"
-                        value={zipsignClientSecret}
-                        onChange={e => setZipsignClientSecret(e.target.value)}
+                        placeholder="Cole seu Bearer Token do ZapSign"
+                        value={zipsignToken}
+                        onChange={e => setZipsignToken(e.target.value)}
                       />
                     </div>
                   </div>
 
                   <p className="text-xs text-[var(--text-muted)] mb-6 p-3 bg-[var(--bg-input)]/50 rounded-lg border border-[var(--border-color)]">
-                    ℹ️ Obtenha suas credenciais em <span className="text-amber-400">app.zipsign.com.br</span> → Configurações → Integrações → OAuth2
+                    ℹ️ Obtenha seu token em: <span className="text-amber-400">app.zipsign.com.br</span> → Configurações → Integrações → API ZapSign
                   </p>
 
                   <div className="flex gap-3">
@@ -7155,8 +7158,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setShowZipsignConfig(false);
-                        setZipsignClientId('');
-                        setZipsignClientSecret('');
+                        setZipsignToken('');
                       }}
                       className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
                     >
@@ -7164,11 +7166,11 @@ export default function App() {
                     </button>
                     <button 
                       type="button"
-                      disabled={isSavingZipsignConfig || !zipsignClientId || !zipsignClientSecret}
+                      disabled={isSavingZipsignConfig || !zipsignToken}
                       onClick={saveZipsignConfig}
                       className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isSavingZipsignConfig ? 'Salvando...' : 'Salvar Credenciais'}
+                      {isSavingZipsignConfig ? 'Salvando...' : 'Salvar Token'}
                     </button>
                   </div>
                 </motion.div>
@@ -8318,3 +8320,4 @@ export default function App() {
     </div>
   );
 }
+

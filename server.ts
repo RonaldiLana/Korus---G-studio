@@ -136,38 +136,7 @@ async function sendAgencyEmail(agencyId: number, to: string, subject: string, fr
 // ─── Helpers de Zipsign (Assinatura de Documentos) ──────────────────────────
 
 interface ZipsignConfig {
-  client_id: string;
-  client_secret: string;
-  redirect_uri?: string;
-}
-
-/**
- * Obtém access token do Zipsign usando credenciais OAuth2
- * Doc: https://docs.zipsign.com.br/api/oauth2
- */
-async function getZipsignAccessToken(configJson: string): Promise<string> {
-  try {
-    const config: ZipsignConfig = JSON.parse(configJson);
-    
-    const tokenResponse = await fetch('https://api.zipsign.com.br/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: config.client_id,
-        client_secret: config.client_secret,
-      }).toString(),
-    });
-
-    if (!tokenResponse.ok) {
-      throw new Error(`Zipsign token error: ${tokenResponse.status}`);
-    }
-
-    const tokenData = await tokenResponse.json() as any;
-    return tokenData.access_token;
-  } catch (err: any) {
-    throw new Error(`Falha ao obter token Zipsign: ${err.message}`);
-  }
+  token: string;
 }
 
 /**
@@ -175,7 +144,7 @@ async function getZipsignAccessToken(configJson: string): Promise<string> {
  * Doc: https://docs.zipsign.com.br/api/documentos/criar
  */
 async function createZipsignDocument(
-  accessToken: string,
+  token: string,
   fileUrl: string,
   signerEmail: string,
   signerName: string,
@@ -185,7 +154,7 @@ async function createZipsignDocument(
     const docResponse = await fetch('https://api.zipsign.com.br/api/documents', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -4499,28 +4468,39 @@ async function startServer() {
 
   /**
    * PUT /api/agencies/:id/zipsign-config
-   * Master saves Zipsign credentials (client_id, client_secret) per agency
+   * Master saves Zipsign Bearer Token per agency
    */
   app.put("/api/agencies/:id/zipsign-config", async (req, res) => {
     try {
       const { id } = req.params;
-      const { client_id, client_secret } = req.body;
+      const { token } = req.body;
 
-      if (!client_id || !client_secret) {
-        return res.status(400).json({ error: 'client_id e client_secret são obrigatórios' });
+      console.log('[ZIPSIGN CONFIG] Requisição recebida:', { agencyId: id, tokenLength: token?.length });
+
+      if (!token || typeof token !== 'string' || token.trim() === '') {
+        return res.status(400).json({ error: 'Token é obrigatório e deve ser uma string válida' });
       }
 
-      // Validate by trying to get token
-      const zipsignConfig = JSON.stringify({ client_id, client_secret });
-      try {
-        await getZipsignAccessToken(zipsignConfig);
-      } catch {
-        return res.status(400).json({ error: 'Credenciais Zipsign inválidas' });
+      // Verify agency exists
+      const agencyCheck = await query('SELECT id, name FROM agencies WHERE id = $1', [id]);
+      console.log('[ZIPSIGN CONFIG] Resultado da verificação:', agencyCheck.rows);
+      
+      if (agencyCheck.rows.length === 0) {
+        console.error(`[ZIPSIGN CONFIG] Agência com ID ${id} não encontrada`);
+        // Listar todas as agências para debug
+        const allAgencies = await query('SELECT id, name FROM agencies ORDER BY id');
+        console.log('[ZIPSIGN CONFIG] Agências existentes:', allAgencies.rows);
+        return res.status(404).json({ error: `Agência com ID ${id} não encontrada` });
       }
 
       // Save to database
-      await query('UPDATE agencies SET zipsign_config = $1 WHERE id = $2', [zipsignConfig, id]);
-      res.json({ success: true, message: 'Credenciais Zipsign salvas com sucesso' });
+      await query('UPDATE agencies SET zipsign_config = $1 WHERE id = $2', [
+        JSON.stringify({ token: token.trim() }), 
+        id
+      ]);
+      
+      console.log('[ZIPSIGN CONFIG] Token salvo com sucesso para agência:', agencyCheck.rows[0].name);
+      res.json({ success: true, message: 'Token Zipsign salvo com sucesso' });
     } catch (err: any) {
       console.error('[ZIPSIGN CONFIG]', err);
       res.status(500).json({ error: err.message });

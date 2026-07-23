@@ -1,10 +1,11 @@
 import React from 'react';
-import { X, UserPlus, AlertTriangle, Copy, CheckCircle2, Link } from 'lucide-react';
+import { X, UserPlus, Copy, CheckCircle2, Link, Plus, Trash2, Upload, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Destination, VisaType, Plan } from '../../types';
+import { Destination, VisaType, Plan, SimplifiedProcessQuestion } from '../../types';
 import { fixLegacyUrl } from '../../utils';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
+const MAX_TOTAL_FILES = 10;
 
 interface SimplifiedProcessModalProps {
   agencyId: number;
@@ -18,25 +19,24 @@ interface SimplifiedProcessModalProps {
   onSuccess: (processId: number) => void;
 }
 
-interface FormState {
-  client_name: string;
-  client_email: string;
-  client_phone: string;
-  destination_id: string;
-  visa_type_id: string;
-  plan_id: string;
-  description: string;
+function formatCPF(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
-const initialForm: FormState = {
-  client_name: '',
-  client_email: '',
-  client_phone: '',
-  destination_id: '',
-  visa_type_id: '',
-  plan_id: '',
-  description: '',
-};
+function formatCEP(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+  return digits.replace(/(\d{5})(\d)/, '$1-$2');
+}
+
+function isQuestionVisible(q: SimplifiedProcessQuestion, answers: Record<string, any>): boolean {
+  if (!q.showIf || !q.showIf.questionId) return true;
+  const depValue = answers[q.showIf.questionId];
+  return String(depValue ?? '') === String(q.showIf.equals ?? '');
+}
 
 export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
   agencyId,
@@ -49,25 +49,64 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const [form, setForm] = React.useState<FormState>(initialClient ? {
-    client_name: initialClient.name || '',
-    client_email: initialClient.email || '',
-    client_phone: initialClient.phone || '',
-    destination_id: '',
-    visa_type_id: '',
-    plan_id: '',
-    description: '',
-  } : initialForm);
-  const [clientExists, setClientExists] = React.useState<boolean | null>(null);
-  const [checkingEmail, setCheckingEmail] = React.useState(false);
+  const [questions, setQuestions] = React.useState<SimplifiedProcessQuestion[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = React.useState(true);
+  const [answers, setAnswers] = React.useState<Record<string, any>>({});
+  const [filesByQuestion, setFilesByQuestion] = React.useState<Record<string, File[]>>({});
+  const [visaTypeId, setVisaTypeId] = React.useState('');
+  const [planId, setPlanId] = React.useState('');
+  const [description, setDescription] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
   const [successData, setSuccessData] = React.useState<{ processId: number; trackingUrl: string } | null>(null);
   const [copied, setCopied] = React.useState(false);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingQuestions(true);
+      try {
+        const res = await fetch(`${API_URL}/api/agencies/${agencyId}/simplified-questions`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) {
+          const sorted = [...data].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          setQuestions(sorted);
+          // Pré-preenche respostas de nome/e-mail/telefone se um cliente inicial foi passado
+          if (initialClient) {
+            const prefill: Record<string, any> = {};
+            for (const q of sorted) {
+              if (q.systemField === 'client_name' && initialClient.name) prefill[q.id] = initialClient.name;
+              if (q.systemField === 'client_email' && initialClient.email) prefill[q.id] = initialClient.email;
+              if (q.systemField === 'client_phone' && initialClient.phone) prefill[q.id] = initialClient.phone;
+            }
+            setAnswers(prefill);
+          }
+        }
+      } catch {
+        if (!cancelled) setQuestions([]);
+      } finally {
+        if (!cancelled) setLoadingQuestions(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agencyId]);
+
   const selectedPlan = React.useMemo(
-    () => plans.find((p) => p.id === Number(form.plan_id)),
-    [plans, form.plan_id]
+    () => plans.find((p) => p.id === Number(planId)),
+    [plans, planId]
+  );
+
+  const visibleQuestions = React.useMemo(
+    () => questions.filter((q) => isQuestionVisible(q, answers)),
+    [questions, answers]
+  );
+
+  const totalFilesSelected = React.useMemo(
+    () => Object.values(filesByQuestion).reduce((sum, arr) => sum + arr.length, 0),
+    [filesByQuestion]
   );
 
   const trackingLink = successData
@@ -76,52 +115,76 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
       )
     : '';
 
-  const checkEmail = async () => {
-    const email = form.client_email.trim().toLowerCase();
-    if (!email || !email.includes('@')) return;
-    setCheckingEmail(true);
-    try {
-      const res = await fetch(
-        `${API_URL}/api/clients/overview?agency_id=${agencyId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (res.ok) {
-        const clients: any[] = await res.json();
-        const found = clients.some((c: any) => c.email?.toLowerCase() === email);
-        setClientExists(found);
+  const setAnswer = (questionId: string, value: any) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+  };
+
+  const setAddressAnswer = (questionId: string, field: 'cep' | 'address', value: string) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [questionId]: { ...(prev[questionId] || {}), [field]: value },
+    }));
+  };
+
+  const handleFilesChange = (questionId: string, fileList: FileList | null, maxFiles: number) => {
+    if (!fileList) return;
+    const incoming = Array.from(fileList).slice(0, maxFiles);
+    setFilesByQuestion((prev) => ({ ...prev, [questionId]: incoming }));
+  };
+
+  const removeFile = (questionId: string, index: number) => {
+    setFilesByQuestion((prev) => ({
+      ...prev,
+      [questionId]: (prev[questionId] || []).filter((_, i) => i !== index),
+    }));
+  };
+
+  const validate = (): string | null => {
+    for (const q of visibleQuestions) {
+      if (!q.required) continue;
+      if (q.type === 'file') {
+        if ((filesByQuestion[q.id] || []).length === 0) return `Anexe ao menos um arquivo em "${q.label}".`;
+        continue;
       }
-    } catch {
-      setClientExists(null);
-    } finally {
-      setCheckingEmail(false);
+      if (q.type === 'address') {
+        const val = answers[q.id];
+        if (!val?.cep?.trim() || !val?.address?.trim()) return `Preencha "${q.label}" (CEP e endereço).`;
+        continue;
+      }
+      const val = answers[q.id];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        return `Preencha o campo obrigatório "${q.label}".`;
+      }
     }
+    return null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!form.client_name.trim() || !form.client_email.trim() || !form.client_phone.trim() || !form.destination_id) {
-      setError('Preencha os campos obrigatórios: nome, e-mail, telefone e destino.');
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
       return;
     }
+
     setSaving(true);
     try {
-      const payload: Record<string, any> = {
-        agency_id: agencyId,
-        created_by_user_id: createdByUserId,
-        client_name: form.client_name.trim(),
-        client_email: form.client_email.trim().toLowerCase(),
-        client_phone: form.client_phone.trim(),
-        destination_id: Number(form.destination_id),
-      };
-      if (form.visa_type_id) payload.visa_type_id = Number(form.visa_type_id);
-      if (form.plan_id) payload.plan_id = Number(form.plan_id);
-      if (form.description.trim()) payload.description = form.description.trim();
+      const formData = new FormData();
+      formData.append('agency_id', String(agencyId));
+      formData.append('created_by_user_id', String(createdByUserId));
+      formData.append('answers', JSON.stringify(answers));
+      if (visaTypeId) formData.append('visa_type_id', visaTypeId);
+      if (planId) formData.append('plan_id', planId);
+      if (description.trim()) formData.append('description', description.trim());
+      Object.values(filesByQuestion).forEach((fileArr) => {
+        fileArr.forEach((f) => formData.append('documents', f));
+      });
 
       const res = await fetch(`${API_URL}/api/processes/simplified`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
       const data = await res.json();
       if (!res.ok) {
@@ -141,6 +204,202 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
     navigator.clipboard.writeText(trackingLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const inputClass = 'w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all';
+  const labelClass = 'block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5';
+
+  const renderQuestion = (q: SimplifiedProcessQuestion) => {
+    const value = answers[q.id] ?? '';
+
+    if (q.systemField === 'destination_id') {
+      return (
+        <select required={q.required} className={inputClass} value={value} onChange={(e) => setAnswer(q.id, e.target.value ? Number(e.target.value) : '')}>
+          <option value="">Selecione o destino...</option>
+          {destinations.filter((d) => d.is_active).map((d) => (
+            <option key={d.id} value={d.id}>{d.flag} {d.name}</option>
+          ))}
+        </select>
+      );
+    }
+
+    switch (q.type) {
+      case 'textarea':
+        return (
+          <textarea
+            required={q.required}
+            rows={2}
+            placeholder={q.placeholder}
+            className={`${inputClass} resize-none`}
+            value={value}
+            onChange={(e) => setAnswer(q.id, e.target.value)}
+          />
+        );
+      case 'cpf':
+        return (
+          <input
+            type="text"
+            required={q.required}
+            placeholder="000.000.000-00"
+            maxLength={14}
+            className={inputClass}
+            value={value}
+            onChange={(e) => setAnswer(q.id, formatCPF(e.target.value))}
+          />
+        );
+      case 'phone':
+      case 'email':
+        return (
+          <div className="space-y-2">
+            <input
+              type={q.type === 'email' ? 'email' : 'tel'}
+              required={q.required}
+              placeholder={q.placeholder || (q.type === 'email' ? 'cliente@exemplo.com' : '+55 (11) 99999-9999')}
+              className={inputClass}
+              value={value}
+              onChange={(e) => setAnswer(q.id, e.target.value)}
+            />
+            {q.allowExtra && (
+              <div className="space-y-2">
+                {(answers[`${q.id}_extra`] || []).map((extra: string, idx: number) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type={q.type === 'email' ? 'email' : 'tel'}
+                      className={inputClass}
+                      value={extra}
+                      onChange={(e) => {
+                        const list = [...(answers[`${q.id}_extra`] || [])];
+                        list[idx] = e.target.value;
+                        setAnswer(`${q.id}_extra`, list);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const list = (answers[`${q.id}_extra`] || []).filter((_: string, i: number) => i !== idx);
+                        setAnswer(`${q.id}_extra`, list);
+                      }}
+                      className="p-2 text-[var(--text-muted)] hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setAnswer(`${q.id}_extra`, [...(answers[`${q.id}_extra`] || []), ''])}
+                  className="text-[10px] font-black uppercase tracking-widest text-emerald-400 hover:text-emerald-300 flex items-center gap-1.5"
+                >
+                  <Plus size={12} /> Adicionar {q.type === 'email' ? 'e-mail' : 'telefone'}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      case 'date':
+        return (
+          <input type="date" required={q.required} className={inputClass} value={value} onChange={(e) => setAnswer(q.id, e.target.value)} />
+        );
+      case 'boolean':
+        return (
+          <div className="flex gap-3">
+            {['Sim', 'Não'].map((opt) => (
+              <button
+                type="button"
+                key={opt}
+                onClick={() => setAnswer(q.id, opt)}
+                className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${
+                  value === opt
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        );
+      case 'select':
+        return (
+          <select required={q.required} className={inputClass} value={value} onChange={(e) => setAnswer(q.id, e.target.value)}>
+            <option value="">Selecione...</option>
+            {(q.options || []).map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        );
+      case 'address': {
+        const addr = answers[q.id] || {};
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input
+              type="text"
+              required={q.required}
+              placeholder="CEP"
+              maxLength={9}
+              className={inputClass}
+              value={addr.cep || ''}
+              onChange={(e) => setAddressAnswer(q.id, 'cep', formatCEP(e.target.value))}
+            />
+            <input
+              type="text"
+              required={q.required}
+              placeholder="Endereço completo (rua, número, bairro, cidade/UF)"
+              className={`${inputClass} sm:col-span-2`}
+              value={addr.address || ''}
+              onChange={(e) => setAddressAnswer(q.id, 'address', e.target.value)}
+            />
+          </div>
+        );
+      }
+      case 'file': {
+        const maxFiles = q.maxFiles || MAX_TOTAL_FILES;
+        const currentFiles = filesByQuestion[q.id] || [];
+        return (
+          <div className="space-y-2">
+            <label className="flex flex-col items-center justify-center px-6 py-6 bg-[var(--bg-input)] border-2 border-dashed border-[var(--border-color)] rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all group">
+              <Upload className="text-[var(--text-muted)] group-hover:text-emerald-400 mb-2 transition-colors" size={22} />
+              <span className="text-xs font-bold text-[var(--text-muted)] group-hover:text-[var(--text-main)]">
+                Selecionar arquivos (máx. {maxFiles})
+              </span>
+              <input
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                className="hidden"
+                onChange={(e) => handleFilesChange(q.id, e.target.files, maxFiles)}
+              />
+            </label>
+            {currentFiles.length > 0 && (
+              <div className="space-y-1">
+                {currentFiles.map((f, idx) => (
+                  <div key={idx} className="flex items-center justify-between px-3 py-2 bg-[var(--bg-input)]/60 rounded-lg border border-[var(--border-color)]">
+                    <span className="flex items-center gap-2 text-xs text-[var(--text-main)] truncate">
+                      <FileText size={13} className="text-emerald-400 flex-shrink-0" /> {f.name}
+                    </span>
+                    <button type="button" onClick={() => removeFile(q.id, idx)} className="text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+      case 'text':
+      default:
+        return (
+          <input
+            type="text"
+            required={q.required}
+            placeholder={q.placeholder}
+            className={inputClass}
+            value={value}
+            onChange={(e) => setAnswer(q.id, e.target.value)}
+          />
+        );
+    }
   };
 
   return (
@@ -216,8 +475,10 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
                   Fechar
                 </button>
               </motion.div>
+            ) : loadingQuestions ? (
+              <div className="py-12 text-center text-sm text-[var(--text-muted)] font-bold">Carregando formulário...</div>
             ) : (
-              /* Formulário */
+              /* Formulário dinâmico */
               <motion.form
                 key="form"
                 initial={{ opacity: 0 }}
@@ -231,107 +492,21 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
                   </div>
                 )}
 
-                {/* Nome */}
-                <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
-                    Nome Completo <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Nome do cliente"
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.client_name}
-                    onChange={(e) => setForm({ ...form, client_name: e.target.value })}
-                  />
-                </div>
-
-                {/* E-mail */}
-                <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
-                    E-mail <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="cliente@exemplo.com"
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.client_email}
-                    onChange={(e) => { setForm({ ...form, client_email: e.target.value }); setClientExists(null); }}
-                    onBlur={checkEmail}
-                  />
-                  <AnimatePresence>
-                    {checkingEmail && (
-                      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[10px] text-[var(--text-muted)] mt-1.5 font-bold">
-                        Verificando cadastro...
-                      </motion.p>
-                    )}
-                    {!checkingEmail && clientExists === false && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-2 flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl"
-                      >
-                        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                        <p className="text-[10px] font-bold text-amber-400 leading-relaxed">
-                          Nenhum cadastro encontrado. O sistema irá criar automaticamente um novo cliente para este e-mail.
-                        </p>
-                      </motion.div>
-                    )}
-                    {!checkingEmail && clientExists === true && (
-                      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-[10px] text-emerald-400 mt-1.5 font-bold flex items-center gap-1">
-                        <CheckCircle2 size={11} /> Cliente já cadastrado na agência.
-                      </motion.p>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                {/* Telefone */}
-                <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
-                    Telefone / WhatsApp <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+55 (11) 99999-9999"
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.client_phone}
-                    onChange={(e) => setForm({ ...form, client_phone: e.target.value })}
-                  />
-                </div>
-
-                {/* Destino */}
-                <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
-                    País / Destino <span className="text-red-400">*</span>
-                  </label>
-                  <select
-                    required
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.destination_id}
-                    onChange={(e) => setForm({ ...form, destination_id: e.target.value })}
-                  >
-                    <option value="">Selecione o destino...</option>
-                    {destinations.filter((d) => d.is_active).map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.flag} {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {visibleQuestions.map((q) => (
+                  <div key={q.id}>
+                    <label className={labelClass}>
+                      {q.label} {q.required ? <span className="text-red-400">*</span> : <span className="text-[var(--text-muted)] normal-case">(opcional)</span>}
+                    </label>
+                    {renderQuestion(q)}
+                  </div>
+                ))}
 
                 {/* Tipo de Visto (opcional) */}
                 <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
+                  <label className={labelClass}>
                     Tipo de Visto <span className="text-[var(--text-muted)]">(opcional)</span>
                   </label>
-                  <select
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.visa_type_id}
-                    onChange={(e) => setForm({ ...form, visa_type_id: e.target.value })}
-                  >
+                  <select className={inputClass} value={visaTypeId} onChange={(e) => setVisaTypeId(e.target.value)}>
                     <option value="">Nenhum</option>
                     {visaTypes.map((v) => (
                       <option key={v.id} value={v.id}>{v.name}</option>
@@ -341,14 +516,10 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
 
                 {/* Plano (opcional) */}
                 <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
+                  <label className={labelClass}>
                     Plano de Consultoria <span className="text-[var(--text-muted)]">(opcional)</span>
                   </label>
-                  <select
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all"
-                    value={form.plan_id}
-                    onChange={(e) => setForm({ ...form, plan_id: e.target.value })}
-                  >
+                  <select className={inputClass} value={planId} onChange={(e) => setPlanId(e.target.value)}>
                     <option value="">Nenhum</option>
                     {plans.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -365,17 +536,23 @@ export const SimplifiedProcessModal: React.FC<SimplifiedProcessModalProps> = ({
 
                 {/* Descrição (opcional) */}
                 <div>
-                  <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5">
+                  <label className={labelClass}>
                     Descrição <span className="text-[var(--text-muted)]">(opcional)</span>
                   </label>
                   <textarea
                     rows={2}
                     placeholder="Ex: cliente indicado, urgente, visto de estudante..."
-                    className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 text-sm transition-all resize-none"
-                    value={form.description}
-                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className={`${inputClass} resize-none`}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
                   />
                 </div>
+
+                {totalFilesSelected > 0 && (
+                  <p className="text-[10px] text-[var(--text-muted)] font-bold">
+                    {totalFilesSelected} arquivo(s) selecionado(s) no total.
+                  </p>
+                )}
 
                 {/* Ações */}
                 <div className="flex gap-3 pt-2">

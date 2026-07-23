@@ -39,7 +39,42 @@ export interface Agency {
   admin_name?: string | null;
   admin_email?: string | null;
   admin_role?: UserRole | null;
+  simplified_process_questions?: SimplifiedProcessQuestion[] | string;
   created_at: string;
+}
+
+// ─── Perguntas Configuráveis do Processo Simplificado ───────────────────────
+export type SimplifiedQuestionType =
+  | 'text'
+  | 'textarea'
+  | 'cpf'
+  | 'phone'
+  | 'email'
+  | 'date'
+  | 'boolean'
+  | 'select'
+  | 'address'
+  | 'file';
+
+export interface SimplifiedProcessQuestion {
+  id: string;
+  label: string;
+  type: SimplifiedQuestionType;
+  required: boolean;
+  order: number;
+  options?: string[]; // usado por 'select'
+  systemField?: 'client_name' | 'client_email' | 'client_phone' | 'destination_id' | null;
+  showIf?: { questionId: string; equals: string } | null;
+  maxFiles?: number; // usado por 'file'
+  allowExtra?: boolean; // permite campos extras opcionais (telefone/e-mail)
+  placeholder?: string;
+}
+
+export interface SimplifiedProcessAnswer {
+  question_id: string;
+  label: string;
+  type: SimplifiedQuestionType;
+  value: any;
 }
 
 export interface Destination {
@@ -162,6 +197,7 @@ export interface Process {
   process_type?: 'normal' | 'simplified';
   tracking_token?: string;
   description?: string;
+  simplified_process_answers?: SimplifiedProcessAnswer[] | string;
   created_at: string;
   finished_at: string | null;
   process_forms?: ProcessForm[];
@@ -195,6 +231,7 @@ export interface Document {
   url: string;
   status: 'uploaded' | 'approved' | 'rejected';
   rejection_reason: string | null;
+  category?: string;
   uploaded_at: string;
 }
 

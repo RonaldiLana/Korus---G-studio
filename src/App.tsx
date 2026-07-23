@@ -71,10 +71,13 @@ import {
   Mail,
   Send,
   ArrowLeft,
-  Smartphone
+  Smartphone,
+  ListChecks,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration, SimplifiedProcessQuestion, SimplifiedQuestionType } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 
 import { FormsPanel } from './features/FormsPanel';
@@ -829,7 +832,9 @@ export default function App() {
     pre_form_questions: []
   });
   const [agencyTab, setAgencyTab] = useState<'geral' | 'configuracoes' | 'clientes'>('geral');
-  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos' | 'email'>('destinos');
+  const [configSubTab, setConfigSubTab] = useState<'destinos' | 'objetivos' | 'tasks' | 'vistos' | 'formularios' | 'planos' | 'email' | 'processo_simplificado'>('destinos');
+  const [simplifiedQuestions, setSimplifiedQuestions] = useState<SimplifiedProcessQuestion[]>([]);
+  const [savingSimplifiedQuestions, setSavingSimplifiedQuestions] = useState(false);
   const [smtpConfig, setSmtpConfig] = useState({ api_key: '', from_email: '', from_name: '' });
   const [smtpHasPassword, setSmtpHasPassword] = useState(false);
   const [smtpSaving, setSmtpSaving] = useState(false);
@@ -1583,6 +1588,17 @@ export default function App() {
             setSmtpHasPassword(smtpData.has_api_key || false);
           }
         } catch { /* silencioso */ }
+
+        // Carregar perguntas configuráveis do Processo Simplificado (com seed automático se vazio)
+        try {
+          const spqRes = await fetch(`${API_URL}/api/agencies/${agencyData.id}/simplified-questions`, {
+            headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+          });
+          if (spqRes.ok) {
+            const spqData = await spqRes.json();
+            setSimplifiedQuestions(Array.isArray(spqData) ? spqData : []);
+          }
+        } catch { /* silencioso */ }
       }
     } catch (err) {
       console.error('[FETCH] fetchAgencySettings error:', err);
@@ -1632,6 +1648,62 @@ export default function App() {
       setSmtpMessage({ type: 'error', text: e.message || 'Erro ao enviar e-mail de teste.' });
     } finally {
       setSmtpTesting(false);
+    }
+  };
+
+  // ---- Question Builder do Processo Simplificado ----
+  const addSimplifiedQuestion = () => {
+    const newQuestion: SimplifiedProcessQuestion = {
+      id: `q_${Date.now()}`,
+      label: '',
+      type: 'text',
+      required: false,
+      order: simplifiedQuestions.length,
+      systemField: null,
+      showIf: null,
+    };
+    setSimplifiedQuestions(prev => [...prev, newQuestion]);
+  };
+
+  const updateSimplifiedQuestion = (id: string, patch: Partial<SimplifiedProcessQuestion>) => {
+    setSimplifiedQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
+  };
+
+  const removeSimplifiedQuestion = (id: string) => {
+    setSimplifiedQuestions(prev => prev.filter(q => q.id !== id));
+  };
+
+  const moveSimplifiedQuestion = (id: string, direction: 'up' | 'down') => {
+    setSimplifiedQuestions(prev => {
+      const list = [...prev];
+      const idx = list.findIndex(q => q.id === id);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= list.length) return prev;
+      [list[idx], list[targetIdx]] = [list[targetIdx], list[idx]];
+      return list.map((q, i) => ({ ...q, order: i }));
+    });
+  };
+
+  const handleSaveSimplifiedQuestions = async () => {
+    const agencyId = agencySettings.id;
+    if (!agencyId) return;
+    setSavingSimplifiedQuestions(true);
+    try {
+      const res = await fetch(`${API_URL}/api/agencies/${agencyId}/simplified-questions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ questions: simplifiedQuestions }),
+      });
+      let data: any = null;
+      try { data = await res.json(); } catch { /* corpo vazio ou inválido */ }
+      if (!res.ok) throw new Error(data?.error || `Erro ao salvar perguntas (HTTP ${res.status}).`);
+      if (Array.isArray(data?.questions)) setSimplifiedQuestions(data.questions);
+      notify('Perguntas do Processo Simplificado salvas com sucesso!', 'success');
+    } catch (e: any) {
+      alert(e.message || 'Erro ao salvar perguntas do Processo Simplificado.');
+    } finally {
+      setSavingSimplifiedQuestions(false);
     }
   };
 
@@ -5413,6 +5485,7 @@ export default function App() {
                       { id: 'formularios', label: 'Form Builder', icon: FileText },
                       { id: 'planos', label: 'Planos', icon: DollarSign },
                       { id: 'email', label: 'E-mail SMTP', icon: Mail },
+                      ...(agencyModules.simplified_process ? [{ id: 'processo_simplificado', label: 'Processo Simplificado', icon: ListChecks }] : []),
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -6081,6 +6154,185 @@ export default function App() {
                             <li>Cadastro em <span className="text-violet-400 font-bold">resend.com</span> com e-mail ou GitHub</li>
                           </ul>
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {configSubTab === 'processo_simplificado' && (
+                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
+                      <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center flex-wrap gap-3">
+                        <div>
+                          <h3 className="font-black text-lg uppercase tracking-tighter">Ficha do Processo Simplificado</h3>
+                          <p className="text-xs text-[var(--text-muted)] mt-1">Configure as perguntas exibidas na abertura rápida de processos. Os 4 campos de sistema (nome, e-mail, telefone e destino) são obrigatórios e não podem ser removidos.</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={addSimplifiedQuestion}
+                            className="bg-[var(--bg-input)] hover:bg-[var(--bg-card)] text-[var(--text-main)] px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-[var(--border-color)]"
+                          >
+                            <Plus size={16} />
+                            Nova Pergunta
+                          </button>
+                          <button
+                            onClick={handleSaveSimplifiedQuestions}
+                            disabled={savingSimplifiedQuestions}
+                            className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg disabled:opacity-60"
+                          >
+                            {savingSimplifiedQuestions ? 'Salvando...' : 'Salvar Ficha'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="p-6 space-y-4 max-h-[700px] overflow-y-auto">
+                        {simplifiedQuestions.map((q, idx) => (
+                          <div key={q.id} className="p-4 bg-[var(--bg-input)] rounded-2xl border border-[var(--border-color)] space-y-3">
+                            <div className="flex items-start gap-3">
+                              <div className="flex flex-col gap-1 pt-1">
+                                <button
+                                  onClick={() => moveSimplifiedQuestion(q.id, 'up')}
+                                  disabled={idx === 0}
+                                  className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] disabled:opacity-30 transition-all"
+                                >
+                                  <ChevronUp size={14} />
+                                </button>
+                                <button
+                                  onClick={() => moveSimplifiedQuestion(q.id, 'down')}
+                                  disabled={idx === simplifiedQuestions.length - 1}
+                                  className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] disabled:opacity-30 transition-all"
+                                >
+                                  <ChevronDown size={14} />
+                                </button>
+                              </div>
+
+                              <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Rótulo da Pergunta</label>
+                                  <input
+                                    type="text"
+                                    value={q.label}
+                                    onChange={(e) => updateSimplifiedQuestion(q.id, { label: e.target.value })}
+                                    className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Tipo de Campo</label>
+                                  <select
+                                    value={q.type}
+                                    disabled={!!q.systemField}
+                                    onChange={(e) => updateSimplifiedQuestion(q.id, { type: e.target.value as SimplifiedQuestionType })}
+                                    className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
+                                  >
+                                    <option value="text">Texto curto</option>
+                                    <option value="textarea">Texto longo</option>
+                                    <option value="cpf">CPF</option>
+                                    <option value="phone">Telefone</option>
+                                    <option value="email">E-mail</option>
+                                    <option value="date">Data</option>
+                                    <option value="boolean">Sim / Não</option>
+                                    <option value="select">Seleção (opções)</option>
+                                    <option value="address">Endereço (CEP)</option>
+                                    <option value="file">Upload de Arquivo</option>
+                                  </select>
+                                </div>
+
+                                {q.type === 'select' && (
+                                  <div className="md:col-span-2 space-y-1">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Opções (separadas por vírgula)</label>
+                                    <input
+                                      type="text"
+                                      value={(q.options || []).join(', ')}
+                                      onChange={(e) => updateSimplifiedQuestion(q.id, { options: e.target.value.split(',').map(o => o.trim()).filter(Boolean) })}
+                                      placeholder="Ex: Opção 1, Opção 2, Opção 3"
+                                      className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
+                                )}
+
+                                {q.type === 'file' && (
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Máx. de Arquivos</label>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={10}
+                                      value={q.maxFiles || 1}
+                                      onChange={(e) => updateSimplifiedQuestion(q.id, { maxFiles: Number(e.target.value) })}
+                                      className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
+                                )}
+
+                                {(q.type === 'phone' || q.type === 'email') && (
+                                  <label className="flex items-center gap-2 text-xs font-bold text-[var(--text-muted)] cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!q.allowExtra}
+                                      onChange={(e) => updateSimplifiedQuestion(q.id, { allowExtra: e.target.checked })}
+                                      className="w-4 h-4 accent-emerald-500"
+                                    />
+                                    Permitir adicionar mais de um
+                                  </label>
+                                )}
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Depende da pergunta</label>
+                                  <select
+                                    value={q.showIf?.questionId || ''}
+                                    onChange={(e) => updateSimplifiedQuestion(q.id, {
+                                      showIf: e.target.value ? { questionId: e.target.value, equals: q.showIf?.equals || '' } : null
+                                    })}
+                                    className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                                  >
+                                    <option value="">Sempre visível</option>
+                                    {simplifiedQuestions.filter(o => o.id !== q.id).map(o => (
+                                      <option key={o.id} value={o.id}>{o.label || o.id}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {q.showIf?.questionId && (
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Quando a resposta for</label>
+                                    <input
+                                      type="text"
+                                      value={q.showIf?.equals || ''}
+                                      onChange={(e) => updateSimplifiedQuestion(q.id, { showIf: { questionId: q.showIf!.questionId, equals: e.target.value } })}
+                                      placeholder="Ex: Sim"
+                                      className="w-full p-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl text-sm font-bold outline-none focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex flex-col items-end gap-2 pt-1">
+                                {q.systemField ? (
+                                  <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20 whitespace-nowrap">
+                                    Campo do Sistema
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => removeSimplifiedQuestion(q.id)}
+                                    className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
+                                <label className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    checked={q.required}
+                                    disabled={!!q.systemField}
+                                    onChange={(e) => updateSimplifiedQuestion(q.id, { required: e.target.checked })}
+                                    className="w-4 h-4 accent-emerald-500 disabled:opacity-60"
+                                  />
+                                  Obrigatório
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {simplifiedQuestions.length === 0 && (
+                          <p className="text-sm text-[var(--text-muted)] text-center py-8">Nenhuma pergunta configurada ainda.</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -7546,6 +7798,40 @@ export default function App() {
                               </div>
                             ))
                           }
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Respostas do Processo Simplificado (ficha configurável) */}
+                  {selectedProcess.simplified_process_answers && (() => {
+                    let answers: Array<{ question_id: string; label: string; type: string; value: any }> = [];
+                    try {
+                      const parsed = typeof selectedProcess.simplified_process_answers === 'string'
+                        ? JSON.parse(selectedProcess.simplified_process_answers)
+                        : selectedProcess.simplified_process_answers;
+                      if (Array.isArray(parsed)) answers = parsed;
+                    } catch { return null; }
+                    if (answers.length === 0) return null;
+                    const formatAnswerValue = (a: { type: string; value: any }) => {
+                      if (a.value === null || a.value === undefined || a.value === '') return '-';
+                      if (a.type === 'boolean') return a.value === true || a.value === 'Sim' ? 'Sim' : 'Não';
+                      if (a.type === 'address' && typeof a.value === 'object') {
+                        return `${a.value.cep || ''} — ${a.value.address || ''}`.trim();
+                      }
+                      if (Array.isArray(a.value)) return a.value.join(', ');
+                      return String(a.value);
+                    };
+                    return (
+                      <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                        <h4 className="font-black uppercase tracking-widest text-xs mb-4">Ficha Cadastral (Processo Simplificado)</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[var(--bg-input)]/30 p-6 rounded-3xl border border-[var(--border-color)]">
+                          {answers.filter(a => a.type !== 'file').map((a) => (
+                            <div key={a.question_id} className="space-y-1">
+                              <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest">{a.label}</p>
+                              <p className="text-sm font-bold text-[var(--text-main)]">{formatAnswerValue(a)}</p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );

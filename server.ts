@@ -86,6 +86,17 @@ async function getAuditUserId(agencyId?: number | string | null) {
   return master.rows[0]?.id || 1;
 }
 
+// Perguntas padrão do Processo Simplificado (campos de sistema, sempre presentes).
+// systemField indica qual dado estrutural do processo aquela resposta alimenta.
+function getDefaultSimplifiedQuestions() {
+  return [
+    { id: 'sys_client_name', label: 'Nome Completo', type: 'text', required: true, order: 0, systemField: 'client_name', showIf: null },
+    { id: 'sys_client_email', label: 'E-mail', type: 'email', required: true, order: 1, systemField: 'client_email', showIf: null },
+    { id: 'sys_client_phone', label: 'Telefone / WhatsApp', type: 'phone', required: true, order: 2, systemField: 'client_phone', showIf: null },
+    { id: 'sys_destination_id', label: 'País / Destino', type: 'select', required: true, order: 3, systemField: 'destination_id', showIf: null },
+  ];
+}
+
 async function isFinanceModuleEnabledForAgency(agencyId?: number | string | null) {
   const parsedAgencyId = agencyId ? Number(agencyId) : null;
   if (!parsedAgencyId) return true;
@@ -639,16 +650,20 @@ async function startServer() {
   // ---
   // POST /api/processes/simplified — Criação de Processo Simplificado pela agência
   // ---
-  app.post("/api/processes/simplified", async (req, res) => {
+  app.post("/api/processes/simplified", upload.array("documents", 10), async (req, res) => {
     try {
-      const { agency_id, created_by_user_id, client_name, client_email, client_phone, destination_id, visa_type_id, plan_id, description } = req.body;
+      const { agency_id, created_by_user_id, visa_type_id, plan_id, description } = req.body;
+      const files = (req.files as Express.Multer.File[]) || [];
 
-      if (!agency_id || !client_name || !client_email || !client_phone || !destination_id) {
-        return res.status(400).json({ error: "agency_id, client_name, client_email, client_phone e destination_id são obrigatórios" });
+      if (!agency_id) {
+        return res.status(400).json({ error: "agency_id é obrigatório" });
       }
 
-      // Verificar se módulo está ativo na agência
-      const agencyResult = await query("SELECT modules FROM agencies WHERE id = $1", [agency_id]);
+      let answers: Record<string, any> = {};
+      try { answers = req.body.answers ? JSON.parse(req.body.answers) : {}; } catch { answers = {}; }
+
+      // Verificar se módulo está ativo na agência e carregar perguntas configuradas
+      const agencyResult = await query("SELECT modules, simplified_process_questions FROM agencies WHERE id = $1", [agency_id]);
       if (agencyResult.rows.length === 0) return res.status(404).json({ error: "Agência não encontrada" });
       let agencyModules: Record<string, any> = {};
       try { agencyModules = JSON.parse(agencyResult.rows[0].modules || "{}"); } catch {}
@@ -656,10 +671,58 @@ async function startServer() {
         return res.status(403).json({ error: "Módulo Processo Simplificado não está ativo nesta agência" });
       }
 
+      let questions: any[] = [];
+      try {
+        const raw = agencyResult.rows[0].simplified_process_questions;
+        questions = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+      } catch { questions = []; }
+      if (!Array.isArray(questions) || questions.length === 0) questions = getDefaultSimplifiedQuestions();
+
+      // Avalia se a pergunta deve ser exibida/validada, com base na resposta de outra pergunta
+      const isQuestionVisible = (q: any): boolean => {
+        if (!q.showIf || !q.showIf.questionId) return true;
+        const dep = answers[q.showIf.questionId];
+        return String(dep ?? "") === String(q.showIf.equals ?? "");
+      };
+
+      // Validação de obrigatoriedade (perguntas de arquivo são validadas junto aos uploads recebidos)
+      const missingRequired: string[] = [];
+      for (const q of questions) {
+        if (!isQuestionVisible(q)) continue;
+        if (!q.required) continue;
+        if (q.type === "file") {
+          if (files.length === 0) missingRequired.push(q.label);
+          continue;
+        }
+        const val = answers[q.id];
+        if (val === undefined || val === null || String(val).trim() === "") {
+          missingRequired.push(q.label);
+        }
+      }
+      if (missingRequired.length > 0) {
+        return res.status(400).json({ error: `Preencha as perguntas obrigatórias: ${missingRequired.join(", ")}` });
+      }
+
+      // Resolve os campos estruturais do sistema a partir das respostas configuradas
+      const systemQuestion = (field: string) => questions.find((q: any) => q.systemField === field);
+      const nameQ = systemQuestion("client_name");
+      const emailQ = systemQuestion("client_email");
+      const phoneQ = systemQuestion("client_phone");
+      const destQ = systemQuestion("destination_id");
+
+      const client_name = nameQ ? String(answers[nameQ.id] || "").trim() : "";
+      const client_email = emailQ ? String(answers[emailQ.id] || "").trim() : "";
+      const client_phone = phoneQ ? String(answers[phoneQ.id] || "").trim() : "";
+      const destination_id = destQ ? answers[destQ.id] : null;
+
+      if (!client_name || !client_email || !client_phone || !destination_id) {
+        return res.status(400).json({ error: "Nome, e-mail, telefone e destino são obrigatórios" });
+      }
+
       // Verificar ou criar cliente
       const existingUser = await query(
         "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND agency_id = $2",
-        [client_email.trim(), agency_id]
+        [client_email, agency_id]
       );
       let clientId: number;
       let clientCreated = false;
@@ -668,7 +731,7 @@ async function startServer() {
       } else {
         const newUser = await query(
           "INSERT INTO users (name, email, password, role, agency_id, phone) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-          [client_name.trim(), client_email.trim().toLowerCase(), "", "client", agency_id, client_phone.trim()]
+          [client_name, client_email.toLowerCase(), "", "client", agency_id, client_phone]
         );
         clientId = newUser.rows[0].id;
         clientCreated = true;
@@ -700,9 +763,15 @@ async function startServer() {
         }
       }
 
+      // Snapshot das respostas visíveis no momento da criação (preserva histórico mesmo se
+      // as perguntas forem editadas/removidas depois nas configurações da agência)
+      const answersSnapshot = questions
+        .filter((q: any) => q.type !== "file" && isQuestionVisible(q) && answers[q.id] !== undefined && answers[q.id] !== null && String(answers[q.id]).trim() !== "")
+        .map((q: any) => ({ question_id: q.id, label: q.label, type: q.type, value: answers[q.id] }));
+
       // Criar processo simplificado
-      const insertCols = ["client_id", "agency_id", "destination_id", "status", "internal_status", "process_type", "tracking_token"];
-      const insertVals: any[] = [clientId, agency_id, destination_id, "started", "pending", "simplified", trackingToken];
+      const insertCols = ["client_id", "agency_id", "destination_id", "status", "internal_status", "process_type", "tracking_token", "simplified_process_answers"];
+      const insertVals: any[] = [clientId, agency_id, destination_id, "started", "pending", "simplified", trackingToken, JSON.stringify(answersSnapshot)];
       if (validVisaTypeId) { insertCols.push("visa_type_id"); insertVals.push(validVisaTypeId); }
       if (validPlanId) { insertCols.push("plan_id"); insertVals.push(validPlanId); }
       if (description && description.trim()) { insertCols.push("description"); insertVals.push(description.trim()); }
@@ -712,6 +781,20 @@ async function startServer() {
         insertVals
       );
       const processId = processResult.rows[0].id;
+
+      // Documentos cadastrais iniciais (upload múltiplo na abertura, categoria separada dos
+      // documentos do processo para não competir com o limite de 3 do fluxo normal)
+      if (files.length > 0) {
+        for (const file of files) {
+          const url = `${BACKEND_URL}/uploads/${file.filename}`;
+          try {
+            await query(
+              "INSERT INTO documents (process_id, name, url, status, category) VALUES ($1, $2, $3, 'uploaded', 'cadastral')",
+              [processId, file.originalname, url]
+            );
+          } catch (_) {}
+        }
+      }
 
       // Lançamento financeiro como receita da agência (somente se plano selecionado)
       if (validPlanId && planPrice > 0) {
@@ -1362,6 +1445,64 @@ async function startServer() {
     }
   });
 
+  // GET perguntas configuráveis do Processo Simplificado (com seed automático se vazio)
+  app.get("/api/agencies/:id/simplified-questions", async (req, res) => {
+    try {
+      const result = await query("SELECT simplified_process_questions FROM agencies WHERE id = $1", [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).json({ error: "Agência não encontrada" });
+
+      let questions: any[] = [];
+      try {
+        const raw = result.rows[0].simplified_process_questions;
+        questions = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+      } catch { questions = []; }
+
+      if (!Array.isArray(questions) || questions.length === 0) {
+        questions = getDefaultSimplifiedQuestions();
+        try {
+          await query("UPDATE agencies SET simplified_process_questions = $1 WHERE id = $2", [JSON.stringify(questions), req.params.id]);
+        } catch (_) {}
+      }
+
+      res.json(questions);
+    } catch (e: any) {
+      console.error('[SIMPLIFIED QUESTIONS GET]', e);
+      res.status(500).json({ error: e.message || "Erro ao buscar perguntas do Processo Simplificado" });
+    }
+  });
+
+  // PUT perguntas configuráveis do Processo Simplificado
+  app.put("/api/agencies/:id/simplified-questions", async (req, res) => {
+    const { questions } = req.body;
+    if (!Array.isArray(questions)) {
+      return res.status(400).json({ error: "questions deve ser um array" });
+    }
+
+    // As 4 perguntas de sistema devem sempre existir e ser obrigatórias
+    const requiredSystemFields = ['client_name', 'client_email', 'client_phone', 'destination_id'];
+    const presentSystemFields = questions.filter((q: any) => q.systemField).map((q: any) => q.systemField);
+    const missing = requiredSystemFields.filter((f) => !presentSystemFields.includes(f));
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Perguntas de sistema obrigatórias ausentes: ${missing.join(', ')}` });
+    }
+
+    const normalized = questions.map((q: any, idx: number) => ({
+      ...q,
+      required: requiredSystemFields.includes(q.systemField) ? true : Boolean(q.required),
+      order: idx,
+    }));
+
+    try {
+      await query("UPDATE agencies SET simplified_process_questions = $1 WHERE id = $2", [JSON.stringify(normalized), req.params.id]);
+      const auditUserId = await getAuditUserId(req.params.id);
+      await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [req.params.id, auditUserId, "simplified_questions_updated", `Perguntas do Processo Simplificado atualizadas (${normalized.length} perguntas)`]);
+      res.json({ success: true, questions: normalized });
+    } catch (e: any) {
+      console.error('[SIMPLIFIED QUESTIONS PUT]', e);
+      res.status(500).json({ error: e.message || "Erro ao salvar perguntas do Processo Simplificado" });
+    }
+  });
+
   // GET configuração SMTP de uma agência
   // GET configuração Resend de uma agência
   app.get("/api/agencies/:id/smtp", async (req, res) => {
@@ -1873,8 +2014,8 @@ async function startServer() {
     const url = file ? `${BACKEND_URL}/uploads/${file.filename}` : null;
 
     try {
-      // Verificar limite de 3 documentos por processo
-      const countResult = await query("SELECT COUNT(*) FROM documents WHERE process_id = $1", [process_id]);
+      // Verificar limite de 3 documentos por processo (não conta documentos cadastrais da abertura simplificada)
+      const countResult = await query("SELECT COUNT(*) FROM documents WHERE process_id = $1 AND category = 'general'", [process_id]);
       const docCount = parseInt(countResult.rows[0].count, 10);
       if (docCount >= 3) {
         return res.status(400).json({ error: "Limite de 3 documentos por processo atingido." });
@@ -1912,9 +2053,9 @@ async function startServer() {
       const processId = procResult.rows[0].id;
       const url = `${BACKEND_URL}/uploads/${file.filename}`;
 
-      // Verificar limite de 5 documentos (cliente pode enviar mais que agência)
+      // Verificar limite de 5 documentos (cliente pode enviar mais que agência), não conta documentos cadastrais
       const countResult = await query(
-        "SELECT COUNT(*) FROM documents WHERE process_id = $1",
+        "SELECT COUNT(*) FROM documents WHERE process_id = $1 AND category = 'general'",
         [processId]
       );
       const docCount = parseInt(countResult.rows[0].count, 10);

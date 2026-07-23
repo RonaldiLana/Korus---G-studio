@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS agencies (
   logo_mimetype TEXT,
   pre_form_questions TEXT,
   destinations TEXT,
+  simplified_process_questions TEXT DEFAULT '[]',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS processes (
   description TEXT,
   process_type VARCHAR(20) DEFAULT 'normal',
   tracking_token VARCHAR(64) UNIQUE,
+  simplified_process_answers TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   finished_at TIMESTAMP,
   FOREIGN KEY (client_id) REFERENCES users(id),
@@ -167,6 +169,7 @@ CREATE TABLE IF NOT EXISTS documents (
   url TEXT NOT NULL,
   status TEXT DEFAULT 'uploaded',
   rejection_reason TEXT,
+  category TEXT DEFAULT 'general',
   uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (process_id) REFERENCES processes(id)
 );

@@ -271,6 +271,11 @@ async function applyMigrations() {
     `CREATE INDEX IF NOT EXISTS idx_process_contracts_process_id ON process_contracts(process_id)`,
     `CREATE INDEX IF NOT EXISTS idx_process_contracts_status ON process_contracts(status)`,
     `CREATE INDEX IF NOT EXISTS idx_contract_signature_logs_contract_id ON contract_signature_logs(process_contract_id)`,
+
+    // ─── Perguntas Configuráveis do Processo Simplificado ─────────────────────
+    `ALTER TABLE agencies ADD COLUMN IF NOT EXISTS simplified_process_questions TEXT DEFAULT '[]'`,
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS simplified_process_answers TEXT`,
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general'`,
   ];
 
   for (const sql of migrations) {

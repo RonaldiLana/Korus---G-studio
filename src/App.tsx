@@ -4722,29 +4722,29 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
+              <div>
+                <table className="w-full text-left table-fixed">
                   <thead>
                     <tr className="bg-white/5 text-zinc-500 text-[10px] uppercase font-black tracking-widest">
-                      <th className="px-6 py-4">Tipo de Visto</th>
-                      <th className="px-6 py-4">Cliente</th>
-                      <th className="px-6 py-4">Consultor</th>
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4">Status Interno</th>
-                      <th className="px-6 py-4">Data Início</th>
-                      {isConsultantSupervisorOrMaster(user) && <th className="px-6 py-4 text-right">Ações</th>}
+                      <th className="px-4 py-4 w-[24%]">Tipo de Visto</th>
+                      <th className="px-4 py-4 w-[16%]">Cliente</th>
+                      <th className="px-4 py-4 w-[15%]">Consultor</th>
+                      <th className="px-4 py-4 w-[12%]">Status</th>
+                      <th className="px-4 py-4 w-[13%]">Status Interno</th>
+                      <th className="px-4 py-4 w-[11%]">Data Início</th>
+                      {isConsultantSupervisorOrMaster(user) && <th className="px-4 py-4 w-[13%] text-right">Ações</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-color)]">
                     {filteredClientProcesses.map((process: any, idx: number) => (
                       <tr key={process?.id ?? `proc-${idx}`} onClick={() => process?.id && fetchProcessDetail(process.id)} className="hover:bg-[var(--bg-input)] transition-all cursor-pointer">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 shrink-0 bg-[var(--bg-input)] rounded-full flex items-center justify-center text-emerald-400 text-xs font-black">
                               <FileText size={16} />
                             </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="font-bold text-sm">{process?.visa_name || 'Visto'}</span>
+                            <div className="flex flex-col gap-1 min-w-0">
+                              <span className="font-bold text-sm truncate">{process?.visa_name || 'Visto'}</span>
                               {process?.process_type === 'simplified' && (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 w-fit">
                                   ✦ Simplificado
@@ -4753,13 +4753,13 @@ export default function App() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.client_name || '-'}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.consultant_name || <span className="opacity-40">Não atribuído</span>}</td>
-                        <td className="px-6 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.internal_status || '-'}</td>
-                        <td className="px-6 py-4 text-xs text-[var(--text-muted)] font-medium">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
+                        <td className="px-4 py-4 text-xs text-[var(--text-muted)] font-medium truncate">{process?.client_name || '-'}</td>
+                        <td className="px-4 py-4 text-xs text-[var(--text-muted)] font-medium truncate">{process?.consultant_name || <span className="opacity-40">Não atribuído</span>}</td>
+                        <td className="px-4 py-4"><StatusBadge status={process?.status || 'pending'} /></td>
+                        <td className="px-4 py-4 text-xs text-[var(--text-muted)] font-medium truncate">{process?.internal_status || '-'}</td>
+                        <td className="px-4 py-4 text-xs text-[var(--text-muted)] font-medium truncate">{process?.created_at ? new Date(process.created_at).toLocaleDateString() : '-'}</td>
                         {isConsultantSupervisorOrMaster(user) && (
-                          <td className="px-6 py-4 text-right" onClick={e => e.stopPropagation()}>
+                          <td className="px-4 py-4 text-right" onClick={e => e.stopPropagation()}>
                             <button
                               onClick={async () => {
                                 if (!process?.id || !user?.id) return;
@@ -4774,7 +4774,7 @@ export default function App() {
                                   console.error('Erro ao assumir processo:', err);
                                 }
                               }}
-                              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                              className={`w-full px-2 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border whitespace-normal leading-tight ${
                                 process?.consultant_id === user?.id
                                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 cursor-default'
                                   : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:border-emerald-500/50 hover:text-emerald-400'

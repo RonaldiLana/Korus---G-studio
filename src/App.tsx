@@ -1596,7 +1596,18 @@ export default function App() {
           });
           if (spqRes.ok) {
             const spqData = await spqRes.json();
-            setSimplifiedQuestions(Array.isArray(spqData) ? spqData : []);
+            // Autocorreção: se algum dado antigo tiver IDs duplicados (bug de geração via Date.now()),
+            // gera um novo ID único para as ocorrências repetidas para que editar/excluir
+            // uma pergunta não afete outra que compartilhava o mesmo ID.
+            const seenIds = new Set<string>();
+            const deduped = (Array.isArray(spqData) ? spqData : []).map((q: SimplifiedProcessQuestion) => {
+              if (q?.id && seenIds.has(q.id)) {
+                return { ...q, id: generateSimplifiedQuestionId() };
+              }
+              if (q?.id) seenIds.add(q.id);
+              return q;
+            });
+            setSimplifiedQuestions(deduped);
           }
         } catch { /* silencioso */ }
       }
@@ -1652,9 +1663,18 @@ export default function App() {
   };
 
   // ---- Question Builder do Processo Simplificado ----
+  // Gera um ID sempre único (evita colisões de Date.now() que faziam edição/remoção
+  // afetar mais de uma pergunta ao mesmo tempo quando duas eram criadas no mesmo milissegundo).
+  const generateSimplifiedQuestionId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `q_${crypto.randomUUID()}`;
+    }
+    return `q_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  };
+
   const addSimplifiedQuestion = () => {
     const newQuestion: SimplifiedProcessQuestion = {
-      id: `q_${Date.now()}`,
+      id: generateSimplifiedQuestionId(),
       label: '',
       type: 'text',
       required: false,
@@ -6167,6 +6187,7 @@ export default function App() {
                         </div>
                         <div className="flex gap-2">
                           <button
+                            type="button"
                             onClick={addSimplifiedQuestion}
                             className="bg-[var(--bg-input)] hover:bg-[var(--bg-card)] text-[var(--text-main)] px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-[var(--border-color)]"
                           >
@@ -6174,6 +6195,7 @@ export default function App() {
                             Nova Pergunta
                           </button>
                           <button
+                            type="button"
                             onClick={handleSaveSimplifiedQuestions}
                             disabled={savingSimplifiedQuestions}
                             className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-lg disabled:opacity-60"
@@ -6189,6 +6211,7 @@ export default function App() {
                             <div className="flex items-start gap-3">
                               <div className="flex flex-col gap-1 pt-1">
                                 <button
+                                  type="button"
                                   onClick={() => moveSimplifiedQuestion(q.id, 'up')}
                                   disabled={idx === 0}
                                   className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] disabled:opacity-30 transition-all"
@@ -6196,6 +6219,7 @@ export default function App() {
                                   <ChevronUp size={14} />
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() => moveSimplifiedQuestion(q.id, 'down')}
                                   disabled={idx === simplifiedQuestions.length - 1}
                                   className="p-1 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] disabled:opacity-30 transition-all"
@@ -6305,11 +6329,15 @@ export default function App() {
 
                               <div className="flex flex-col items-end gap-2 pt-1">
                                 {q.systemField ? (
-                                  <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20 whitespace-nowrap">
+                                  <span
+                                    title="Campo obrigatório do sistema. O rótulo pode ser renomeado, mas o campo não pode ser excluído nem ter o tipo alterado."
+                                    className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20 whitespace-nowrap"
+                                  >
                                     Campo do Sistema
                                   </span>
                                 ) : (
                                   <button
+                                    type="button"
                                     onClick={() => removeSimplifiedQuestion(q.id)}
                                     className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
                                   >

@@ -201,6 +201,8 @@ export interface Process {
   created_at: string;
   finished_at: string | null;
   process_forms?: ProcessForm[];
+  timeline_step_id?: number | null;
+  timeline_steps?: TimelineStep[];
 }
 
 export interface Financial {
@@ -285,6 +287,17 @@ export interface Task {
   description: string;
   is_active: boolean;
   created_at: string;
+}
+
+export interface TimelineStep {
+  id: number;
+  agency_id: number;
+  label: string;
+  description: string | null;
+  order_index: number;
+  is_active: boolean;
+  linked_task_id: number | null;
+  created_at?: string;
 }
 
 export interface WhatsAppIntegration {

@@ -263,6 +263,67 @@ async function handleZipsignWebhookEvent(eventData: any): Promise<void> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Timeline do Processo: passos padrão + seed/backfill idempotente ─────────
+const DEFAULT_TIMELINE_STEPS = [
+  { label: 'Iniciado', description: 'Processo iniciado' },
+  { label: 'Pagamento', description: 'Aguardando ou confirmando pagamento' },
+  { label: 'Em Análise', description: 'Documentação em análise pela equipe' },
+  { label: 'Fase Final', description: 'Processo na fase final' },
+  { label: 'Concluído', description: 'Processo concluído' },
+];
+
+// Mapeia o status atual do processo para o índice do passo padrão equivalente,
+// usado apenas no backfill (uma única vez por agência) para não regredir a
+// experiência de processos/links já existentes em produção.
+const STATUS_TO_DEFAULT_STEP_INDEX: Record<string, number> = {
+  started: 0,
+  waiting_payment: 1,
+  payment_confirmed: 1,
+  analyzing: 2,
+  final_phase: 3,
+  completed: 4,
+};
+
+/**
+ * Garante que a agência tenha ao menos os passos padrão da Timeline do Processo.
+ * Se a agência já tem passos configurados, apenas os retorna (ordenados).
+ * Se não tem nenhum (agência nova ou agência antiga anterior a esta feature),
+ * cria os 5 passos padrão e faz backfill dos processos já existentes que ainda
+ * não têm timeline_step_id, mapeando o status atual para o passo equivalente.
+ */
+async function ensureTimelineSteps(agencyId: number): Promise<any[]> {
+  const existing = await query(
+    "SELECT * FROM agency_timeline_steps WHERE agency_id = $1 ORDER BY order_index ASC",
+    [agencyId]
+  );
+  if (existing.rows.length > 0) return existing.rows;
+
+  const inserted: any[] = [];
+  for (let i = 0; i < DEFAULT_TIMELINE_STEPS.length; i++) {
+    const step = DEFAULT_TIMELINE_STEPS[i];
+    const result = await query(
+      "INSERT INTO agency_timeline_steps (agency_id, label, description, order_index, is_active) VALUES ($1, $2, $3, $4, true) RETURNING *",
+      [agencyId, step.label, step.description, i]
+    );
+    inserted.push(result.rows[0]);
+  }
+
+  try {
+    for (const [status, stepIdx] of Object.entries(STATUS_TO_DEFAULT_STEP_INDEX)) {
+      const step = inserted[stepIdx];
+      if (!step) continue;
+      await query(
+        "UPDATE processes SET timeline_step_id = $1 WHERE agency_id = $2 AND status = $3 AND timeline_step_id IS NULL",
+        [step.id, agencyId, status]
+      );
+    }
+  } catch (err: any) {
+    console.warn('[TIMELINE STEPS] Erro no backfill:', err.message);
+  }
+
+  return inserted;
+}
+
 /**
  * Insere dados padrão para uma agência (destinos, tipos de visto, formulários,
  * tarefas, planos e campos de formulário). Idempotente: ignora tabelas que já
@@ -409,6 +470,11 @@ async function seedAgencyDefaults(agencyId: number) {
           )
         );
       }
+    })(),
+
+    // 6. Timeline do Processo (independente)
+    (async (): Promise<void> => {
+      await ensureTimelineSteps(agencyId);
     })(),
   ]);
 
@@ -782,6 +848,15 @@ async function startServer() {
       );
       const processId = processResult.rows[0].id;
 
+      // Timeline do Processo: inicia o processo já no primeiro passo configurado da agência
+      try {
+        const steps = await ensureTimelineSteps(agency_id);
+        const firstActive = steps.filter((s: any) => s.is_active).sort((a: any, b: any) => a.order_index - b.order_index)[0];
+        if (firstActive) {
+          await query("UPDATE processes SET timeline_step_id = $1 WHERE id = $2", [firstActive.id, processId]);
+        }
+      } catch (_) {}
+
       // Documentos cadastrais iniciais (upload múltiplo na abertura, categoria separada dos
       // documentos do processo para não competir com o limite de 3 do fluxo normal)
       if (files.length > 0) {
@@ -860,6 +935,7 @@ async function startServer() {
 
       const result = await query(
         `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at, p.agency_id, p.tracking_token,
+                p.timeline_step_id,
                 d.name AS destination_name, d.flag AS destination_flag, d.image AS destination_image,
                 v.name AS visa_type_name,
                 pl.name AS plan_name, pl.price AS plan_price,
@@ -880,6 +956,15 @@ async function startServer() {
       // Validar agency_id se fornecido na query
       if (agency && Number(agency) !== proc.agency_id) {
         return res.status(403).json({ error: "Acesso não autorizado para esta agência" });
+      }
+
+      // Buscar (e garantir) os passos da Timeline do Processo configurados pela agência
+      let timelineSteps: any[] = [];
+      try {
+        const allSteps = await ensureTimelineSteps(proc.agency_id);
+        timelineSteps = allSteps.filter((s: any) => s.is_active).sort((a: any, b: any) => a.order_index - b.order_index);
+      } catch (err: any) {
+        console.warn("[TRACK PROCESS] Erro ao buscar timeline steps:", err.message);
       }
 
       // Buscar documentos da agência vinculados ao processo
@@ -931,7 +1016,7 @@ async function startServer() {
       }
 
       console.log("[TRACK PROCESS] Retornando resposta com forms:", forms.length);
-      return res.json({ ...proc, documents, forms });
+      return res.json({ ...proc, documents, forms, timeline_steps: timelineSteps });
     } catch (err: any) {
       console.error("[TRACK PROCESS]", err);
       return res.status(500).json({ error: err.message });
@@ -1021,6 +1106,15 @@ async function startServer() {
       if (!processId) {
         throw new Error("Falha ao criar processo");
       }
+
+      // Timeline do Processo: inicia o processo já no primeiro passo configurado da agência
+      try {
+        const timelineSteps = await ensureTimelineSteps(agencyId);
+        const firstActiveStep = timelineSteps.filter((s: any) => s.is_active).sort((a: any, b: any) => a.order_index - b.order_index)[0];
+        if (firstActiveStep) {
+          await query("UPDATE processes SET timeline_step_id = $1 WHERE id = $2", [firstActiveStep.id, processId]);
+        }
+      } catch (_) {}
 
       // Salvar travel_date
       if (req.body.travel_date) {
@@ -2288,6 +2382,13 @@ async function startServer() {
         await query("INSERT INTO process_tasks (process_id, task_id) VALUES ($1, $2)", [processId, task.id]);
       }
 
+      // Timeline do Processo: inicia o processo já no primeiro passo configurado da agência
+      const timelineSteps = await ensureTimelineSteps(agency_id);
+      const firstActiveStep = timelineSteps.filter((s: any) => s.is_active).sort((a: any, b: any) => a.order_index - b.order_index)[0];
+      if (firstActiveStep) {
+        await query("UPDATE processes SET timeline_step_id = $1 WHERE id = $2", [firstActiveStep.id, processId]);
+      }
+
       // Log action
       await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, client_id, "process_created", `Process ID: ${processId}`]);
 
@@ -2711,6 +2812,14 @@ async function startServer() {
         WHERE pt.process_id = $1
       `, [req.params.id]);
 
+      let timelineSteps: any[] = [];
+      try {
+        const allSteps = await ensureTimelineSteps(process.agency_id);
+        timelineSteps = allSteps.filter((s: any) => s.is_active).sort((a: any, b: any) => a.order_index - b.order_index);
+      } catch (err: any) {
+        console.warn("[PROCESS DETAIL] Erro ao buscar timeline steps:", err.message);
+      }
+
       // Buscar process_forms com progresso calculado
       const processFormsResult = await query(`
         SELECT
@@ -2753,6 +2862,7 @@ async function startServer() {
         dependents: dependentsResult.rows,
         tasks: tasksResult.rows,
         process_forms: processFormsWithProgress,
+        timeline_steps: timelineSteps,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2779,6 +2889,44 @@ async function startServer() {
     const completed_at = status === 'completed' ? new Date().toISOString() : null;
     try {
       await query("UPDATE process_tasks SET status = $1, completed_at = $2 WHERE id = $3", [status, completed_at, req.params.id]);
+
+      // Auto-avanço da Timeline do Processo: se a task concluída estiver vinculada
+      // a uma etapa da timeline, avança o processo para essa etapa (nunca retrocede).
+      if (status === 'completed') {
+        try {
+          const ptResult = await query(
+            "SELECT process_id, task_id FROM process_tasks WHERE id = $1",
+            [req.params.id]
+          );
+          if (ptResult.rows.length > 0) {
+            const { process_id, task_id } = ptResult.rows[0];
+            const stepResult = await query(
+              `SELECT ats.id, ats.order_index
+               FROM agency_timeline_steps ats
+               JOIN processes p ON p.agency_id = ats.agency_id
+               WHERE ats.linked_task_id = $1 AND p.id = $2`,
+              [task_id, process_id]
+            );
+            if (stepResult.rows.length > 0) {
+              const linkedStep = stepResult.rows[0];
+              const currentResult = await query(
+                `SELECT ats.order_index
+                 FROM processes p
+                 LEFT JOIN agency_timeline_steps ats ON ats.id = p.timeline_step_id
+                 WHERE p.id = $1`,
+                [process_id]
+              );
+              const currentOrder = currentResult.rows[0]?.order_index;
+              if (currentOrder === null || currentOrder === undefined || linkedStep.order_index > currentOrder) {
+                await query("UPDATE processes SET timeline_step_id = $1 WHERE id = $2", [linkedStep.id, process_id]);
+              }
+            }
+          }
+        } catch (advanceErr: any) {
+          console.warn('[TIMELINE STEPS] Erro no auto-avanço via task:', advanceErr.message);
+        }
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3673,6 +3821,103 @@ async function startServer() {
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
       await query("DELETE FROM tasks WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Timeline do Processo (configurável por agência) ─────────────────────
+  app.get("/api/timeline-steps", async (req, res) => {
+    const agencyId = Number(req.query.agency_id);
+    if (!agencyId) return res.status(400).json({ error: "agency_id é obrigatório" });
+    try {
+      const steps = await ensureTimelineSteps(agencyId);
+      res.json(steps);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/timeline-steps", async (req, res) => {
+    const { agency_id, label, description, linked_task_id } = req.body;
+    if (!agency_id || !label) return res.status(400).json({ error: "agency_id e label são obrigatórios" });
+    try {
+      const orderResult = await query(
+        "SELECT COALESCE(MAX(order_index), -1) + 1 AS next_order FROM agency_timeline_steps WHERE agency_id = $1",
+        [agency_id]
+      );
+      const nextOrder = orderResult.rows[0].next_order;
+      const result = await query(
+        "INSERT INTO agency_timeline_steps (agency_id, label, description, order_index, linked_task_id) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        [agency_id, label, description || null, nextOrder, linked_task_id || null]
+      );
+      res.json({ id: result.rows[0].id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/timeline-steps/reorder", async (req, res) => {
+    // body: { orders: [{ id: number, order_index: number }, ...] }
+    const { orders } = req.body as { orders: { id: number; order_index: number }[] };
+    if (!Array.isArray(orders)) return res.status(400).json({ error: "orders deve ser um array" });
+    try {
+      for (const item of orders) {
+        await query("UPDATE agency_timeline_steps SET order_index = $1 WHERE id = $2", [item.order_index, item.id]);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/timeline-steps/:id", async (req, res) => {
+    const { label, description, linked_task_id, is_active } = req.body;
+    try {
+      await query(
+        "UPDATE agency_timeline_steps SET label = $1, description = $2, linked_task_id = $3, is_active = $4 WHERE id = $5",
+        [label, description || null, linked_task_id || null, is_active !== undefined ? is_active : true, req.params.id]
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/timeline-steps/:id", async (req, res) => {
+    try {
+      await query("DELETE FROM agency_timeline_steps WHERE id = $1", [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Define manualmente o passo atual da Timeline para um processo específico
+  app.patch("/api/processes/:id/timeline-step", async (req, res) => {
+    const processId = Number(req.params.id);
+    const { timeline_step_id, changed_by_user_id } = req.body;
+    if (!processId || !timeline_step_id) return res.status(400).json({ error: "timeline_step_id é obrigatório" });
+    try {
+      const procResult = await query("SELECT id, agency_id FROM processes WHERE id = $1", [processId]);
+      if (procResult.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
+      const proc = procResult.rows[0];
+
+      const stepResult = await query(
+        "SELECT id, agency_id, label FROM agency_timeline_steps WHERE id = $1",
+        [timeline_step_id]
+      );
+      if (stepResult.rows.length === 0 || stepResult.rows[0].agency_id !== proc.agency_id) {
+        return res.status(400).json({ error: "Etapa de timeline inválida para esta agência" });
+      }
+      const step = stepResult.rows[0];
+
+      await query("UPDATE processes SET timeline_step_id = $1 WHERE id = $2", [timeline_step_id, processId]);
+      await query(
+        "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+        [proc.agency_id, changed_by_user_id || null, "timeline_step_changed", `Processo #${processId} avançado para etapa "${step.label}"`]
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

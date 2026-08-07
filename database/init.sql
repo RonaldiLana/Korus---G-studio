@@ -205,6 +205,21 @@ CREATE TABLE IF NOT EXISTS process_tasks (
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
 
+-- Timeline do Processo: etapas configuráveis por agência, exibidas ao cliente
+-- no link público de acompanhamento e no dashboard interno do cliente.
+CREATE TABLE IF NOT EXISTS agency_timeline_steps (
+  id SERIAL PRIMARY KEY,
+  agency_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  description TEXT,
+  order_index INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  linked_task_id INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+  FOREIGN KEY (linked_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,
   agency_id INTEGER,

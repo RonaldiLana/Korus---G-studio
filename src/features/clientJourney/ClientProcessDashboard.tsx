@@ -23,24 +23,35 @@ interface Props {
   processes: Process[];
 }
 
-const PROCESS_STEPS = [
-  { id: 'started', label: 'Iniciado' },
-  { id: 'waiting_payment', label: 'Pagamento' },
-  { id: 'payment_confirmed', label: 'Confirmado' },
-  { id: 'analyzing', label: 'Análise' },
-  { id: 'final_phase', label: 'Fase Final' },
-  { id: 'completed', label: 'Concluído' },
+interface TimelineStepData {
+  id: number;
+  label: string;
+  description?: string | null;
+  order_index: number;
+}
+
+// Fallback caso o processo ainda não tenha timeline_steps configurados pela agência
+// (não deveria ocorrer, já que o backend garante seed automático, mas evita tela quebrada).
+const LEGACY_TIMELINE_STEPS: TimelineStepData[] = [
+  { id: -1, label: 'Iniciado', order_index: 0 },
+  { id: -2, label: 'Pagamento', order_index: 1 },
+  { id: -3, label: 'Análise', order_index: 2 },
+  { id: -4, label: 'Fase Final', order_index: 3 },
+  { id: -5, label: 'Concluído', order_index: 4 },
 ];
 
-const getStepStatus = (process: Process, stepId: string) => {
-  const statusOrder = ['started', 'waiting_payment', 'payment_confirmed', 'analyzing', 'final_phase', 'completed'];
-  
-  const currentStatus = process.status;
-  const currentStatusIndex = statusOrder.indexOf(currentStatus);
-  const stepIndex = statusOrder.indexOf(stepId);
+const LEGACY_STATUS_ORDER: Record<string, number> = {
+  started: 0,
+  waiting_payment: 1,
+  payment_confirmed: 1,
+  analyzing: 2,
+  final_phase: 3,
+  completed: 4,
+};
 
-  if (stepIndex < currentStatusIndex) return 'completed';
-  if (stepIndex === currentStatusIndex) return 'current';
+const getTimelineStepStatus = (currentOrder: number, stepOrder: number) => {
+  if (stepOrder < currentOrder) return 'completed';
+  if (stepOrder === currentOrder) return 'current';
   return 'pending';
 };
 
@@ -304,8 +315,17 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                   {/* Vertical Line */}
                   <div className="absolute left-[23px] top-2 bottom-2 w-px bg-zinc-800" />
 
-                  {PROCESS_STEPS.map((step, index) => {
-                    const status = getStepStatus(latestProcess, step.id);
+                  {(() => {
+                    const rawSteps = fullProcess?.timeline_steps && fullProcess.timeline_steps.length > 0
+                      ? fullProcess.timeline_steps
+                      : LEGACY_TIMELINE_STEPS;
+                    const timelineStepId = fullProcess?.timeline_step_id ?? latestProcess?.timeline_step_id ?? null;
+                    const currentStepData = timelineStepId ? rawSteps.find((s: TimelineStepData) => s.id === timelineStepId) : null;
+                    const currentOrder = currentStepData
+                      ? currentStepData.order_index
+                      : (LEGACY_STATUS_ORDER[latestProcess?.status || 'started'] ?? 0);
+                    return rawSteps.map((step: TimelineStepData, index: number) => {
+                    const status = getTimelineStepStatus(currentOrder, step.order_index);
                     return (
                       <div key={step.id} className="flex items-start gap-8 relative">
                         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center z-10 ${
@@ -330,14 +350,17 @@ export const ClientProcessDashboard: React.FC<Props> = ({ destination, plan, pro
                             </span>
                           </div>
                           <p className="text-zinc-500 text-sm font-medium">
-                            {status === 'completed' ? 'Etapa concluída com sucesso.' :
-                             status === 'current' ? 'Nossos especialistas estão trabalhando nesta etapa.' :
-                             'Aguardando etapas anteriores.'}
+                            {step.description
+                              ? step.description
+                              : status === 'completed' ? 'Etapa concluída com sucesso.' :
+                                status === 'current' ? 'Nossos especialistas estão trabalhando nesta etapa.' :
+                                'Aguardando etapas anteriores.'}
                           </p>
                         </div>
                       </div>
                     );
-                  })}
+                    });
+                  })()}
                 </div>
               </div>
 

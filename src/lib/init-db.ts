@@ -276,6 +276,20 @@ async function applyMigrations() {
     `ALTER TABLE agencies ADD COLUMN IF NOT EXISTS simplified_process_questions TEXT DEFAULT '[]'`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS simplified_process_answers TEXT`,
     `ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general'`,
+
+    // ─── Timeline do Processo (configurável por agência) ──────────────────────
+    `CREATE TABLE IF NOT EXISTS agency_timeline_steps (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      description TEXT,
+      order_index INTEGER NOT NULL DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      linked_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS timeline_step_id INTEGER REFERENCES agency_timeline_steps(id) ON DELETE SET NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_timeline_steps_agency_order ON agency_timeline_steps (agency_id, order_index)`,
   ];
 
   for (const sql of migrations) {

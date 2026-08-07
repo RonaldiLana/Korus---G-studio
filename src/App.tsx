@@ -77,7 +77,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration, SimplifiedProcessQuestion, SimplifiedQuestionType } from './types';
+import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, TimelineStep, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration, SimplifiedProcessQuestion, SimplifiedQuestionType } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 
 import { FormsPanel } from './features/FormsPanel';
@@ -814,6 +814,7 @@ export default function App() {
   // Agency Users & Tasks State
   const [agencyUsers, setAgencyUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([]);
   const [globalUsers, setGlobalUsers] = useState<any[]>([]);
   const [agencySettings, setAgencySettings] = useState<{ 
     id?: number,
@@ -1110,10 +1111,13 @@ export default function App() {
   const [spPlanMsg, setSpPlanMsg] = useState('');
   const [showUserModal, setShowUserModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showTimelineStepModal, setShowTimelineStepModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingTimelineStep, setEditingTimelineStep] = useState<TimelineStep | null>(null);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'consultant' as UserRole });
   const [taskForm, setTaskForm] = useState({ title: '', description: '', is_active: true });
+  const [timelineStepForm, setTimelineStepForm] = useState({ label: '', description: '', linked_task_id: '' as number | '', is_active: true });
   const [chatMessage, setChatMessage] = useState('');
   const [showProcessModal, setShowProcessModal] = useState(false);
   const [editingProcess, setEditingProcess] = useState<any>(null);
@@ -1746,6 +1750,144 @@ export default function App() {
     } catch (err) {
       console.error('[FETCH] fetchTasks error:', err);
       setTasks([]);
+    }
+  };
+
+  const fetchTimelineSteps = async () => {
+    if (!(user?.id && user?.role)) return;
+    const agencyId = getScopedAgencyId();
+    if (!(user?.role === 'master') && !agencyId) return;
+    try {
+      const url = agencyId ? `${API_URL}/api/timeline-steps?agency_id=${agencyId}` : `${API_URL}/api/timeline-steps`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+      });
+      if (!response.ok) {
+        setTimelineSteps([]);
+        return;
+      }
+      const data = await response.json();
+      setTimelineSteps(Array.isArray(data) ? data.sort((a: TimelineStep, b: TimelineStep) => a.order_index - b.order_index) : []);
+    } catch (err) {
+      console.error('[FETCH] fetchTimelineSteps error:', err);
+      setTimelineSteps([]);
+    }
+  };
+
+  const handleTimelineStepSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!(user?.id && user?.role)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+    const agencyId = getScopedAgencyId();
+    if (!(user?.role === 'master') && !agencyId) {
+      console.warn('[AUTH] Blocked protected request: missing agency context');
+      return;
+    }
+    try {
+      const url = editingTimelineStep
+        ? `${API_URL}/api/timeline-steps/${editingTimelineStep.id}`
+        : `${API_URL}/api/timeline-steps`;
+      const method = editingTimelineStep ? 'PUT' : 'POST';
+      const body = {
+        label: timelineStepForm.label,
+        description: timelineStepForm.description,
+        linked_task_id: timelineStepForm.linked_task_id || null,
+        ...(editingTimelineStep ? { is_active: timelineStepForm.is_active } : { agency_id: agencyId }),
+      };
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (response.ok) {
+        setShowTimelineStepModal(false);
+        setEditingTimelineStep(null);
+        setTimelineStepForm({ label: '', description: '', linked_task_id: '', is_active: true });
+        fetchTimelineSteps();
+        notify(editingTimelineStep ? 'Etapa atualizada com sucesso!' : 'Etapa criada com sucesso!', 'success');
+      } else {
+        const data = await response.json().catch(() => null);
+        notify(data?.error || 'Erro ao salvar etapa da timeline', 'error');
+      }
+    } catch (error) {
+      console.error('[AUTH] handleTimelineStepSubmit error:', error);
+      notify('Erro de conexão ao salvar etapa da timeline.', 'error');
+    }
+  };
+
+  const deleteTimelineStep = async (id: number) => {
+    if (!(user?.id && user?.role)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+    requestConfirmation('Tem certeza que deseja excluir esta etapa da timeline?', async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/timeline-steps/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+        });
+        if (response.ok) {
+          fetchTimelineSteps();
+          notify('Etapa excluída com sucesso!', 'success');
+        } else {
+          const data = await response.json().catch(() => null);
+          notify(data?.error || 'Não foi possível excluir a etapa.', 'error');
+        }
+      } catch (error) {
+        console.error('[AUTH] deleteTimelineStep error:', error);
+        notify('Não foi possível excluir a etapa.', 'error');
+      }
+    });
+  };
+
+  const moveTimelineStep = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= timelineSteps.length) return;
+    const reordered = [...timelineSteps];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    const orders = reordered.map((step, i) => ({ id: step.id, order_index: i }));
+    setTimelineSteps(reordered.map((step, i) => ({ ...step, order_index: i })));
+    try {
+      await fetch(`${API_URL}/api/timeline-steps/reorder`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orders }),
+      });
+    } catch (error) {
+      console.error('[AUTH] moveTimelineStep error:', error);
+      fetchTimelineSteps();
+    }
+  };
+
+  const setProcessTimelineStep = async (stepId: number) => {
+    if (!selectedProcess) return;
+    if (!(user?.id && user?.role)) {
+      console.warn('[AUTH] Blocked protected request: invalid session');
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/timeline-step`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ timeline_step_id: stepId, changed_by_user_id: user?.id }),
+      });
+      if (response.ok) {
+        fetchProcessDetail(selectedProcess.id);
+      }
+    } catch (error) {
+      console.error('[AUTH] setProcessTimelineStep error:', error);
     }
   };
 
@@ -2834,12 +2976,14 @@ export default function App() {
     if (view === 'dashboard' || view === 'clients') {
       loadOnce('visaTypes', fetchVisaTypes);
       loadOnce('tasks', fetchTasks);
+      loadOnce('timelineSteps', fetchTimelineSteps);
       loadOnce('destinations', fetchDestinations);
     }
 
     if (view === 'forms' || view === 'agency_panel') {
       loadOnce('visaTypes', fetchVisaTypes);
       loadOnce('tasks', fetchTasks);
+      loadOnce('timelineSteps', fetchTimelineSteps);
       loadOnce('destinations', fetchDestinations);
       loadOnce('plans', fetchPlans);
       loadOnce('formFields', fetchFormFields);
@@ -5747,6 +5891,124 @@ export default function App() {
                     </div>
                   )}
 
+                  {configSubTab === 'tasks' && (
+                    <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden mt-8">
+                      <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
+                        <div>
+                          <h3 className="font-black text-lg uppercase tracking-tighter">Timeline do Processo</h3>
+                          <p className="text-[10px] text-[var(--text-muted)] font-bold mt-1 max-w-md">
+                            Etapas exibidas ao cliente no link de acompanhamento. Vincule uma etapa a uma Task do
+                            Checklist para avançar automaticamente quando ela for concluída.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setEditingTimelineStep(null);
+                            setTimelineStepForm({ label: '', description: '', linked_task_id: '', is_active: true });
+                            setShowTimelineStepModal(true);
+                          }}
+                          className="brand-gradient text-black px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 whitespace-nowrap"
+                        >
+                          <Plus size={16} />
+                          Nova Etapa
+                        </button>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="bg-[var(--bg-card)]/50 text-[var(--text-muted)] text-[10px] uppercase font-black tracking-widest">
+                              <th className="px-6 py-4">Ordem</th>
+                              <th className="px-6 py-4">Etapa</th>
+                              <th className="px-6 py-4">Task Vinculada</th>
+                              <th className="px-6 py-4">Status</th>
+                              <th className="px-6 py-4 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border-color)]">
+                            {timelineSteps.map((step, idx) => {
+                              const linkedTask = tasks.find(t => t.id === step.linked_task_id);
+                              return (
+                                <tr key={step.id} className="hover:bg-[var(--bg-card)]/30 transition-colors group">
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => moveTimelineStep(idx, 'up')}
+                                        disabled={idx === 0}
+                                        className="p-1 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
+                                        title="Mover para cima"
+                                      >
+                                        <ChevronUp size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => moveTimelineStep(idx, 'down')}
+                                        disabled={idx === timelineSteps.length - 1}
+                                        className="p-1 rounded-lg hover:bg-white/10 text-[var(--text-muted)] hover:text-white transition-all disabled:opacity-30"
+                                        title="Mover para baixo"
+                                      >
+                                        <ChevronDown size={14} />
+                                      </button>
+                                      <span className="text-xs font-black text-[var(--text-muted)] ml-1">{idx + 1}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <p className="font-bold text-sm">{step.label}</p>
+                                    {step.description && (
+                                      <p className="text-[10px] text-[var(--text-muted)] truncate max-w-[200px]">{step.description}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className="text-[10px] font-bold text-[var(--text-muted)]">
+                                      {linkedTask ? linkedTask.title : '— manual —'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                                      step.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-[var(--bg-card)]/50 text-[var(--text-muted)]'
+                                    }`}>
+                                      {step.is_active ? 'Ativa' : 'Inativa'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => {
+                                          setEditingTimelineStep(step);
+                                          setTimelineStepForm({
+                                            label: step.label,
+                                            description: step.description || '',
+                                            linked_task_id: step.linked_task_id || '',
+                                            is_active: step.is_active,
+                                          });
+                                          setShowTimelineStepModal(true);
+                                        }}
+                                        className="p-2 hover:bg-[var(--bg-card)] rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
+                                      >
+                                        <Search size={14} />
+                                      </button>
+                                      <button
+                                        onClick={() => deleteTimelineStep(step.id)}
+                                        className="p-2 hover:bg-red-500/20 rounded-lg text-zinc-500 hover:text-red-400 transition-all"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {timelineSteps.length === 0 && (
+                              <tr>
+                                <td colSpan={5} className="px-6 py-8 text-center text-xs text-[var(--text-muted)] font-bold">
+                                  Nenhuma etapa configurada ainda.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {configSubTab === 'planos' && (
                     <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
                       <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
@@ -6497,6 +6759,86 @@ export default function App() {
                         Cancelar
                       </button>
                       <button 
+                        type="submit"
+                        className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow"
+                      >
+                        Confirmar
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+
+            {showTimelineStepModal && (
+              <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="bg-[var(--bg-card)] w-full max-w-md rounded-3xl border border-[var(--border-color)] p-8 shadow-2xl"
+                >
+                  <h3 className="text-2xl font-black mb-6">{editingTimelineStep ? 'Editar Etapa da Timeline' : 'Nova Etapa da Timeline'}</h3>
+                  <form onSubmit={handleTimelineStepSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Nome da Etapa</label>
+                      <input
+                        type="text"
+                        required
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Ex: Documentação enviada"
+                        value={timelineStepForm.label}
+                        onChange={e => setTimelineStepForm({ ...timelineStepForm, label: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Descrição (Opcional)</label>
+                      <textarea
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 h-20 resize-none"
+                        value={timelineStepForm.description}
+                        onChange={e => setTimelineStepForm({ ...timelineStepForm, description: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-2">Task do Checklist Vinculada (Opcional)</label>
+                      <select
+                        className="w-full px-4 py-3 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
+                        value={timelineStepForm.linked_task_id}
+                        onChange={e => setTimelineStepForm({ ...timelineStepForm, linked_task_id: e.target.value ? Number(e.target.value) : '' })}
+                      >
+                        <option value="">— Avanço manual (sem vínculo) —</option>
+                        {tasks.map(t => (
+                          <option key={t.id} value={t.id}>{t.title}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-[var(--text-muted)] font-bold mt-2">
+                        Se vinculada, a etapa avança automaticamente quando essa task for concluída no processo.
+                      </p>
+                    </div>
+                    {editingTimelineStep && (
+                      <div className="flex items-center gap-3 p-4 bg-[var(--bg-input)]/50 rounded-2xl border border-[var(--border-color)]">
+                        <input
+                          type="checkbox"
+                          id="timeline_step_active"
+                          className="w-5 h-5 rounded border-[var(--border-color)] bg-[var(--bg-input)] text-emerald-500 focus:ring-emerald-500"
+                          checked={timelineStepForm.is_active}
+                          onChange={e => setTimelineStepForm({ ...timelineStepForm, is_active: e.target.checked })}
+                        />
+                        <label htmlFor="timeline_step_active" className="text-sm font-bold text-[var(--text-muted)] cursor-pointer">
+                          Etapa Ativa?
+                        </label>
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 mt-8">
+                      <button
+                        type="button"
+                        onClick={() => setShowTimelineStepModal(false)}
+                        className="flex-1 py-3 rounded-xl font-bold text-[var(--text-muted)] hover:bg-[var(--bg-input)] transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
                         type="submit"
                         className="flex-1 brand-gradient text-black py-3 rounded-xl font-black shadow-lg brand-shadow"
                       >
@@ -8123,6 +8465,42 @@ export default function App() {
                       )}
                     </div>
                   )}
+
+                  {/* Timeline do Processo (configurável por agência) */}
+                  <div className="mt-8 pt-8 border-t border-[var(--border-color)]">
+                    <h4 className="font-black uppercase tracking-widest text-xs mb-2">Timeline do Cliente</h4>
+                    <p className="text-[10px] text-[var(--text-muted)] font-bold mb-6">
+                      Clique em uma etapa para definir o passo atual exibido ao cliente no link de acompanhamento.
+                    </p>
+                    {selectedProcess.timeline_steps && selectedProcess.timeline_steps.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {selectedProcess.timeline_steps.map((step: TimelineStep) => {
+                          const currentStep = selectedProcess.timeline_steps.find((s: TimelineStep) => s.id === selectedProcess.timeline_step_id);
+                          const currentOrder = currentStep ? currentStep.order_index : -1;
+                          const isCurrent = step.id === selectedProcess.timeline_step_id;
+                          const isDone = step.order_index < currentOrder;
+                          return (
+                            <button
+                              key={step.id}
+                              onClick={() => setProcessTimelineStep(step.id)}
+                              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 ${
+                                isCurrent
+                                  ? 'brand-gradient border-transparent text-black'
+                                  : isDone
+                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                                  : 'bg-[var(--bg-input)] border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                              }`}
+                            >
+                              {isDone && <CheckCircle2 size={12} />}
+                              {step.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[var(--text-muted)] text-xs font-bold">Nenhuma etapa de timeline configurada para esta agência.</p>
+                    )}
+                  </div>
 
                   {/* Tasks Checklist */}
                   <div className="mt-8 pt-8 border-t border-[var(--border-color)]">

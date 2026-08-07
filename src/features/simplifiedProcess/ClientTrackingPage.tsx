@@ -29,6 +29,12 @@ interface TrackingForm {
   updated_at: string | null;
 }
 
+interface TimelineStepData {
+  id: number;
+  label: string;
+  order_index: number;
+}
+
 interface TrackingData {
   id: number;
   status: string;
@@ -45,6 +51,8 @@ interface TrackingData {
   agency_name: string | null;
   agency_logo: string | null;
   client_name: string | null;
+  timeline_step_id?: number | null;
+  timeline_steps?: TimelineStepData[];
   documents: {
     id: number;
     name: string;
@@ -55,13 +63,24 @@ interface TrackingData {
   forms: TrackingForm[];
 }
 
-const STATUS_STEPS = [
-  { id: 'started', label: 'Iniciado' },
-  { id: 'payment_confirmed', label: 'Pagamento' },
-  { id: 'analyzing', label: 'Em Análise' },
-  { id: 'final_phase', label: 'Fase Final' },
-  { id: 'completed', label: 'Concluído' },
+// Fallback caso a API não retorne timeline_steps configurados pela agência (não deveria
+// ocorrer, já que o backend garante seed automático, mas evita tela quebrada).
+const LEGACY_STATUS_STEPS: TimelineStepData[] = [
+  { id: -1, label: 'Iniciado', order_index: 0 },
+  { id: -2, label: 'Pagamento', order_index: 1 },
+  { id: -3, label: 'Em Análise', order_index: 2 },
+  { id: -4, label: 'Fase Final', order_index: 3 },
+  { id: -5, label: 'Concluído', order_index: 4 },
 ];
+
+const LEGACY_STATUS_ORDER: Record<string, number> = {
+  started: 0,
+  waiting_payment: 1,
+  payment_confirmed: 1,
+  analyzing: 2,
+  final_phase: 3,
+  completed: 4,
+};
 
 const STATUS_MESSAGES: Record<string, { title: string; desc: string; color: string }> = {
   started: { title: 'Processo Iniciado', desc: 'Sua solicitação foi recebida e está sendo analisada pela equipe.', color: 'text-blue-400' },
@@ -72,10 +91,19 @@ const STATUS_MESSAGES: Record<string, { title: string; desc: string; color: stri
   completed: { title: 'Concluído!', desc: 'Parabéns! Seu processo foi concluído com sucesso.', color: 'text-emerald-400' },
 };
 
-function getStepIndex(status: string): number {
-  const normalized = status === 'waiting_payment' ? 'payment_confirmed' : status;
-  const idx = STATUS_STEPS.findIndex((s) => s.id === normalized);
-  return idx >= 0 ? idx : 0;
+function getTimelineSteps(data: TrackingData): TimelineStepData[] {
+  if (data.timeline_steps && data.timeline_steps.length > 0) return data.timeline_steps;
+  return LEGACY_STATUS_STEPS;
+}
+
+function getCurrentStepIndex(data: TrackingData, steps: TimelineStepData[]): number {
+  if (data.timeline_step_id) {
+    const idx = steps.findIndex((s) => s.id === data.timeline_step_id);
+    if (idx >= 0) return idx;
+  }
+  // Fallback legado baseado no status, caso timeline_step_id ainda não esteja definido
+  const legacyOrder = LEGACY_STATUS_ORDER[data.status] ?? 0;
+  return Math.min(legacyOrder, steps.length - 1);
 }
 
 function resolveDocUrl(url: string): string {
@@ -678,7 +706,8 @@ export const ClientTrackingPage: React.FC = () => {
   }
 
   const statusInfo = STATUS_MESSAGES[data.status] || STATUS_MESSAGES.started;
-  const currentStep = getStepIndex(data.status);
+  const timelineSteps = getTimelineSteps(data);
+  const currentStep = getCurrentStepIndex(data, timelineSteps);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -731,9 +760,9 @@ export const ClientTrackingPage: React.FC = () => {
             {/* Linha de progresso */}
             <div
               className="absolute top-5 left-5 h-0.5 brand-gradient z-0 transition-all duration-700"
-              style={{ width: `calc(${(currentStep / (STATUS_STEPS.length - 1)) * 100}% - ${currentStep === STATUS_STEPS.length - 1 ? 0 : 20}px)` }}
+              style={{ width: `calc(${(currentStep / (timelineSteps.length - 1)) * 100}% - ${currentStep === timelineSteps.length - 1 ? 0 : 20}px)` }}
             />
-            {STATUS_STEPS.map((step, i) => (
+            {timelineSteps.map((step, i) => (
               <div key={step.id} className="relative z-10 flex flex-col items-center gap-2">
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 text-xs font-black ${

@@ -91,8 +91,18 @@ const STATUS_MESSAGES: Record<string, { title: string; desc: string; color: stri
   completed: { title: 'Concluído!', desc: 'Parabéns! Seu processo foi concluído com sucesso.', color: 'text-emerald-400' },
 };
 
+function normalizeStepKey(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 function getTimelineSteps(data: TrackingData): TimelineStepData[] {
-  if (data.timeline_steps && data.timeline_steps.length > 0) return data.timeline_steps;
+  if (data.timeline_steps && data.timeline_steps.length > 0) {
+    return [...data.timeline_steps].sort((a, b) => a.order_index - b.order_index);
+  }
   return LEGACY_STATUS_STEPS;
 }
 
@@ -101,9 +111,28 @@ function getCurrentStepIndex(data: TrackingData, steps: TimelineStepData[]): num
     const idx = steps.findIndex((s) => s.id === data.timeline_step_id);
     if (idx >= 0) return idx;
   }
-  // Fallback legado baseado no status, caso timeline_step_id ainda não esteja definido
+
+  const statusAliases: Record<string, string[]> = {
+    started: ['iniciado', 'inicio', 'processo iniciado'],
+    waiting_payment: ['pagamento', 'aguardando pagamento'],
+    payment_confirmed: ['pagamento', 'pagamento confirmado'],
+    analyzing: ['em analise', 'em análise'],
+    final_phase: ['fase final'],
+    completed: ['concluido', 'concluído'],
+  };
+
+  const aliasList = statusAliases[data.status] || [];
+  const cleanedStatusAliases = aliasList.map((label) => normalizeStepKey(label));
+
+  for (let i = 0; i < steps.length; i++) {
+    const stepKey = normalizeStepKey(steps[i].label);
+    if (cleanedStatusAliases.some((alias) => stepKey.includes(alias) || alias.includes(stepKey))) {
+      return i;
+    }
+  }
+
   const legacyOrder = LEGACY_STATUS_ORDER[data.status] ?? 0;
-  return Math.min(legacyOrder, steps.length - 1);
+  return Math.min(legacyOrder, Math.max(steps.length - 1, 0));
 }
 
 function resolveDocUrl(url: string): string {

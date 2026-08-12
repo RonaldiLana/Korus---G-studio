@@ -465,31 +465,104 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, processId, onSubmitSu
   const [submitting, setSubmitting] = React.useState(false);
   const [submitSuccess, setSubmitSuccess] = React.useState(false);
   const [isMinimized, setIsMinimized] = React.useState(form.response_status === 'submitted');
+  const [saveState, setSaveState] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [responseStatus, setResponseStatus] = React.useState<TrackingForm['response_status']>(form.response_status);
+  const autoSaveTimerRef = React.useRef<number | null>(null);
+  const snapshotRef = React.useRef<string>(JSON.stringify(form.response_data || {}));
+
+  React.useEffect(() => {
+    const nextSnapshot = JSON.stringify(form.response_data || {});
+    setFormData(form.response_data || {});
+    setResponseStatus(form.response_status);
+    snapshotRef.current = nextSnapshot;
+    setSaveState('idle');
+  }, [form.form_id, form.response_data, form.response_status]);
+
+  React.useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  const persistForm = React.useCallback(async (payload: Record<string, any>, showSuccess = false) => {
+    setSaveState('saving');
+
+    const response = await fetch(`${API_URL}/api/form-responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        process_id: processId,
+        form_id: form.form_id,
+        data: payload,
+      }),
+    });
+
+    if (!response.ok) {
+      setSaveState('error');
+      throw new Error('Erro ao persistir formulário');
+    }
+
+    const result = await response.json().catch(() => null);
+    if (result?.status) {
+      setResponseStatus(result.status);
+    }
+
+    snapshotRef.current = JSON.stringify(payload);
+    setSaveState('saved');
+
+    if (showSuccess) {
+      setSubmitSuccess(true);
+      setTimeout(() => setSubmitSuccess(false), 3000);
+    }
+
+    setTimeout(() => {
+      setSaveState((current) => (current === 'saved' ? 'idle' : current));
+    }, 1200);
+
+    onSubmitSuccess?.();
+  }, [form.form_id, onSubmitSuccess, processId]);
 
   const handleFieldChange = (fieldId: string, value: any) => {
     setFormData((prev) => ({ ...prev, [fieldId]: value }));
   };
 
+  React.useEffect(() => {
+    const nextSnapshot = JSON.stringify(formData);
+    if (nextSnapshot === snapshotRef.current) {
+      return;
+    }
+
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+
+    setSaveState('saving');
+    setResponseStatus((current) => (current === 'submitted' || current === 'locked' ? current : 'in_progress'));
+
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      persistForm(formData).catch(() => setSaveState('error'));
+    }, 900);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [formData, persistForm]);
+
   const handleSubmit = async () => {
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_URL}/api/form-responses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          process_id: processId,
-          form_id: form.form_id,
-          data: formData,
-        }),
-      });
-
-      if (response.ok) {
-        setSubmitSuccess(true);
-        setTimeout(() => setSubmitSuccess(false), 3000);
-        onSubmitSuccess?.();
-      }
+      await persistForm(formData, true);
     } catch (err) {
       console.error('Erro ao salvar formulário:', err);
+      setSaveState('error');
     } finally {
       setSubmitting(false);
     }
@@ -498,6 +571,16 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, processId, onSubmitSu
   const filledFields = form.fields.filter((f) => formData[f.id]).length;
   const requiredFields = form.fields.filter((f) => f.required).length;
   const allRequiredFilled = form.fields.every((f) => !f.required || formData[f.id]);
+  const badgeLabel = responseStatus === 'submitted'
+    ? '✅ Enviado'
+    : responseStatus === 'in_progress' || saveState === 'saving' || saveState === 'saved'
+      ? '⏳ Rascunho'
+      : '📝 Vazio';
+  const badgeClass = responseStatus === 'submitted'
+    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+    : responseStatus === 'in_progress' || saveState === 'saving' || saveState === 'saved'
+      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+      : 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
 
   return (
     <motion.div
@@ -516,16 +599,10 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, processId, onSubmitSu
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-            form.response_status === 'submitted'
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : form.response_status === 'in_progress'
-              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-              : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-          }`}>
-            {form.response_status === 'submitted' ? '✅ Enviado' : form.response_status === 'in_progress' ? '⏳ Preenchendo' : '📝 Vazio'}
+          <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${badgeClass}`}>
+            {badgeLabel}
           </div>
-          {form.response_status === 'submitted' && (
+          {responseStatus === 'submitted' && (
             <button
               onClick={() => setIsMinimized(!isMinimized)}
               className="p-1.5 hover:bg-white/10 rounded-lg transition-all text-gray-400 hover:text-white"
@@ -637,16 +714,25 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, processId, onSubmitSu
               </button>
             </div>
 
-            {/* Mensagem de Sucesso */}
+            {/* Mensagem de Auto-save / Sucesso */}
             <AnimatePresence>
-              {submitSuccess && (
+              {(saveState === 'saving' || saveState === 'saved' || saveState === 'error' || submitSuccess) && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="px-3 py-2 bg-emerald-500/20 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs font-bold text-center"
+                  className={
+                    saveState === 'error'
+                      ? 'px-3 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-xs font-bold text-center'
+                      : submitSuccess
+                        ? 'px-3 py-2 bg-emerald-500/20 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs font-bold text-center'
+                        : 'px-3 py-2 bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-300 text-xs font-bold text-center'
+                  }
                 >
-                  ✅ Formulário salvo com sucesso!
+                  {saveState === 'saving' && '💾 Salvando automaticamente...'}
+                  {saveState === 'saved' && '✅ Rascunho salvo automaticamente'}
+                  {saveState === 'error' && '⚠️ Falha ao salvar automaticamente'}
+                  {submitSuccess && '✅ Formulário salvo com sucesso!'}
                 </motion.div>
               )}
             </AnimatePresence>

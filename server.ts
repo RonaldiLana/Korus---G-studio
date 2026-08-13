@@ -717,6 +717,7 @@ async function startServer() {
 
   app.get("/api/training/folders", async (req, res) => {
     const agencyId = req.query.agency_id;
+    const userRole = String(req.query.user_role || '');
     if (!agencyId) return res.status(400).json({ error: 'agency_id é obrigatório' });
 
     try {
@@ -724,7 +725,16 @@ async function startServer() {
         `SELECT * FROM training_folders WHERE agency_id = $1 AND is_active = true ORDER BY created_at DESC`,
         [agencyId]
       );
-      return res.json(result.rows);
+      
+      // Filtrar por role do usuário se fornecido
+      const filtered = result.rows.filter((folder: any) => {
+        if (!userRole) return true; // Se sem role, retorna todas
+        const allowed = parseRoleList(folder.available_for_roles);
+        if (allowed.length === 0) return true; // Se pasta sem restrição, todos veem
+        return allowed.includes(userRole);
+      });
+      
+      return res.json(filtered);
     } catch (err: any) {
       console.error('[TRAINING] list folders error:', err);
       return res.status(500).json({ error: err.message || 'Erro ao listar pastas' });
@@ -732,9 +742,9 @@ async function startServer() {
   });
 
   app.post("/api/training/folders", async (req, res) => {
-    const { agency_id, name, description, created_by, role } = req.body;
+    const { agency_id, name, description, created_by, role, available_for_roles } = req.body;
     
-    console.log('[TRAINING] POST /api/training/folders:', { agency_id, name, created_by, role });
+    console.log('[TRAINING] POST /api/training/folders:', { agency_id, name, created_by, role, available_for_roles });
     
     if (!agency_id) {
       console.warn('[TRAINING] Missing agency_id in request');
@@ -746,7 +756,8 @@ async function startServer() {
       return res.status(400).json({ error: 'Nome da pasta é obrigatório' });
     }
     
-    if (role && !['master', 'supervisor'].includes(role)) {
+    if (role && !['supervisor'].includes(role)) {
+      // Master tem acesso total, supervisor pode criar
       console.warn('[TRAINING] Invalid role for creating folder:', role);
       return res.status(403).json({ error: 'Sem permissão para criar pastas' });
     }
@@ -759,11 +770,16 @@ async function startServer() {
       }
 
       console.log('[TRAINING] Creating folder for agency:', agency_id);
+      
+      const rolesValue = available_for_roles 
+        ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles))
+        : JSON.stringify(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+
       const result = await query(
-        `INSERT INTO training_folders (agency_id, name, description, created_by, is_active)
-         VALUES ($1, $2, $3, $4, true)
+        `INSERT INTO training_folders (agency_id, name, description, created_by, available_for_roles, is_active)
+         VALUES ($1, $2, $3, $4, $5, true)
          RETURNING *`,
-        [agency_id, String(name).trim(), description || null, created_by || null]
+        [agency_id, String(name).trim(), description || null, created_by || null, rolesValue]
       );
       
       console.log('[TRAINING] Folder created successfully:', result.rows[0]?.id);
@@ -771,6 +787,32 @@ async function startServer() {
     } catch (err: any) {
       console.error('[TRAINING] create folder error:', err.message, err.stack);
       return res.status(500).json({ error: err.message || 'Erro ao criar pasta' });
+    }
+  });
+
+  app.delete('/api/training/folders/:id', async (req, res) => {
+    const folderId = req.params.id;
+    const agencyId = req.query.agency_id || req.body?.agency_id;
+    const userRole = req.query.user_role || req.body?.role;
+
+    if (!folderId) return res.status(400).json({ error: 'id da pasta é obrigatório' });
+    if (userRole && !['supervisor'].includes(String(userRole))) return res.status(403).json({ error: 'Sem permissão para excluir pasta' });
+
+    try {
+      const existing = await query('SELECT agency_id FROM training_folders WHERE id = $1', [folderId]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: 'Pasta não encontrada' });
+      if (agencyId && Number(existing.rows[0].agency_id) !== Number(agencyId)) return res.status(403).json({ error: 'Pasta não pertence à agência informada' });
+
+      // Soft delete - marca como inativo em vez de deletar
+      await query('UPDATE training_folders SET is_active = false WHERE id = $1', [folderId]);
+      
+      // Opcionalmente, deletar os materiais da pasta também
+      // await query('DELETE FROM training_materials WHERE folder_id = $1', [folderId]);
+      
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[TRAINING] delete folder error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao excluir pasta' });
     }
   });
 
@@ -807,7 +849,7 @@ async function startServer() {
     if (!title || String(title).trim() === '') return res.status(400).json({ error: 'Título do material é obrigatório' });
     if (!file) return res.status(400).json({ error: 'Arquivo PDF obrigatório' });
     if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Apenas arquivos PDF são permitidos' });
-    if (role && !['master', 'supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
+    if (role && !['supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
 
     try {
       const agencyCheck = await query('SELECT id FROM agencies WHERE id = $1', [agency_id]);
@@ -822,12 +864,35 @@ async function startServer() {
       if (folderCheck.rows.length === 0) return res.status(404).json({ error: 'Pasta não encontrada nesta agência' });
 
       const trainingDir = path.join(uploadsDir, 'training', String(agency_id));
-      fs.mkdirSync(trainingDir, { recursive: true });
+      
+      try {
+        fs.mkdirSync(trainingDir, { recursive: true });
+        console.log('[TRAINING] Created directory:', trainingDir);
+      } catch (mkdirErr: any) {
+        console.error('[TRAINING] Failed to create directory:', trainingDir, mkdirErr.message);
+        return res.status(500).json({ error: 'Erro ao criar diretório de armazenamento' });
+      }
 
       const extension = path.extname(file.originalname) || '.pdf';
       const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
       const finalPath = path.join(trainingDir, uniqueName);
-      fs.renameSync(file.path, finalPath);
+      
+      try {
+        console.log('[TRAINING] Moving file from:', file.path, 'to:', finalPath);
+        fs.renameSync(file.path, finalPath);
+        console.log('[TRAINING] File moved successfully');
+      } catch (renameErr: any) {
+        console.error('[TRAINING] Failed to move file:', renameErr.message);
+        // Tentar copiar se não conseguir mover
+        try {
+          fs.copyFileSync(file.path, finalPath);
+          fs.unlinkSync(file.path);
+          console.log('[TRAINING] File copied successfully instead of renamed');
+        } catch (copyErr: any) {
+          console.error('[TRAINING] Failed to copy file:', copyErr.message);
+          return res.status(500).json({ error: 'Erro ao salvar arquivo: ' + copyErr.message });
+        }
+      }
 
       const rolesValue = available_for_roles ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles)) : JSON.stringify(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
 
@@ -838,6 +903,7 @@ async function startServer() {
         [agency_id, folder_id, String(title).trim(), description || null, `/uploads/training/${agency_id}/${uniqueName}`, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
       );
 
+      console.log('[TRAINING] Material created with ID:', result.rows[0]?.id);
       return res.status(201).json({ success: true, material: result.rows[0] });
     } catch (err: any) {
       console.error('[TRAINING] upload material error:', err);
@@ -851,7 +917,7 @@ async function startServer() {
     const userRole = req.query.user_role || req.body?.role;
 
     if (!materialId) return res.status(400).json({ error: 'id do material é obrigatório' });
-    if (userRole && !['master', 'supervisor'].includes(String(userRole))) return res.status(403).json({ error: 'Sem permissão para excluir material' });
+    if (userRole && !['supervisor'].includes(String(userRole))) return res.status(403).json({ error: 'Sem permissão para excluir material' });
 
     try {
       const existing = await query('SELECT agency_id, file_url FROM training_materials WHERE id = $1', [materialId]);

@@ -102,6 +102,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [folderName, setFolderName] = useState('');
   const [folderDescription, setFolderDescription] = useState('');
+  const [folderRoles, setFolderRoles] = useState<string[]>(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
   const [materialTitle, setMaterialTitle] = useState('');
   const [materialDescription, setMaterialDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -128,7 +129,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
     try {
       console.log('[TRAINING] loadData starting for agencyId:', agencyId);
       
-      const foldersRes = await fetch(`${apiUrl}/api/training/folders?agency_id=${agencyId}`, {
+      const foldersRes = await fetch(`${apiUrl}/api/training/folders?agency_id=${agencyId}&user_role=${user.role}`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       console.log('[TRAINING] folders response:', { status: foldersRes.status, url: foldersRes.url });
@@ -190,6 +191,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
         name: folderName,
         description: folderDescription,
         created_by: user.id,
+        available_for_roles: folderRoles,
       };
       
       console.log('[TRAINING] createFolder request:', { url: `${apiUrl}/api/training/folders`, body: requestBody });
@@ -209,6 +211,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
       if (!res.ok) throw new Error(data?.error || 'Erro ao criar pasta');
       setFolderName('');
       setFolderDescription('');
+      setFolderRoles(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
       await loadData();
       setSelectedFolderId(data?.folder?.id || null);
       notify('Pasta criada com sucesso.', 'success');
@@ -295,6 +298,23 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
     }
   };
 
+  const deleteFolder = async (folderId: number) => {
+    if (!agencyId || !window.confirm('Tem certeza que deseja excluir esta pasta? Os materiais não serão deletados.')) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/training/folders/${folderId}?agency_id=${agencyId}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      const data = await parseApiJson(res);
+      if (!res.ok) throw new Error(data?.error || 'Erro ao excluir pasta');
+      await loadData();
+      if (selectedFolderId === folderId) setSelectedFolderId(null);
+      notify('Pasta removida.', 'success');
+    } catch (error: any) {
+      notify(error.message || 'Erro ao excluir pasta', 'error');
+    }
+  };
+
   if (!agencyId || !canReadTraining(user)) {
     return (
       <div className="bg-[var(--bg-card)]/60 rounded-3xl border border-[var(--border-color)] p-8 text-center text-[var(--text-muted)]">
@@ -334,10 +354,23 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-bold">{folder.name}</span>
-                    <span className="text-[10px] uppercase tracking-widest text-[var(--text-muted)]">
-                      {visibleMaterials.filter((m) => m.folder_id === folder.id).length} itens
-                    </span>
+                    <div className="flex-1">
+                      <span className="font-bold">{folder.name}</span>
+                      <span className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] ml-2">
+                        {visibleMaterials.filter((m) => m.folder_id === folder.id).length} itens
+                      </span>
+                    </div>
+                    {canManageTraining(user) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteFolder(folder.id);
+                        }}
+                        className="rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-xs font-black uppercase tracking-[0.16em] text-red-300 hover:bg-red-500/20"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                   {folder.description && <p className="mt-2 text-xs text-[var(--text-muted)]">{folder.description}</p>}
                 </button>

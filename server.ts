@@ -45,6 +45,42 @@ const upload = multer({
   },
 });
 
+// Multer específico para treinamento que salva com agency_id no caminho
+const trainingStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const agencyId = req.body.agency_id;
+    if (!agencyId) {
+      return cb(new Error('agency_id é obrigatório no body'));
+    }
+    const trainingDir = path.join(uploadsDir, 'training', String(agencyId));
+    try {
+      fs.mkdirSync(trainingDir, { recursive: true });
+      console.log('[TRAINING UPLOAD] Directory created/ensured:', trainingDir);
+      cb(null, trainingDir);
+    } catch (err: any) {
+      console.error('[TRAINING UPLOAD] Failed to create directory:', trainingDir, err.message);
+      cb(err);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${path.extname(file.originalname)}`;
+    console.log('[TRAINING UPLOAD] Filename:', uniqueName);
+    cb(null, uniqueName);
+  },
+});
+
+const trainingUpload = multer({
+  storage: trainingStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB para PDFs
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos PDF são permitidos para treinamento'));
+    }
+  },
+});
+
 // Round Robin Helper
 async function getNextConsultant(agencyId: number) {
   const consultants = await query("SELECT id FROM users WHERE role = 'consultant' AND agency_id = $1", [agencyId]);
@@ -840,7 +876,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/training/upload', upload.single('file'), async (req: any, res) => {
+  app.post('/api/training/upload', trainingUpload.single('file'), async (req: any, res) => {
     const { agency_id, folder_id, title, description, created_by, role, available_for_roles } = req.body;
     const file = req.file as Express.Multer.File | undefined;
 
@@ -863,44 +899,16 @@ async function startServer() {
       );
       if (folderCheck.rows.length === 0) return res.status(404).json({ error: 'Pasta não encontrada nesta agência' });
 
-      const trainingDir = path.join(uploadsDir, 'training', String(agency_id));
-      
-      try {
-        fs.mkdirSync(trainingDir, { recursive: true });
-        console.log('[TRAINING] Created directory:', trainingDir);
-      } catch (mkdirErr: any) {
-        console.error('[TRAINING] Failed to create directory:', trainingDir, mkdirErr.message);
-        return res.status(500).json({ error: 'Erro ao criar diretório de armazenamento' });
-      }
+      console.log('[TRAINING] File saved successfully at:', file.path);
+      console.log('[TRAINING] File details:', { filename: file.filename, size: file.size, mimetype: file.mimetype });
 
-      const extension = path.extname(file.originalname) || '.pdf';
-      const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
-      const finalPath = path.join(trainingDir, uniqueName);
-      
-      try {
-        console.log('[TRAINING] Moving file from:', file.path, 'to:', finalPath);
-        fs.renameSync(file.path, finalPath);
-        console.log('[TRAINING] File moved successfully');
-      } catch (renameErr: any) {
-        console.error('[TRAINING] Failed to move file:', renameErr.message);
-        // Tentar copiar se não conseguir mover
-        try {
-          fs.copyFileSync(file.path, finalPath);
-          fs.unlinkSync(file.path);
-          console.log('[TRAINING] File copied successfully instead of renamed');
-        } catch (copyErr: any) {
-          console.error('[TRAINING] Failed to copy file:', copyErr.message);
-          return res.status(500).json({ error: 'Erro ao salvar arquivo: ' + copyErr.message });
-        }
-      }
-
-      const rolesValue = available_for_roles ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles)) : JSON.stringify(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+      const rolesValue = available_for_roles ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles)) : JSON.stringify(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
 
       const result = await query(
         `INSERT INTO training_materials (agency_id, folder_id, title, description, file_url, file_name, mime_type, created_by, status, available_for_roles)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'published', $9)
          RETURNING *`,
-        [agency_id, folder_id, String(title).trim(), description || null, `/uploads/training/${agency_id}/${uniqueName}`, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
+        [agency_id, folder_id, String(title).trim(), description || null, `/uploads/training/${agency_id}/${file.filename}`, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
       );
 
       console.log('[TRAINING] Material created with ID:', result.rows[0]?.id);

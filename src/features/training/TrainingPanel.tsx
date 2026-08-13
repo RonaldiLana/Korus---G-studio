@@ -49,7 +49,6 @@ const canReadTraining = (user: User | null) => {
 
 const getRoleLabel = (role: string) => {
   const labels: Record<string, string> = {
-    master: 'Master',
     supervisor: 'Supervisor',
     consultant: 'Consultor',
     analyst: 'Analista',
@@ -102,7 +101,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [folderName, setFolderName] = useState('');
   const [folderDescription, setFolderDescription] = useState('');
-  const [folderRoles, setFolderRoles] = useState<string[]>(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+  const [folderRoles, setFolderRoles] = useState<string[]>(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
   const [materialTitle, setMaterialTitle] = useState('');
   const [materialDescription, setMaterialDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -110,7 +109,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
   const [viewingPdf, setViewingPdf] = useState<string | null>(null);
 
   const roleOptions = useMemo(() => {
-    return ['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst'];
+    return ['supervisor', 'gerente_financeiro', 'consultant', 'analyst'];
   }, []);
 
   const visibleMaterials = useMemo(() => {
@@ -211,7 +210,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
       if (!res.ok) throw new Error(data?.error || 'Erro ao criar pasta');
       setFolderName('');
       setFolderDescription('');
-      setFolderRoles(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+      setFolderRoles(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
       await loadData();
       setSelectedFolderId(data?.folder?.id || null);
       notify('Pasta criada com sucesso.', 'success');
@@ -391,6 +390,30 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
                   className="w-full min-h-[70px] rounded-xl border border-[var(--border-color)] bg-[var(--bg-input)] px-3 py-2 text-sm outline-none"
                   placeholder="Descrição da pasta"
                 />
+                
+                <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-input)]/40 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--text-muted)] mb-2">Quem pode visualizar?</p>
+                  <div className="flex flex-col gap-2">
+                    {roleOptions.map((role) => (
+                      <label key={role} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={folderRoles.includes(role)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFolderRoles([...folderRoles, role]);
+                            } else {
+                              setFolderRoles(folderRoles.filter(r => r !== role));
+                            }
+                          }}
+                          className="w-4 h-4 rounded accent-emerald-400"
+                        />
+                        <span className="text-xs text-[var(--text-main)]">{getRoleLabel(role)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                
                 <button
                   disabled={loading}
                   onClick={createFolder}

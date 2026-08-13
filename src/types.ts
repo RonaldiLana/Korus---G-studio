@@ -6,7 +6,32 @@ export interface User {
   name: string;
   role: UserRole;
   agency_id: number | null;
-  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, leads: boolean }
+  agency_modules?: string; // JSON string: { finance: boolean, chat: boolean, leads: boolean, training: boolean }
+  created_at: string;
+}
+
+export interface TrainingFolder {
+  id: number;
+  agency_id: number;
+  name: string;
+  description?: string | null;
+  created_by?: number | null;
+  is_active?: boolean;
+  created_at: string;
+}
+
+export interface TrainingMaterial {
+  id: number;
+  agency_id: number;
+  folder_id: number | null;
+  title: string;
+  description?: string | null;
+  file_url: string;
+  file_name: string;
+  mime_type?: string;
+  created_by?: number | null;
+  status?: 'draft' | 'published';
+  available_for_roles?: string[];
   created_at: string;
 }
 

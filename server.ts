@@ -150,6 +150,23 @@ interface ZipsignConfig {
   token: string;
 }
 
+async function getZipsignAccessToken(config?: string | ZipsignConfig | null): Promise<string> {
+  if (!config) {
+    throw new Error('Zipsign não configurado');
+  }
+
+  try {
+    const parsed = typeof config === 'string' ? JSON.parse(config) : config;
+    const token = parsed?.token || parsed?.access_token || parsed?.bearer_token;
+    if (!token || typeof token !== 'string' || token.trim() === '') {
+      throw new Error('Token Zipsign ausente ou inválido');
+    }
+    return token.trim();
+  } catch (err) {
+    throw new Error((err as Error).message || 'Token Zipsign inválido');
+  }
+}
+
 /**
  * Cria documento de assinatura no Zipsign
  * Doc: https://docs.zipsign.com.br/api/documentos/criar
@@ -686,6 +703,141 @@ async function startServer() {
         success: false,
         error: "Erro interno no servidor"
       });
+    }
+  });
+
+  const parseRoleList = (value: any): string[] => {
+    if (!value) return [];
+    try {
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+      if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+    } catch {}
+    return [];
+  };
+
+  app.get("/api/training/folders", async (req, res) => {
+    const agencyId = req.query.agency_id;
+    if (!agencyId) return res.status(400).json({ error: 'agency_id é obrigatório' });
+
+    try {
+      const result = await query(
+        `SELECT * FROM training_folders WHERE agency_id = $1 AND is_active = true ORDER BY created_at DESC`,
+        [agencyId]
+      );
+      return res.json(result.rows);
+    } catch (err: any) {
+      console.error('[TRAINING] list folders error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao listar pastas' });
+    }
+  });
+
+  app.post("/api/training/folders", async (req, res) => {
+    const { agency_id, name, description, created_by, role } = req.body;
+    if (!agency_id) return res.status(400).json({ error: 'agency_id é obrigatório' });
+    if (!name || String(name).trim() === '') return res.status(400).json({ error: 'Nome da pasta é obrigatório' });
+    if (role && !['master', 'supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para criar pastas' });
+
+    try {
+      const result = await query(
+        `INSERT INTO training_folders (agency_id, name, description, created_by, is_active)
+         VALUES ($1, $2, $3, $4, true)
+         RETURNING *`,
+        [agency_id, String(name).trim(), description || null, created_by || null]
+      );
+      return res.status(201).json({ success: true, folder: result.rows[0] });
+    } catch (err: any) {
+      console.error('[TRAINING] create folder error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao criar pasta' });
+    }
+  });
+
+  app.get("/api/training/materials", async (req, res) => {
+    const agencyId = req.query.agency_id;
+    const userRole = String(req.query.user_role || '');
+    if (!agencyId) return res.status(400).json({ error: 'agency_id é obrigatório' });
+
+    try {
+      const result = await query(
+        `SELECT * FROM training_materials WHERE agency_id = $1 ORDER BY created_at DESC`,
+        [agencyId]
+      );
+
+      const rows = result.rows.filter((item: any) => {
+        const allowed = parseRoleList(item.available_for_roles);
+        if (!userRole || allowed.length === 0) return true;
+        return allowed.includes(userRole);
+      });
+
+      return res.json(rows);
+    } catch (err: any) {
+      console.error('[TRAINING] list materials error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao listar materiais' });
+    }
+  });
+
+  app.post('/api/training/upload', upload.single('file'), async (req: any, res) => {
+    const { agency_id, folder_id, title, description, created_by, role, available_for_roles } = req.body;
+    const file = req.file as Express.Multer.File | undefined;
+
+    if (!agency_id) return res.status(400).json({ error: 'agency_id é obrigatório' });
+    if (!folder_id) return res.status(400).json({ error: 'folder_id é obrigatório' });
+    if (!title || String(title).trim() === '') return res.status(400).json({ error: 'Título do material é obrigatório' });
+    if (!file) return res.status(400).json({ error: 'Arquivo PDF obrigatório' });
+    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Apenas arquivos PDF são permitidos' });
+    if (role && !['master', 'supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
+
+    try {
+      const folderCheck = await query(
+        'SELECT id FROM training_folders WHERE id = $1 AND agency_id = $2',
+        [folder_id, agency_id]
+      );
+      if (folderCheck.rows.length === 0) return res.status(404).json({ error: 'Pasta não encontrada nesta agência' });
+
+      const trainingDir = path.join(uploadsDir, 'training', String(agency_id));
+      fs.mkdirSync(trainingDir, { recursive: true });
+
+      const extension = path.extname(file.originalname) || '.pdf';
+      const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
+      const finalPath = path.join(trainingDir, uniqueName);
+      fs.renameSync(file.path, finalPath);
+
+      const rolesValue = available_for_roles ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles)) : JSON.stringify(['master', 'supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+
+      const result = await query(
+        `INSERT INTO training_materials (agency_id, folder_id, title, description, file_url, file_name, mime_type, created_by, status, available_for_roles)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'published', $9)
+         RETURNING *`,
+        [agency_id, folder_id, String(title).trim(), description || null, `/uploads/training/${agency_id}/${uniqueName}`, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
+      );
+
+      return res.status(201).json({ success: true, material: result.rows[0] });
+    } catch (err: any) {
+      console.error('[TRAINING] upload material error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao inserir material' });
+    }
+  });
+
+  app.delete('/api/training/materials/:id', async (req, res) => {
+    const materialId = req.params.id;
+    const agencyId = req.query.agency_id || req.body?.agency_id;
+    const userRole = req.query.user_role || req.body?.role;
+
+    if (!materialId) return res.status(400).json({ error: 'id do material é obrigatório' });
+    if (userRole && !['master', 'supervisor'].includes(String(userRole))) return res.status(403).json({ error: 'Sem permissão para excluir material' });
+
+    try {
+      const existing = await query('SELECT agency_id, file_url FROM training_materials WHERE id = $1', [materialId]);
+      if (existing.rows.length === 0) return res.status(404).json({ error: 'Material não encontrado' });
+      if (agencyId && Number(existing.rows[0].agency_id) !== Number(agencyId)) return res.status(403).json({ error: 'Material não pertence à agência informada' });
+
+      const filePath = path.join(__dirname, existing.rows[0].file_url.replace(/^\//, ''));
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+      await query('DELETE FROM training_materials WHERE id = $1', [materialId]);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[TRAINING] delete material error:', err);
+      return res.status(500).json({ error: err.message || 'Erro ao excluir material' });
     }
   });
 

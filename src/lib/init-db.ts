@@ -290,6 +290,34 @@ async function applyMigrations() {
     )`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS timeline_step_id INTEGER REFERENCES agency_timeline_steps(id) ON DELETE SET NULL`,
     `CREATE INDEX IF NOT EXISTS idx_agency_timeline_steps_agency_order ON agency_timeline_steps (agency_id, order_index)`,
+
+    // ─── Módulo de Treinamentos por Agência ─────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS training_folders (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS training_materials (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      folder_id INTEGER REFERENCES training_folders(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      file_url TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT DEFAULT 'application/pdf',
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('draft', 'published')),
+      available_for_roles TEXT DEFAULT '[]',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_training_folders_agency ON training_folders (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_training_materials_agency ON training_materials (agency_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_training_materials_folder ON training_materials (folder_id)`,
   ];
 
   for (const sql of migrations) {

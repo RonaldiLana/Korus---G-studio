@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { fixLegacyUrl } from './utils';
 // ===================== INTEGRAÇÃO API =====================
-// const API_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
-// Use runtime detection: if served from api.korus.me, use that; otherwise use VITE_API_URL or fallback
+// Use the local backend while developing. Production is only used when the app is actually deployed.
+const isLocalDevelopment = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.includes('127.0.0.1')
+);
+
 const API_URL =
   import.meta.env.VITE_API_URL?.trim() ||
-  (typeof window !== 'undefined' && window.location.hostname.includes('api.korus.me')
-    ? 'https://api.korus.me'
-    : 'https://api.korus.me');
+  (isLocalDevelopment ? 'http://localhost:3000' : 'https://api.korus.me');
 
-// Always use production API URL to avoid localhost redirect issues
-// Resolve URLs relativas (/uploads/...) contra o backend
+// Resolve URLs relativas (/uploads/...) contra o backend correto conforme ambiente
 const resolveFileUrl = (url: string | null | undefined): string => {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  return `https://api.korus.me${url}`;
+  const base = isLocalDevelopment ? 'http://localhost:3000' : 'https://api.korus.me';
+  return `${base}${url}`;
 };
 
 /**
@@ -80,6 +83,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { User, Process, Agency, Message, Document, VisaType, Financial, FormResponse, AuditLog, Expense, Revenue, Task, TimelineStep, UserRole, Form, Destination, Plan, FormField, ClientOverview, WhatsAppIntegration, SimplifiedProcessQuestion, SimplifiedQuestionType } from './types';
 import { ClientJourneyFlow } from './features/clientJourney/ClientJourneyFlow';
 
+import { TrainingPanel } from './features/training/TrainingPanel';
 import { FormsPanel } from './features/FormsPanel';
 import { CRMPanel } from './features/crm/CRMPanel';
 import { NotificationPopup, CrmNotification } from './features/crm/NotificationPopup';
@@ -397,6 +401,7 @@ export default function App() {
             whatsapp: m.whatsapp === true,
             simplified_process: m.simplified_process === true,
             clients: m.clients === true,
+            training: m.training !== false,
           });
         } catch {}
       }
@@ -411,7 +416,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'forms' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'clients' | 'agencies' | 'process_detail' | 'finance' | 'audit' | 'settings' | 'leads' | 'team' | 'agency_panel' | 'forms' | 'training' | 'crm' | 'whatsapp' | 'client_registry'>('dashboard');
   const [processes, setProcesses] = useState<Process[]>([]);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [leads, setLeads] = useState<ClientOverview[]>([]);
@@ -453,6 +458,7 @@ export default function App() {
       '/team': 'team',
 
       '/forms': 'forms',
+      '/training': 'training',
       '/crm': 'crm',
       '/whatsapp': 'whatsapp',
       '/client_registry': 'client_registry',
@@ -1104,7 +1110,7 @@ export default function App() {
     );
   };
 
-  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean }>({ finance: true, chat: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false });
+  const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean; training: boolean }>({ finance: true, chat: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false, training: true });
   const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
   const [spPlanId, setSpPlanId] = useState('');
   const [savingSpPlan, setSavingSpPlan] = useState(false);
@@ -1319,6 +1325,7 @@ export default function App() {
             whatsapp: m.whatsapp === true,
             simplified_process: m.simplified_process === true,
             clients: m.clients === true,
+            training: m.training !== false,
           });
         } catch {}
       }
@@ -1555,6 +1562,7 @@ export default function App() {
         whatsapp: (parsedModules as any).whatsapp === true,
         simplified_process: (parsedModules as any).simplified_process === true,
         clients: (parsedModules as any).clients === true,
+        training: (parsedModules as any).training !== false,
       });
 
       let destinations = [];
@@ -4054,6 +4062,15 @@ export default function App() {
             />
           )}
 
+          {(user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'consultant' || user?.role === 'analyst' || user?.role === 'gerente_financeiro') && (user?.role === 'master' || agencyModules.training !== false) && (
+            <SidebarItem
+              icon={FileText}
+              label="Treinamentos"
+              active={view === 'training'}
+              onClick={() => { setView('training'); setSidebarOpen(false); }}
+            />
+          )}
+
           {(user?.role === 'master' || user?.role === 'supervisor') && (user?.role === 'master' || (agencyModules && agencyModules.leads !== false)) && (
             <SidebarItem 
               icon={Contact} 
@@ -5014,6 +5031,22 @@ export default function App() {
               <FormsPanel
                 agencyId={getScopedAgencyId()}
                 userRole={user?.role || ''}
+              />
+            </motion.div>
+          )}
+
+          {view === 'training' && (user?.role === 'master' || user?.role === 'supervisor' || user?.role === 'consultant' || user?.role === 'analyst' || user?.role === 'gerente_financeiro') && (
+            <motion.div
+              key="training"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <TrainingPanel
+                agencyId={getScopedAgencyId()}
+                user={user}
+                token={token}
+                apiUrl={API_URL}
+                notify={notify}
               />
             </motion.div>
           )}

@@ -58,6 +58,44 @@ const getRoleLabel = (role: string) => {
   return labels[role] || role;
 };
 
+async function parseApiJson(response: Response) {
+  const text = await response.text();
+
+  if (!text) {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  const isJsonLike = trimmed.startsWith('{') || trimmed.startsWith('[');
+  const contentType = response.headers.get('content-type') || '';
+
+  // Log de debug para facilitar diagnóstico
+  if (!response.ok || (!isJsonLike && !contentType.includes('application/json'))) {
+    console.error('[TRAINING API] Response issue:', {
+      status: response.status,
+      statusText: response.statusText,
+      contentType,
+      isJsonLike,
+      textPreview: text.slice(0, 200),
+      url: response.url,
+    });
+  }
+
+  if (!isJsonLike && !contentType.includes('application/json')) {
+    throw new Error(`Resposta inválida da API (${response.status}). URL: ${response.url}. Verifique se o backend está ativo e acessível.`);
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (err) {
+    console.error('[TRAINING API] JSON parse failed:', {
+      error: (err as Error).message,
+      textPreview: trimmed.slice(0, 200),
+    });
+    throw new Error('A API respondeu em um formato inválido. Verifique se a rota de treinamento está disponível.');
+  }
+}
+
 export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: TrainingPanelProps) {
   const [folders, setFolders] = useState<TrainingFolder[]>([]);
   const [materials, setMaterials] = useState<TrainingMaterial[]>([]);
@@ -83,22 +121,37 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
   }, [materials, user]);
 
   const loadData = async () => {
-    if (!agencyId || !user) return;
+    if (!agencyId || !user) {
+      console.warn('[TRAINING] loadData: missing agencyId or user', { agencyId, userId: user?.id });
+      return;
+    }
     try {
+      console.log('[TRAINING] loadData starting for agencyId:', agencyId);
+      
       const foldersRes = await fetch(`${apiUrl}/api/training/folders?agency_id=${agencyId}`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
+      console.log('[TRAINING] folders response:', { status: foldersRes.status, url: foldersRes.url });
+      
       if (foldersRes.ok) {
-        const foldersData = await foldersRes.json();
-        setFolders(Array.isArray(foldersData) ? foldersData : foldersData.folders || []);
+        const foldersData = await parseApiJson(foldersRes);
+        setFolders(Array.isArray(foldersData) ? foldersData : foldersData?.folders || []);
+      } else {
+        const errorData = await parseApiJson(foldersRes).catch(() => null);
+        throw new Error(errorData?.error || 'Erro ao carregar pastas de treinamento');
       }
 
       const materialsRes = await fetch(`${apiUrl}/api/training/materials?agency_id=${agencyId}`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
+      console.log('[TRAINING] materials response:', { status: materialsRes.status, url: materialsRes.url });
+      
       if (materialsRes.ok) {
-        const materialsData = await materialsRes.json();
-        setMaterials(Array.isArray(materialsData) ? materialsData : materialsData.materials || []);
+        const materialsData = await parseApiJson(materialsRes);
+        setMaterials(Array.isArray(materialsData) ? materialsData : materialsData?.materials || []);
+      } else {
+        const errorData = await parseApiJson(materialsRes).catch(() => null);
+        throw new Error(errorData?.error || 'Erro ao carregar materiais de treinamento');
       }
     } catch (error) {
       console.error('[TRAINING] loadData error:', error);
@@ -123,33 +176,44 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
 
   const createFolder = async () => {
     if (!agencyId || !user || !folderName.trim()) {
+      console.warn('[TRAINING] createFolder validation failed:', { agencyId, userId: user?.id, folderName });
       notify('Informe o nome da pasta.', 'error');
       return;
     }
 
+    console.log('[TRAINING] createFolder starting:', { agencyId, userId: user.id, folderName });
+
     setLoading(true);
     try {
+      const requestBody = {
+        agency_id: agencyId,
+        name: folderName,
+        description: folderDescription,
+        created_by: user.id,
+      };
+      
+      console.log('[TRAINING] createFolder request:', { url: `${apiUrl}/api/training/folders`, body: requestBody });
+      
       const res = await fetch(`${apiUrl}/api/training/folders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({
-          agency_id: agencyId,
-          name: folderName,
-          description: folderDescription,
-          created_by: user.id,
-        }),
+        body: JSON.stringify(requestBody),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao criar pasta');
+      
+      console.log('[TRAINING] createFolder response:', { status: res.status, url: res.url });
+      
+      const data = await parseApiJson(res);
+      if (!res.ok) throw new Error(data?.error || 'Erro ao criar pasta');
       setFolderName('');
       setFolderDescription('');
       await loadData();
-      setSelectedFolderId(data.folder?.id || null);
+      setSelectedFolderId(data?.folder?.id || null);
       notify('Pasta criada com sucesso.', 'success');
     } catch (error: any) {
+      console.error('[TRAINING] createFolder error:', error);
       notify(error.message || 'Erro ao criar pasta', 'error');
     } finally {
       setLoading(false);
@@ -158,6 +222,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
 
   const uploadMaterial = async () => {
     if (!agencyId || !user || !file || !selectedFolderId || !materialTitle.trim()) {
+      console.warn('[TRAINING] uploadMaterial validation failed:', { agencyId, userId: user?.id, hasFile: !!file, selectedFolderId, materialTitle });
       notify('Selecione uma pasta, informe o título e envie um PDF.', 'error');
       return;
     }
@@ -166,6 +231,8 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
       notify('Apenas arquivos PDF são permitidos.', 'error');
       return;
     }
+
+    console.log('[TRAINING] uploadMaterial starting:', { agencyId, userId: user.id, folderId: selectedFolderId, fileName: file.name });
 
     setLoading(true);
     try {
@@ -178,6 +245,14 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
       formData.append('created_by', String(user.id));
       formData.append('available_for_roles', JSON.stringify(roleOptions));
 
+      console.log('[TRAINING] uploadMaterial request:', { 
+        url: `${apiUrl}/api/training/upload`,
+        agency_id: agencyId,
+        folder_id: selectedFolderId,
+        title: materialTitle,
+        fileName: file.name,
+      });
+
       const uploadRes = await fetch(`${apiUrl}/api/training/upload`, {
         method: 'POST',
         headers: {
@@ -186,8 +261,10 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
         body: formData,
       });
 
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao enviar material');
+      console.log('[TRAINING] uploadMaterial response:', { status: uploadRes.status, url: uploadRes.url });
+
+      const uploadData = await parseApiJson(uploadRes);
+      if (!uploadRes.ok) throw new Error(uploadData?.error || 'Erro ao enviar material');
 
       setMaterialTitle('');
       setMaterialDescription('');
@@ -195,6 +272,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
       await loadData();
       notify('Material enviado com sucesso.', 'success');
     } catch (error: any) {
+      console.error('[TRAINING] uploadMaterial error:', error);
       notify(error.message || 'Erro ao enviar material', 'error');
     } finally {
       setLoading(false);
@@ -208,8 +286,8 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
         method: 'DELETE',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao excluir material');
+      const data = await parseApiJson(res);
+      if (!res.ok) throw new Error(data?.error || 'Erro ao excluir material');
       await loadData();
       notify('Material removido.', 'success');
     } catch (error: any) {

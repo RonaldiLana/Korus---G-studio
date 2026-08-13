@@ -733,20 +733,43 @@ async function startServer() {
 
   app.post("/api/training/folders", async (req, res) => {
     const { agency_id, name, description, created_by, role } = req.body;
-    if (!agency_id) return res.status(400).json({ error: 'agency_id é obrigatório' });
-    if (!name || String(name).trim() === '') return res.status(400).json({ error: 'Nome da pasta é obrigatório' });
-    if (role && !['master', 'supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para criar pastas' });
+    
+    console.log('[TRAINING] POST /api/training/folders:', { agency_id, name, created_by, role });
+    
+    if (!agency_id) {
+      console.warn('[TRAINING] Missing agency_id in request');
+      return res.status(400).json({ error: 'agency_id é obrigatório' });
+    }
+    
+    if (!name || String(name).trim() === '') {
+      console.warn('[TRAINING] Missing or empty name in request');
+      return res.status(400).json({ error: 'Nome da pasta é obrigatório' });
+    }
+    
+    if (role && !['master', 'supervisor'].includes(role)) {
+      console.warn('[TRAINING] Invalid role for creating folder:', role);
+      return res.status(403).json({ error: 'Sem permissão para criar pastas' });
+    }
 
     try {
+      const agencyCheck = await query('SELECT id FROM agencies WHERE id = $1', [agency_id]);
+      if (agencyCheck.rows.length === 0) {
+        console.warn('[TRAINING] Agency not found:', agency_id);
+        return res.status(400).json({ error: 'Agência inválida para criar a pasta de treinamento.' });
+      }
+
+      console.log('[TRAINING] Creating folder for agency:', agency_id);
       const result = await query(
         `INSERT INTO training_folders (agency_id, name, description, created_by, is_active)
          VALUES ($1, $2, $3, $4, true)
          RETURNING *`,
         [agency_id, String(name).trim(), description || null, created_by || null]
       );
+      
+      console.log('[TRAINING] Folder created successfully:', result.rows[0]?.id);
       return res.status(201).json({ success: true, folder: result.rows[0] });
     } catch (err: any) {
-      console.error('[TRAINING] create folder error:', err);
+      console.error('[TRAINING] create folder error:', err.message, err.stack);
       return res.status(500).json({ error: err.message || 'Erro ao criar pasta' });
     }
   });
@@ -787,6 +810,11 @@ async function startServer() {
     if (role && !['master', 'supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
 
     try {
+      const agencyCheck = await query('SELECT id FROM agencies WHERE id = $1', [agency_id]);
+      if (agencyCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Agência inválida para enviar material de treinamento.' });
+      }
+
       const folderCheck = await query(
         'SELECT id FROM training_folders WHERE id = $1 AND agency_id = $2',
         [folder_id, agency_id]

@@ -49,22 +49,34 @@ const upload = multer({
 const trainingStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const agencyId = req.body.agency_id;
+    const reqId = `[${Date.now()}]`;
+    
     if (!agencyId) {
+      console.error(`${reqId} [TRAINING UPLOAD] agency_id é obrigatório`);
       return cb(new Error('agency_id é obrigatório no body'));
     }
+    
     const trainingDir = path.join(uploadsDir, 'training', String(agencyId));
     try {
+      // Garantir que o diretório pai também existe
+      const parentDir = path.join(uploadsDir, 'training');
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+        console.log(`${reqId} [TRAINING UPLOAD] Diretório pai criado: ${parentDir}`);
+      }
+      
       fs.mkdirSync(trainingDir, { recursive: true });
-      console.log('[TRAINING UPLOAD] Directory created/ensured:', trainingDir);
+      console.log(`${reqId} [TRAINING UPLOAD] Diretório criado/garantido: ${trainingDir}`);
       cb(null, trainingDir);
     } catch (err: any) {
-      console.error('[TRAINING UPLOAD] Failed to create directory:', trainingDir, err.message);
+      console.error(`${reqId} [TRAINING UPLOAD] Erro ao criar diretório ${trainingDir}:`, err.message);
       cb(err);
     }
   },
   filename: (req, file, cb) => {
+    const reqId = `[${Date.now()}]`;
     const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${path.extname(file.originalname)}`;
-    console.log('[TRAINING UPLOAD] Filename:', uniqueName);
+    console.log(`${reqId} [TRAINING UPLOAD] Nome do arquivo gerado: ${uniqueName}`);
     cb(null, uniqueName);
   },
 });
@@ -73,9 +85,12 @@ const trainingUpload = multer({
   storage: trainingStorage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB para PDFs
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    const reqId = `[${Date.now()}]`;
+    if (file.mimetype === 'application/pdf' || file.mimetype === 'application/octet-stream') {
+      console.log(`${reqId} [TRAINING UPLOAD] Arquivo PDF aceito: ${file.originalname}`);
       cb(null, true);
     } else {
+      console.error(`${reqId} [TRAINING UPLOAD] Arquivo rejeitado - tipo MIME: ${file.mimetype}`);
       cb(new Error('Apenas arquivos PDF são permitidos para treinamento'));
     }
   },
@@ -877,46 +892,130 @@ async function startServer() {
   });
 
   app.post('/api/training/upload', trainingUpload.single('file'), async (req: any, res) => {
-    const { agency_id, folder_id, title, description, created_by, role, available_for_roles } = req.body;
-    const file = req.file as Express.Multer.File | undefined;
-
-    if (!agency_id) return res.status(400).json({ error: 'agency_id é obrigatório' });
-    if (!folder_id) return res.status(400).json({ error: 'folder_id é obrigatório' });
-    if (!title || String(title).trim() === '') return res.status(400).json({ error: 'Título do material é obrigatório' });
-    if (!file) return res.status(400).json({ error: 'Arquivo PDF obrigatório' });
-    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'Apenas arquivos PDF são permitidos' });
-    if (role && !['supervisor'].includes(role)) return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
+    const reqId = `[${Date.now()}]`;
+    console.log(`${reqId} [TRAINING] POST /api/training/upload - iniciando...`);
 
     try {
-      const agencyCheck = await query('SELECT id FROM agencies WHERE id = $1', [agency_id]);
-      if (agencyCheck.rows.length === 0) {
-        return res.status(400).json({ error: 'Agência inválida para enviar material de treinamento.' });
+      const { agency_id, folder_id, title, description, created_by, role, available_for_roles } = req.body;
+      const file = req.file as Express.Multer.File | undefined;
+
+      console.log(`${reqId} [TRAINING] Dados recebidos:`, { 
+        agency_id, 
+        folder_id, 
+        title, 
+        hasFile: !!file,
+        fileName: file?.originalname,
+        role,
+        created_by
+      });
+
+      // Validações com responses apropriadas
+      if (!agency_id) {
+        console.warn(`${reqId} [TRAINING] Validação falhou: agency_id obrigatório`);
+        return res.status(400).json({ error: 'agency_id é obrigatório' });
+      }
+      
+      if (!folder_id) {
+        console.warn(`${reqId} [TRAINING] Validação falhou: folder_id obrigatório`);
+        return res.status(400).json({ error: 'folder_id é obrigatório' });
+      }
+      
+      if (!title || String(title).trim() === '') {
+        console.warn(`${reqId} [TRAINING] Validação falhou: title obrigatório`);
+        return res.status(400).json({ error: 'Título do material é obrigatório' });
+      }
+      
+      if (!file) {
+        console.warn(`${reqId} [TRAINING] Validação falhou: arquivo PDF obrigatório`);
+        return res.status(400).json({ error: 'Arquivo PDF obrigatório' });
+      }
+      
+      if (file.mimetype !== 'application/pdf') {
+        console.warn(`${reqId} [TRAINING] Validação falhou: tipo MIME ${file.mimetype} não permitido`);
+        return res.status(400).json({ error: 'Apenas arquivos PDF são permitidos' });
+      }
+      
+      if (role && !['supervisor', 'master'].includes(role)) {
+        console.warn(`${reqId} [TRAINING] Validação falhou: role ${role} sem permissão`);
+        return res.status(403).json({ error: 'Sem permissão para enviar materiais' });
       }
 
+      // Verificar agência
+      console.log(`${reqId} [TRAINING] Verificando agência ${agency_id}...`);
+      const agencyCheck = await query('SELECT id, name FROM agencies WHERE id = $1', [agency_id]);
+      if (agencyCheck.rows.length === 0) {
+        console.warn(`${reqId} [TRAINING] Agência ${agency_id} não encontrada`);
+        return res.status(400).json({ error: 'Agência inválida para enviar material de treinamento.' });
+      }
+      console.log(`${reqId} [TRAINING] Agência encontrada: ${agencyCheck.rows[0].name}`);
+
+      // Verificar pasta
+      console.log(`${reqId} [TRAINING] Verificando pasta ${folder_id} na agência ${agency_id}...`);
       const folderCheck = await query(
-        'SELECT id FROM training_folders WHERE id = $1 AND agency_id = $2',
+        'SELECT id, name, is_active FROM training_folders WHERE id = $1 AND agency_id = $2',
         [folder_id, agency_id]
       );
-      if (folderCheck.rows.length === 0) return res.status(404).json({ error: 'Pasta não encontrada nesta agência' });
+      if (folderCheck.rows.length === 0) {
+        console.warn(`${reqId} [TRAINING] Pasta ${folder_id} não encontrada na agência ${agency_id}`);
+        return res.status(404).json({ error: 'Pasta não encontrada nesta agência' });
+      }
+      console.log(`${reqId} [TRAINING] Pasta encontrada: ${folderCheck.rows[0].name} (ativa: ${folderCheck.rows[0].is_active})`);
 
-      console.log('[TRAINING] File saved successfully at:', file.path);
-      console.log('[TRAINING] File details:', { filename: file.filename, size: file.size, mimetype: file.mimetype });
+      // Validar que o arquivo foi salvo
+      if (!file.path || !fs.existsSync(file.path)) {
+        console.error(`${reqId} [TRAINING] Arquivo não foi salvo no disco: ${file.path}`);
+        return res.status(500).json({ error: 'Erro ao salvar arquivo no servidor' });
+      }
+      console.log(`${reqId} [TRAINING] Arquivo salvo com sucesso: ${file.path} (${file.size} bytes)`);
 
-      const rolesValue = available_for_roles ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles)) : JSON.stringify(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+      // Preparar dados para inserir no banco
+      const fileUrl = `/uploads/training/${agency_id}/${file.filename}`;
+      const rolesValue = available_for_roles 
+        ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles))
+        : JSON.stringify(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
+
+      console.log(`${reqId} [TRAINING] Inserindo no banco: title="${title}", fileUrl="${fileUrl}", rolesValue=${rolesValue}`);
 
       const result = await query(
         `INSERT INTO training_materials (agency_id, folder_id, title, description, file_url, file_name, mime_type, created_by, status, available_for_roles)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'published', $9)
          RETURNING *`,
-        [agency_id, folder_id, String(title).trim(), description || null, `/uploads/training/${agency_id}/${file.filename}`, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
+        [agency_id, folder_id, String(title).trim(), description || null, fileUrl, file.originalname, file.mimetype || 'application/pdf', created_by || null, rolesValue]
       );
 
-      console.log('[TRAINING] Material created with ID:', result.rows[0]?.id);
+      console.log(`${reqId} [TRAINING] Material criado com sucesso! ID: ${result.rows[0]?.id}`);
       return res.status(201).json({ success: true, material: result.rows[0] });
     } catch (err: any) {
-      console.error('[TRAINING] upload material error:', err);
-      return res.status(500).json({ error: err.message || 'Erro ao inserir material' });
+      console.error(`${reqId} [TRAINING] ERRO NA ROTA DE UPLOAD:`, {
+        message: err.message,
+        code: err.code,
+        stack: err.stack,
+        details: err.detail || err.hint || 'sem detalhes'
+      });
+      
+      // Garantir resposta JSON mesmo em erro
+      res.set('Content-Type', 'application/json');
+      return res.status(500).json({ 
+        error: err.message || 'Erro ao inserir material no banco de dados',
+        details: process.env.NODE_ENV === 'development' ? err.detail : undefined
+      });
     }
+  });
+
+  // Middleware de erro específico para uploads - captura erros do Multer
+  app.use('/api/training/upload', (err: any, req: any, res: any, next: any) => {
+    const reqId = `[${Date.now()}]`;
+    console.error(`${reqId} [TRAINING UPLOAD ERROR]`, {
+      message: err.message,
+      code: err.code,
+      stack: err.stack?.split('\n')[0]
+    });
+
+    res.set('Content-Type', 'application/json');
+    return res.status(err.status || 400).json({
+      error: err.message || 'Erro ao fazer upload do arquivo',
+      type: 'upload_error'
+    });
   });
 
   app.delete('/api/training/materials/:id', async (req, res) => {
@@ -4529,7 +4628,34 @@ async function startServer() {
       res.status(500).json({ error: 'Erro ao desconectar WhatsApp' });
     }
   });
+
   // ────────────────────────────────────────────────────────────────────────────
+  
+  // Middleware global de erro para capturar exceções não tratadas
+  // Deve estar APÓS todas as rotas de API e ANTES do Vite middleware
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error('[ERROR HANDLER]', {
+      message: err.message,
+      code: err.code,
+      status: err.status || 500,
+      path: req.path,
+      method: req.method,
+      stack: err.stack?.split('\n').slice(0, 5).join('\n')
+    });
+
+    // Garantir que responde com JSON para rotas de API
+    if (req.path.startsWith('/api/')) {
+      res.set('Content-Type', 'application/json');
+      return res.status(err.status || 500).json({
+        error: err.message || 'Erro interno do servidor',
+        path: req.path,
+        method: req.method
+      });
+    }
+
+    // Para outros erros, deixar padrão do Express
+    res.status(err.status || 500).json({ error: err.message || 'Erro interno do servidor' });
+  });
 
   // Vite middleware for development only
   if (process.env.NODE_ENV !== "production") {

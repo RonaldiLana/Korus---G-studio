@@ -238,14 +238,17 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
 
     setLoading(true);
     try {
+      // Importante: os campos de texto precisam vir ANTES do arquivo no FormData,
+      // pois o Multer/busboy processa o stream em ordem e o destino do arquivo
+      // (que depende de agency_id) é resolvido assim que a parte do arquivo é lida.
       const formData = new FormData();
-      formData.append('file', file);
       formData.append('agency_id', String(agencyId));
       formData.append('folder_id', String(selectedFolderId));
       formData.append('title', materialTitle);
       formData.append('description', materialDescription);
       formData.append('created_by', String(user.id));
       formData.append('available_for_roles', JSON.stringify(roleOptions));
+      formData.append('file', file);
 
       console.log('[TRAINING] uploadMaterial request:', { 
         url: `${apiUrl}/api/training/upload`,

@@ -108,6 +108,17 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
   const [loading, setLoading] = useState(false);
   const [viewingPdf, setViewingPdf] = useState<string | null>(null);
 
+  const resolveTrainingPdfUrl = (fileUrl: string | null | undefined) => {
+    if (!fileUrl) return '';
+    if (/^https?:\/\//i.test(fileUrl)) return fileUrl;
+
+    try {
+      return new URL(fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`, apiUrl).toString();
+    } catch {
+      return fileUrl;
+    }
+  };
+
   const roleOptions = useMemo(() => {
     return ['supervisor', 'gerente_financeiro', 'consultant', 'analyst'];
   }, []);
@@ -466,7 +477,7 @@ export function TrainingPanel({ agencyId, user, token, apiUrl, notify }: Trainin
 
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => setViewingPdf(material.file_url)}
+                          onClick={() => setViewingPdf(resolveTrainingPdfUrl(material.file_url))}
                           className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-xs font-black uppercase tracking-[0.16em] text-emerald-300"
                         >
                           <span className="flex items-center gap-1"><Eye size={12} /> Ver</span>

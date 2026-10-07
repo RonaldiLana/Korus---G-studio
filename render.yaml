@@ -8,6 +8,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: SESSION_SECRET
+        generateValue: true
       - key: VITE_API_URL
         value: https://api.korus.me
       - key: VITE_PUBLIC_URL

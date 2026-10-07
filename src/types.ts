@@ -221,6 +221,7 @@ export interface Process {
   parent_process_id: number | null;
   process_type?: 'normal' | 'simplified';
   tracking_token?: string;
+  tracking_enabled?: boolean;
   description?: string;
   simplified_process_answers?: SimplifiedProcessAnswer[] | string;
   created_at: string;

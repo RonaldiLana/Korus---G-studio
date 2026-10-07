@@ -6,8 +6,10 @@ import { initializeDatabase } from "./src/lib/init-db.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import * as XLSX from "xlsx";
+import { authGuard, signSession, hashPassword, verifyPassword, createRateLimiter } from "./src/lib/security.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +19,7 @@ const __dirname = path.dirname(__filename);
 const BACKEND_URL = (process.env.BACKEND_URL || 'https://api.korus.me').replace(/\/$/, '');
 
 // Diretório legado: o disco do Render é efêmero, só serve arquivos antigos que ainda existam
+const loginLimiter = createRateLimiter(8, 15 * 60 * 1000);
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -25,19 +28,20 @@ if (!fs.existsSync(uploadsDir)) {
 // Uploads ficam em memória e são persistidos na tabela `files` (Postgres)
 const storage = multer.memoryStorage();
 
-async function saveFile(file: Express.Multer.File, agencyId?: number | string | null): Promise<number> {
+async function saveFile(file: Express.Multer.File, agencyId?: number | string | null): Promise<string> {
   const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-  const result = await query(
-    `INSERT INTO files (agency_id, original_name, mime_type, size, data) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [agencyId ? Number(agencyId) : null, originalName, file.mimetype || 'application/octet-stream', file.size, file.buffer]
+  const accessKey = randomBytes(24).toString('hex');
+  await query(
+    `INSERT INTO files (agency_id, original_name, mime_type, size, data, access_key) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [agencyId ? Number(agencyId) : null, originalName, file.mimetype || 'application/octet-stream', file.size, file.buffer, accessKey]
   );
-  return result.rows[0].id;
+  return accessKey;
 }
 
 async function deleteStoredFile(fileUrl: string | null | undefined) {
-  const match = fileUrl?.match(/\/api\/files\/(\d+)/);
+  const match = fileUrl?.match(/\/api\/files\/([a-f0-9]+)/);
   if (match) {
-    await query('DELETE FROM files WHERE id = $1', [Number(match[1])]);
+    await query('DELETE FROM files WHERE access_key = $1', [match[1]]);
     return;
   }
   // Legado: arquivo em disco
@@ -583,6 +587,14 @@ async function startServer() {
   });
 
   // CORS: permitir frontend em produção e localhost
+  app.set('trust proxy', 1);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+    res.removeHeader('X-Powered-By');
+    next();
+  });
   app.use(cors({
     origin: [
       'https://www.korus.me',  // domínio principal (novo)
@@ -599,8 +611,8 @@ async function startServer() {
     throw new Error("PORT environment variable is required");
   }
 
-  app.use(express.json());
-  app.use(cors());
+  app.use(express.json({ limit: '1mb' }));
+  app.use(authGuard);
   
   // Debug: Log uploads directory configuration
   console.log(`[UPLOADS] Directory: ${uploadsDir}`);
@@ -608,11 +620,10 @@ async function startServer() {
   console.log(`[UPLOADS] Is Directory: ${fs.existsSync(uploadsDir) ? fs.statSync(uploadsDir).isDirectory() : false}`);
   
   // Arquivos persistidos no Postgres
-  app.get("/api/files/:id", async (req, res) => {
+  app.get("/api/files/:key", async (req, res) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
-      const result = await query('SELECT original_name, mime_type, data FROM files WHERE id = $1', [id]);
+      if (!/^[a-f0-9]{32,64}$/.test(req.params.key)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+      const result = await query('SELECT original_name, mime_type, data FROM files WHERE access_key = $1', [req.params.key]);
       if (result.rows.length === 0) return res.status(404).json({ error: 'Arquivo não encontrado' });
       const { original_name, mime_type, data } = result.rows[0];
       res.setHeader('Content-Type', mime_type);
@@ -685,26 +696,22 @@ async function startServer() {
     }
   });
 
-  app.get("/api/test-db", async (req, res) => {
-    try {
-      const users = await query("SELECT email, role FROM users", []);
-      res.json({ status: "ok", users: users.rows });
-    } catch (err: any) {
-      res.status(500).json({ status: "error", message: err.message });
-    }
-  });
-
   app.post("/api/login", async (req, res) => {
     const _t0 = Date.now();
     try {
       const { email, password } = req.body;
 
       // Validar campos obrigatórios
-      if (!email || !password) {
+      if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
         return res.status(400).json({
           success: false,
           error: "Email e senha são obrigatórios"
         });
+      }
+
+      const limiterKey = `${req.ip}|${email.toLowerCase()}`;
+      if (loginLimiter.isBlocked(limiterKey)) {
+        return res.status(429).json({ success: false, error: "Muitas tentativas. Aguarde alguns minutos." });
       }
 
       // Buscar usuário
@@ -712,14 +719,21 @@ async function startServer() {
         SELECT u.*, a.modules as agency_modules
         FROM users u
         LEFT JOIN agencies a ON u.agency_id = a.id
-        WHERE LOWER(u.email) = LOWER($1) AND u.password = $2
-      `, [email, password]);
+        WHERE LOWER(u.email) = LOWER($1)
+      `, [email]);
       console.log(`[PERF] /api/login db query: ${Date.now() - _t0}ms`);
 
+      const storedPassword: string | undefined = user.rows[0]?.password;
+      const check = storedPassword ? await verifyPassword(password, storedPassword) : { ok: false, legacy: false };
+
       // Credenciais válidas
-      if (user.rows[0]) {
+      if (user.rows[0] && check.ok) {
+        loginLimiter.reset(limiterKey);
         const userData = user.rows[0];
-        const { password, ...userWithoutPassword } = userData;
+        if (check.legacy) {
+          await query("UPDATE users SET password = $1 WHERE id = $2", [await hashPassword(password), userData.id]);
+        }
+        const { password: _pw, ...userWithoutPassword } = userData;
         
         // Ensure all required fields are present
         const completeUser = {
@@ -735,11 +749,13 @@ async function startServer() {
         console.log(`[PERF] /api/login total (sucesso): ${Date.now() - _t0}ms`);
         return res.json({
           success: true,
-          user: completeUser
+          user: completeUser,
+          token: signSession({ id: userData.id, role: userData.role, agency_id: userData.agency_id })
         });
       }
 
       // Credenciais inválidas
+      loginLimiter.fail(limiterKey);
       console.log(`[PERF] /api/login total (inválido): ${Date.now() - _t0}ms`);
       return res.status(401).json({
         success: false,
@@ -1277,7 +1293,7 @@ async function startServer() {
 
       const result = await query(
         `SELECT p.id, p.status, p.internal_status, p.process_type, p.created_at, p.agency_id, p.tracking_token,
-                p.timeline_step_id,
+                p.timeline_step_id, p.tracking_enabled,
                 d.name AS destination_name, d.flag AS destination_flag, d.image AS destination_image,
                 v.name AS visa_type_name,
                 pl.name AS plan_name, pl.price AS plan_price,
@@ -1294,6 +1310,9 @@ async function startServer() {
       );
       if (result.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
       const proc = result.rows[0];
+
+      // Link desativado responde igual a inexistente para não confirmar a existência do token
+      if (proc.tracking_enabled === false) return res.status(404).json({ error: "Processo não encontrado" });
 
       // Validar agency_id se fornecido na query
       if (agency && Number(agency) !== proc.agency_id) {
@@ -1732,7 +1751,7 @@ async function startServer() {
       if (admin_email && admin_password) {
         const adminInsertResult = await query("INSERT INTO users (email, password, name, role, agency_id) VALUES ($1, $2, $3, 'supervisor', $4) RETURNING id", [
           admin_email,
-          admin_password,
+          await hashPassword(String(admin_password)),
           admin_name || `Admin ${name}`,
           agencyId
         ]);
@@ -2478,7 +2497,7 @@ async function startServer() {
 
       // Buscar processo pelo tracking token
       const procResult = await query(
-        "SELECT id FROM processes WHERE tracking_token = $1",
+        "SELECT id FROM processes WHERE tracking_token = $1 AND tracking_enabled = TRUE",
         [token]
       );
 
@@ -2748,6 +2767,42 @@ async function startServer() {
     } catch (err: any) {
       await query('ROLLBACK', []);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/processes/:id/tracking — ativa/desativa o link público de acompanhamento
+  app.patch("/api/processes/:id/tracking", async (req, res) => {
+    try {
+      const processId = parseInt(req.params.id);
+      const { enabled } = req.body;
+      if (typeof enabled !== 'boolean') return res.status(400).json({ error: "enabled (boolean) é obrigatório" });
+      const user_id = req.auth?.sub;
+      if (!user_id) return res.status(401).json({ error: "Sessão inválida ou expirada" });
+
+      const procResult = await query("SELECT id, agency_id, tracking_token FROM processes WHERE id = $1", [processId]);
+      if (procResult.rows.length === 0) return res.status(404).json({ error: "Processo não encontrado" });
+      const proc = procResult.rows[0];
+      if (!proc.tracking_token) return res.status(400).json({ error: "Processo sem link de acompanhamento" });
+
+      const userResult = await query("SELECT id, role, agency_id FROM users WHERE id = $1", [user_id]);
+      const actor = userResult.rows[0];
+      const allowedRoles = ['master', 'supervisor', 'consultant', 'analyst'];
+      if (!actor || !allowedRoles.includes(actor.role) || (actor.role !== 'master' && actor.agency_id !== proc.agency_id)) {
+        return res.status(403).json({ error: "Sem permissão para alterar o link de acompanhamento" });
+      }
+
+      await query("UPDATE processes SET tracking_enabled = $1 WHERE id = $2", [enabled, processId]);
+      try {
+        await query(
+          "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+          [proc.agency_id, user_id, enabled ? 'tracking_enabled' : 'tracking_disabled', `Link de acompanhamento do Processo #${processId} ${enabled ? 'ativado' : 'desativado'}`]
+        );
+      } catch (_) {}
+
+      return res.json({ success: true, tracking_enabled: enabled });
+    } catch (err: any) {
+      console.error("[PATCH TRACKING]", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -3290,6 +3345,9 @@ async function startServer() {
     console.log(`Recebendo requisição para resetar senha da agência ${req.params.id}`);
     const { new_password } = req.body;
     if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
+    if (req.auth?.role !== 'master' && !(req.auth?.role === 'supervisor' && req.auth.agency_id === Number(req.params.id))) {
+      return res.status(403).json({ error: "Sem permissão para resetar senha" });
+    }
 
     try {
       const supervisorResult = await query("SELECT id FROM users WHERE agency_id = $1 AND role = 'supervisor' LIMIT 1", [req.params.id]);
@@ -3300,7 +3358,7 @@ async function startServer() {
         return res.status(404).json({ error: "Administrador da agência não encontrado" });
       }
 
-      await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, userToReset]);
+      await query("UPDATE users SET password = $1 WHERE id = $2", [await hashPassword(String(new_password)), userToReset]);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });
@@ -3312,7 +3370,13 @@ async function startServer() {
     if (!new_password) return res.status(400).json({ error: "Nova senha é obrigatória" });
 
     try {
-      await query("UPDATE users SET password = $1 WHERE id = $2", [new_password, req.params.id]);
+      const target = await query("SELECT role, agency_id FROM users WHERE id = $1", [req.params.id]);
+      if (target.rows.length === 0) return res.status(404).json({ error: "Usuário não encontrado" });
+      const allowed = req.auth?.role === 'master' ||
+        (req.auth?.role === 'supervisor' && target.rows[0].role !== 'master' && target.rows[0].agency_id === req.auth.agency_id);
+      if (!allowed) return res.status(403).json({ error: "Sem permissão para resetar senha" });
+
+      await query("UPDATE users SET password = $1 WHERE id = $2", [await hashPassword(String(new_password)), req.params.id]);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Erro ao resetar senha" });
@@ -3984,7 +4048,7 @@ async function startServer() {
     try {
       const result = await query(
         "INSERT INTO users (name, email, password, role, agency_id, phone) VALUES ($1, $2, $3, 'client', $4, $5) RETURNING id",
-        [name, email, passwordToUse, agency_id, phone || null]
+        [name, email, await hashPassword(passwordToUse), agency_id, phone || null]
       );
       res.json({ id: result.rows[0].id });
     } catch (e: any) {
@@ -4028,7 +4092,7 @@ async function startServer() {
         resetByUserId = await getAuditUserId(client.agency_id);
       }
 
-      await query("UPDATE users SET password = $1 WHERE id = $2", [String(new_password).trim(), clientId]);
+      await query("UPDATE users SET password = $1 WHERE id = $2", [await hashPassword(String(new_password).trim()), clientId]);
       await query("INSERT INTO client_password_resets (client_id, agency_id, reset_by_user_id) VALUES ($1, $2, $3)", [clientId, client.agency_id, resetByUserId || null]);
       res.json({ success: true });
     } catch (err: any) {
@@ -4099,10 +4163,20 @@ async function startServer() {
     }
   });
 
+  const canManageUser = async (req: any, targetId: string | number): Promise<boolean> => {
+    if (req.auth?.role === 'master') return true;
+    if (req.auth?.role !== 'supervisor') return false;
+    const target = await query("SELECT role, agency_id FROM users WHERE id = $1", [targetId]);
+    return target.rows.length > 0 && target.rows[0].role !== 'master' && target.rows[0].agency_id === req.auth.agency_id;
+  };
+
   app.post("/api/agency-users", async (req, res) => {
     const { name, email, password, role, agency_id } = req.body;
+    if (req.auth?.role !== 'master' && (req.auth?.role !== 'supervisor' || role === 'master' || Number(agency_id) !== req.auth.agency_id)) {
+      return res.status(403).json({ error: "Sem permissão para criar usuário" });
+    }
     try {
-      const result = await query("INSERT INTO users (name, email, password, role, agency_id) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, email, password, role, agency_id]);
+      const result = await query("INSERT INTO users (name, email, password, role, agency_id) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, email, await hashPassword(String(password || '')), role, agency_id]);
       const auditUserId = await getAuditUserId(agency_id);
       await query("INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)", [agency_id, auditUserId, "user_created", `Usuário criado: ${name} (${role})`]);
       res.json({ id: result.rows[0].id });
@@ -4114,6 +4188,9 @@ async function startServer() {
   app.put("/api/agency-users/:id", async (req, res) => {
     const { name, email, role } = req.body;
     try {
+      if (!(await canManageUser(req, req.params.id)) || (role === 'master' && req.auth?.role !== 'master')) {
+        return res.status(403).json({ error: "Sem permissão para editar usuário" });
+      }
       await query("UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4", [name, email, role, req.params.id]);
       res.json({ success: true });
     } catch (e) {
@@ -4123,6 +4200,7 @@ async function startServer() {
 
   app.delete("/api/agency-users/:id", async (req, res) => {
     try {
+      if (!(await canManageUser(req, req.params.id))) return res.status(403).json({ error: "Sem permissão para excluir usuário" });
       await query("DELETE FROM users WHERE id = $1", [req.params.id]);
       res.json({ success: true });
     } catch (err: any) {

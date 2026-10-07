@@ -1,8 +1,9 @@
 import crypto from 'crypto';
+import 'dotenv/config';
 import { Client } from 'pg';
 
 const client = new Client({
-  connectionString: 'postgresql://korus_db_z3ve_user:gSvJuOGTGB1U9MGpvXsOWRIsMgpAk4ua@dpg-d783d3tm5p6s73ehpddg-a.virginia-postgres.render.com:5432/korus_db_z3ve',
+  connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 

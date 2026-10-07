@@ -380,12 +380,13 @@ export default function App() {
         return;
       }
 
-      if (storedToken && storedToken.trim().length > 0) {
-        console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role, 'token:', storedToken.substring(0, 10) + '...');
-      } else {
-        console.log('[AUTH] Session restored without token:', normalizedUser.email, normalizedUser.role);
+      if (!storedToken || storedToken.trim().length === 0) {
+        console.log('[AUTH] Sessão sem token: login necessário');
+        clearInvalidAuthData();
+        return;
       }
-      setToken(storedToken || null);
+      console.log('[AUTH] Session restored:', normalizedUser.email, normalizedUser.role);
+      setToken(storedToken);
       setUser(normalizedUser);
       // Inicializa agencyModules imediatamente da sessão salva (evita flash com defaults)
       if (normalizedUser.agency_modules && normalizedUser.role !== 'master') {
@@ -1113,6 +1114,7 @@ export default function App() {
   const [agencyModules, setAgencyModules] = useState<{ finance: boolean; chat: boolean; leads: boolean; crm: boolean; whatsapp: boolean; simplified_process: boolean; clients: boolean; training: boolean }>({ finance: true, chat: true, leads: true, crm: true, whatsapp: false, simplified_process: false, clients: false, training: true });
   const [showSimplifiedProcessModal, setShowSimplifiedProcessModal] = useState(false);
   const [spPlanId, setSpPlanId] = useState('');
+  const [togglingTracking, setTogglingTracking] = useState(false);
   const [savingSpPlan, setSavingSpPlan] = useState(false);
   const [spPlanMsg, setSpPlanMsg] = useState('');
   const [showUserModal, setShowUserModal] = useState(false);
@@ -8046,12 +8048,32 @@ export default function App() {
                     let trackingUrl = `https://api.korus.me/acompanhamento/${selectedProcess.tracking_token}`;
                     // Corrige domínios antigos armazenados no banco de dados
                     trackingUrl = fixLegacyUrl(trackingUrl);
+                    const trackingEnabled = selectedProcess.tracking_enabled !== false;
+                    const toggleTracking = async () => {
+                      if (trackingEnabled && !window.confirm('Desativar o link? O cliente perderá o acesso ao acompanhamento até você reativar.')) return;
+                      setTogglingTracking(true);
+                      try {
+                        const res = await fetch(`${API_URL}/api/processes/${selectedProcess.id}/tracking`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ enabled: !trackingEnabled, user_id: user?.id }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) { notify(data?.error || 'Erro ao alterar o link.', 'error'); return; }
+                        setSelectedProcess({ ...selectedProcess, tracking_enabled: data.tracking_enabled });
+                        notify(data.tracking_enabled ? 'Link de acompanhamento ativado.' : 'Link de acompanhamento desativado.', 'success');
+                        fetchProcesses();
+                      } catch { notify('Erro de conexão.', 'error'); } finally { setTogglingTracking(false); }
+                    };
                     return (
                       <div className="mt-6 pt-6 border-t border-[var(--border-color)]">
                         <p className="text-[10px] text-[var(--text-muted)] uppercase font-black tracking-widest mb-3 flex items-center gap-1.5">
                           <LinkIcon size={10} /> Link de Acompanhamento do Cliente
+                          <span className={`ml-2 px-2 py-0.5 rounded-full text-[9px] ${trackingEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                            {trackingEnabled ? 'Ativo' : 'Desativado'}
+                          </span>
                         </p>
-                        <div className="flex items-center gap-2 p-3 bg-[var(--bg-input)]/60 border border-[var(--border-color)] rounded-2xl">
+                        <div className={`flex items-center gap-2 p-3 bg-[var(--bg-input)]/60 border border-[var(--border-color)] rounded-2xl ${trackingEnabled ? '' : 'opacity-60'}`}>
                           <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="flex-1 text-xs text-emerald-400 font-bold break-all hover:text-emerald-300 transition-colors underline cursor-pointer">{trackingUrl}</a>
                           <button
                             onClick={() => {
@@ -8060,6 +8082,13 @@ export default function App() {
                             className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-all"
                           >
                             <Copy size={13} /> Copiar
+                          </button>
+                          <button
+                            onClick={toggleTracking}
+                            disabled={togglingTracking}
+                            className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-black border transition-all disabled:opacity-50 ${trackingEnabled ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'}`}
+                          >
+                            {togglingTracking ? 'Salvando...' : trackingEnabled ? 'Desativar' : 'Ativar'}
                           </button>
                         </div>
                       </div>

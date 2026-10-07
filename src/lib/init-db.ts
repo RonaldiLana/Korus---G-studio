@@ -154,6 +154,7 @@ async function applyMigrations() {
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS process_type VARCHAR(20) DEFAULT 'normal'`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS tracking_token VARCHAR(64)`,
     `ALTER TABLE processes ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE processes ADD COLUMN IF NOT EXISTS tracking_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_processes_tracking_token ON processes(tracking_token) WHERE tracking_token IS NOT NULL`,
 
     // ─── Módulo Cadastro de Clientes ───────────────────────────────────────────
@@ -325,6 +326,14 @@ async function applyMigrations() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE INDEX IF NOT EXISTS idx_training_folders_agency ON training_folders (agency_id)`,
+    // Chave pública não enumerável para /api/files/:key
+    `ALTER TABLE files ADD COLUMN IF NOT EXISTS access_key TEXT`,
+    `UPDATE files SET access_key = md5(random()::text || id::text) || md5(random()::text || clock_timestamp()::text) WHERE access_key IS NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_files_access_key ON files (access_key)`,
+    `UPDATE training_materials t SET file_url = regexp_replace(t.file_url, '/api/files/[0-9]+$', '/api/files/' || f.access_key) FROM files f WHERE t.file_url ~ '/api/files/[0-9]+$' AND f.id = substring(t.file_url from '/api/files/([0-9]+)$')::int`,
+    `UPDATE documents d SET url = regexp_replace(d.url, '/api/files/[0-9]+$', '/api/files/' || f.access_key) FROM files f WHERE d.url ~ '/api/files/[0-9]+$' AND f.id = substring(d.url from '/api/files/([0-9]+)$')::int`,
+    `UPDATE financials x SET proof_url = regexp_replace(x.proof_url, '/api/files/[0-9]+$', '/api/files/' || f.access_key) FROM files f WHERE x.proof_url ~ '/api/files/[0-9]+$' AND f.id = substring(x.proof_url from '/api/files/([0-9]+)$')::int`,
+    `UPDATE contract_templates c SET file_url = regexp_replace(c.file_url, '/api/files/[0-9]+$', '/api/files/' || f.access_key) FROM files f WHERE c.file_url ~ '/api/files/[0-9]+$' AND f.id = substring(c.file_url from '/api/files/([0-9]+)$')::int`,
     `CREATE INDEX IF NOT EXISTS idx_training_materials_agency ON training_materials (agency_id)`,
     `CREATE INDEX IF NOT EXISTS idx_training_materials_folder ON training_materials (folder_id)`,
   ];

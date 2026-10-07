@@ -5,6 +5,7 @@ import "dotenv/config";
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'crypto';
 import { Client } from 'pg';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,11 +57,12 @@ try {
       const agencyId = table === 'training_materials'
         ? (await client.query('SELECT agency_id FROM training_materials WHERE id = $1', [row.id])).rows[0]?.agency_id
         : null;
-      const file = await client.query(
-        `INSERT INTO files (agency_id, original_name, mime_type, size, data) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [agencyId, path.basename(localPath), mimeByExt[ext] || 'application/octet-stream', data.length, data]
+      const accessKey = randomBytes(24).toString('hex');
+      await client.query(
+        `INSERT INTO files (agency_id, original_name, mime_type, size, data, access_key) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [agencyId, path.basename(localPath), mimeByExt[ext] || 'application/octet-stream', data.length, data, accessKey]
       );
-      const newUrl = `${relative ? '' : backendUrl}/api/files/${file.rows[0].id}`;
+      const newUrl = `${relative ? '' : backendUrl}/api/files/${accessKey}`;
       await client.query(`UPDATE ${table} SET ${column} = $1 WHERE id = $2`, [newUrl, row.id]);
       imported++;
     }

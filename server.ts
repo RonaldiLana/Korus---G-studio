@@ -16,21 +16,36 @@ const __dirname = path.dirname(__filename);
 // const BACKEND_URL_OLD = 'https://korus-backend-a55k.onrender.com'; // domínio antigo (Render)
 const BACKEND_URL = (process.env.BACKEND_URL || 'https://api.korus.me').replace(/\/$/, '');
 
-// Ensure uploads directory exists
+// Diretório legado: o disco do Render é efêmero, só serve arquivos antigos que ainda existam
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
+// Uploads ficam em memória e são persistidos na tabela `files` (Postgres)
+const storage = multer.memoryStorage();
+
+async function saveFile(file: Express.Multer.File, agencyId?: number | string | null): Promise<number> {
+  const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  const result = await query(
+    `INSERT INTO files (agency_id, original_name, mime_type, size, data) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [agencyId ? Number(agencyId) : null, originalName, file.mimetype || 'application/octet-stream', file.size, file.buffer]
+  );
+  return result.rows[0].id;
+}
+
+async function deleteStoredFile(fileUrl: string | null | undefined) {
+  const match = fileUrl?.match(/\/api\/files\/(\d+)/);
+  if (match) {
+    await query('DELETE FROM files WHERE id = $1', [Number(match[1])]);
+    return;
+  }
+  // Legado: arquivo em disco
+  if (fileUrl?.startsWith('/uploads/')) {
+    const legacyPath = path.join(uploadsDir, fileUrl.replace(/^\/uploads\//, ''));
+    if (legacyPath.startsWith(uploadsDir) && fs.existsSync(legacyPath)) fs.unlinkSync(legacyPath);
+  }
+}
 
 const upload = multer({
   storage,
@@ -45,44 +60,8 @@ const upload = multer({
   },
 });
 
-// Multer específico para treinamento que salva com agency_id no caminho
-const trainingStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const agencyId = req.body.agency_id;
-    const reqId = `[${Date.now()}]`;
-    
-    if (!agencyId) {
-      console.error(`${reqId} [TRAINING UPLOAD] agency_id é obrigatório`);
-      return cb(new Error('agency_id é obrigatório no body'));
-    }
-    
-    const trainingDir = path.join(uploadsDir, 'training', String(agencyId));
-    try {
-      // Garantir que o diretório pai também existe
-      const parentDir = path.join(uploadsDir, 'training');
-      if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true });
-        console.log(`${reqId} [TRAINING UPLOAD] Diretório pai criado: ${parentDir}`);
-      }
-      
-      fs.mkdirSync(trainingDir, { recursive: true });
-      console.log(`${reqId} [TRAINING UPLOAD] Diretório criado/garantido: ${trainingDir}`);
-      cb(null, trainingDir);
-    } catch (err: any) {
-      console.error(`${reqId} [TRAINING UPLOAD] Erro ao criar diretório ${trainingDir}:`, err.message);
-      cb(err);
-    }
-  },
-  filename: (req, file, cb) => {
-    const reqId = `[${Date.now()}]`;
-    const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${path.extname(file.originalname)}`;
-    console.log(`${reqId} [TRAINING UPLOAD] Nome do arquivo gerado: ${uniqueName}`);
-    cb(null, uniqueName);
-  },
-});
-
 const trainingUpload = multer({
-  storage: trainingStorage,
+  storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB para PDFs
   fileFilter: (_req, file, cb) => {
     const reqId = `[${Date.now()}]`;
@@ -628,7 +607,26 @@ async function startServer() {
   console.log(`[UPLOADS] Exists: ${fs.existsSync(uploadsDir)}`);
   console.log(`[UPLOADS] Is Directory: ${fs.existsSync(uploadsDir) ? fs.statSync(uploadsDir).isDirectory() : false}`);
   
-  // Middleware para servir arquivos de upload
+  // Arquivos persistidos no Postgres
+  app.get("/api/files/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
+      const result = await query('SELECT original_name, mime_type, data FROM files WHERE id = $1', [id]);
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Arquivo não encontrado' });
+      const { original_name, mime_type, data } = result.rows[0];
+      res.setHeader('Content-Type', mime_type);
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(original_name)}`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.send(data);
+    } catch (err: any) {
+      console.error('[FILES] read error:', err);
+      return res.status(500).json({ error: 'Erro ao ler arquivo' });
+    }
+  });
+
+  // Middleware para servir arquivos de upload (legado)
   app.use("/uploads", (req, res, next) => {
     const fullPath = path.join(uploadsDir, req.path);
     console.log(`[UPLOADS] GET ${req.path}`);
@@ -669,7 +667,7 @@ async function startServer() {
       }
 
       // Read file buffer and convert to BLOB
-      const fileBuffer = req.file.buffer || fs.readFileSync(req.file.path);
+      const fileBuffer = req.file.buffer;
       const mimetype = req.file.mimetype;
 
       // Save logo BLOB to database
@@ -961,15 +959,8 @@ async function startServer() {
       }
       console.log(`${reqId} [TRAINING] Pasta encontrada: ${folderCheck.rows[0].name} (ativa: ${folderCheck.rows[0].is_active})`);
 
-      // Validar que o arquivo foi salvo
-      if (!file.path || !fs.existsSync(file.path)) {
-        console.error(`${reqId} [TRAINING] Arquivo não foi salvo no disco: ${file.path}`);
-        return res.status(500).json({ error: 'Erro ao salvar arquivo no servidor' });
-      }
-      console.log(`${reqId} [TRAINING] Arquivo salvo com sucesso: ${file.path} (${file.size} bytes)`);
-
-      // Preparar dados para inserir no banco
-      const fileUrl = `/uploads/training/${agency_id}/${file.filename}`;
+      const fileId = await saveFile(file, agency_id);
+      const fileUrl = `/api/files/${fileId}`;
       const rolesValue = available_for_roles 
         ? (typeof available_for_roles === 'string' ? available_for_roles : JSON.stringify(available_for_roles))
         : JSON.stringify(['supervisor', 'gerente_financeiro', 'consultant', 'analyst']);
@@ -1031,9 +1022,7 @@ async function startServer() {
       if (existing.rows.length === 0) return res.status(404).json({ error: 'Material não encontrado' });
       if (agencyId && Number(existing.rows[0].agency_id) !== Number(agencyId)) return res.status(403).json({ error: 'Material não pertence à agência informada' });
 
-      const filePath = path.join(__dirname, existing.rows[0].file_url.replace(/^\//, ''));
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
+      await deleteStoredFile(existing.rows[0].file_url);
       await query('DELETE FROM training_materials WHERE id = $1', [materialId]);
       return res.json({ success: true });
     } catch (err: any) {
@@ -1214,8 +1203,8 @@ async function startServer() {
       // documentos do processo para não competir com o limite de 3 do fluxo normal)
       if (files.length > 0) {
         for (const file of files) {
-          const url = `${BACKEND_URL}/uploads/${file.filename}`;
           try {
+            const url = `${BACKEND_URL}/api/files/${await saveFile(file, agency_id)}`;
             await query(
               "INSERT INTO documents (process_id, name, url, status, category) VALUES ($1, $2, $3, 'uploaded', 'cadastral')",
               [processId, file.originalname, url]
@@ -2383,9 +2372,9 @@ async function startServer() {
   app.post("/api/financials/confirm-proof", upload.single('file'), async (req, res) => {
     const { process_id } = req.body;
     const file = req.file;
-    const proof_url = file ? `${BACKEND_URL}/uploads/${file.filename}` : null;
 
     try {
+      const proof_url = file ? `${BACKEND_URL}/api/files/${await saveFile(file)}` : null;
       await query("UPDATE financials SET status = 'proof_received', proof_url = $1 WHERE process_id = $2", [proof_url, process_id]);
       res.json({ success: true, proof_url });
     } catch (e) {
@@ -2458,7 +2447,6 @@ async function startServer() {
   app.post("/api/documents", upload.single('file'), async (req, res) => {
     const { process_id, name } = req.body;
     const file = req.file;
-    const url = file ? `${BACKEND_URL}/uploads/${file.filename}` : null;
 
     try {
       // Verificar limite de 3 documentos por processo (não conta documentos cadastrais da abertura simplificada)
@@ -2468,6 +2456,7 @@ async function startServer() {
         return res.status(400).json({ error: "Limite de 3 documentos por processo atingido." });
       }
 
+      const url = file ? `${BACKEND_URL}/api/files/${await saveFile(file)}` : null;
       const result = await query("INSERT INTO documents (process_id, name, url, status) VALUES ($1, $2, $3, 'uploaded') RETURNING id", [process_id, name, url]);
       res.json({ id: result.rows[0].id, url });
     } catch (e) {
@@ -2498,7 +2487,6 @@ async function startServer() {
       }
 
       const processId = procResult.rows[0].id;
-      const url = `${BACKEND_URL}/uploads/${file.filename}`;
 
       // Verificar limite de 5 documentos (cliente pode enviar mais que agência), não conta documentos cadastrais
       const countResult = await query(
@@ -2509,6 +2497,8 @@ async function startServer() {
       if (docCount >= 5) {
         return res.status(400).json({ error: "Limite de 5 documentos por processo atingido." });
       }
+
+      const url = `${BACKEND_URL}/api/files/${await saveFile(file)}`;
 
       // Inserir documento com status 'pending' (aguardando revisão da agência)
       const result = await query(
@@ -5283,7 +5273,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Arquivo PDF é obrigatório' });
       }
 
-      const fileUrl = `${BACKEND_URL}/uploads/${req.file.filename}`;
+      const fileUrl = `${BACKEND_URL}/api/files/${await saveFile(req.file, req.body?.agency_id)}`;
       res.json({ success: true, file_url: fileUrl, file_name: req.file.originalname });
     } catch (err: any) {
       console.error('[CONTRACT UPLOAD]', err);

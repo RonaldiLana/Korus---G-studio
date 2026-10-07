@@ -315,6 +315,15 @@ async function applyMigrations() {
       available_for_roles TEXT DEFAULT '[]',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
+    `CREATE TABLE IF NOT EXISTS files (
+      id SERIAL PRIMARY KEY,
+      agency_id INTEGER REFERENCES agencies(id) ON DELETE SET NULL,
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      data BYTEA NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE INDEX IF NOT EXISTS idx_training_folders_agency ON training_folders (agency_id)`,
     `CREATE INDEX IF NOT EXISTS idx_training_materials_agency ON training_materials (agency_id)`,
     `CREATE INDEX IF NOT EXISTS idx_training_materials_folder ON training_materials (folder_id)`,

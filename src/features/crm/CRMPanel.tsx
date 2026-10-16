@@ -51,7 +51,7 @@ export const CRMPanel: React.FC<CRMPanelProps> = ({
   };
 
   return (
-    <div className="flex min-w-0 flex-col h-full bg-[var(--bg-main)]">
+    <div className="flex h-[calc(100dvh-13rem)] min-h-[680px] min-w-0 flex-col overflow-hidden rounded-3xl border border-[var(--border-color)] bg-[var(--bg-main)]">
       {/* Tab bar */}
       <div className="border-b border-[var(--border-color)] bg-[var(--bg-card)]/30 px-3 sm:px-6">
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">

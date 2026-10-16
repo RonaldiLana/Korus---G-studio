@@ -43,6 +43,30 @@ body {
   box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
 }
 
+/* Barras de rolagem discretas do quadro Kanban */
+.kanban-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(113, 113, 122, 0.5) transparent;
+}
+
+.kanban-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 10px;
+}
+
+.kanban-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kanban-scroll::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.45);
+  border-radius: 999px;
+}
+
+.kanban-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.7);
+}
+
 /* Calendar icon visibility for date inputs */
 input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(1) brightness(0.8);

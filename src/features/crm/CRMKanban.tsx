@@ -175,15 +175,15 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-main)]">
+    <div className="flex min-w-0 flex-col h-full bg-[var(--bg-main)]">
       {/* Header */}
-      <div className="p-6 flex flex-col gap-4 border-b border-[var(--border-color)] bg-[var(--bg-card)]/30">
+      <div className="flex flex-col gap-4 border-b border-[var(--border-color)] bg-[var(--bg-card)]/30 p-3 sm:p-4 lg:p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-10 h-10 brand-gradient rounded-xl flex items-center justify-center shadow-lg">
               <TrendingUp className="text-black" size={20} />
             </div>
-            <div>
+            <div className="min-w-0">
               <h2 className="text-xl font-black uppercase tracking-tighter">Pipeline CRM</h2>
               <p className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest">
                 {filtered.length} processo{filtered.length !== 1 ? 's' : ''}
@@ -192,12 +192,12 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative">
+            <div className="relative min-w-0 flex-1 sm:flex-none">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={16} />
               <input
                 type="text"
                 placeholder="Buscar processo..."
-                className="pl-11 pr-4 py-2.5 bg-[var(--bg-input)] border border-[var(--border-color)] rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all text-sm w-56"
+                className="w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-input)] py-2.5 pl-11 pr-4 text-sm outline-none transition-all focus:ring-2 focus:ring-emerald-500/50 sm:w-56"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -292,15 +292,18 @@ export const CRMKanban: React.FC<CRMKanbanProps> = ({
       </div>
 
       {/* Kanban Board */}
-      <div className="flex-1 overflow-x-auto p-6 scrollbar-hide">
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden p-3 scrollbar-hide sm:p-4 lg:p-6">
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-6 h-full min-w-max">
+          <div
+            className="grid h-full min-w-[1128px] gap-3 sm:gap-4 xl:min-w-0"
+            style={{ gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))` }}
+          >
             {COLUMNS.map((column) => {
               const columnProcesses = filtered.filter((p) => p.status === column.id);
               return (
                 <div
                   key={column.id}
-                  className="flex flex-col w-80 bg-[var(--bg-card)]/20 rounded-3xl border border-[var(--border-color)] overflow-hidden"
+                  className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-[var(--border-color)] bg-[var(--bg-card)]/20"
                 >
                   <div className="p-4 flex items-center justify-between border-b border-[var(--border-color)] bg-white/5">
                     <div className="flex items-center gap-2">

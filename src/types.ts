@@ -40,7 +40,12 @@ export interface ClientOverview {
   name: string;
   email: string;
   phone?: string | null;
+  city?: string | null;
+  state?: string | null;
   created_at: string;
+  processes_total?: number;
+  forms_total?: number;
+  forms_submitted?: number;
   process_id?: number | null;
   process_status?: Process['status'] | null;
   process_internal_status?: Process['internal_status'] | null;
@@ -51,6 +56,77 @@ export interface ClientOverview {
   latest_form_title?: string | null;
   latest_form_status?: FormResponse['status'] | null;
   latest_form_updated_at?: string | null;
+}
+
+export interface ClientProfileAnswer {
+  key?: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+  options?: string[];
+  value: any;
+}
+
+export interface ClientProfileForm {
+  response_id: number;
+  form_id: number;
+  title: string;
+  status: FormResponse['status'] | string;
+  updated_at: string | null;
+  progress: number;
+  answers: ClientProfileAnswer[];
+}
+
+export interface ClientProfileDependent {
+  name: string;
+  relationship?: string | null;
+  birth_date?: string | null;
+  age?: number | null;
+  passport?: string | null;
+}
+
+export interface ClientProfileProcess {
+  id: number;
+  status: Process['status'];
+  internal_status: Process['internal_status'];
+  process_type?: 'normal' | 'simplified' | null;
+  travel_date?: string | null;
+  created_at: string;
+  finished_at?: string | null;
+  visa_name?: string | null;
+  destination_name?: string | null;
+  plan_name?: string | null;
+  consultant_name?: string | null;
+  analyst_name?: string | null;
+  financial: { amount: number; status: string } | null;
+  pre_form: ClientProfileAnswer[];
+  simplified_answers: ClientProfileAnswer[];
+  dependents: ClientProfileDependent[];
+  forms: ClientProfileForm[];
+  documents: Array<{
+    id: number;
+    process_id: number;
+    name: string;
+    url: string;
+    status: Document['status'];
+    category?: string | null;
+    rejection_reason?: string | null;
+    uploaded_at: string;
+  }>;
+}
+
+export interface ClientProfile {
+  client: {
+    id: number;
+    name: string;
+    email: string;
+    phone?: string | null;
+    city?: string | null;
+    state?: string | null;
+    agency_id: number | null;
+    created_at: string;
+  };
+  processes: ClientProfileProcess[];
 }
 
 export interface Agency {

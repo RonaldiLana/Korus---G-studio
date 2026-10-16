@@ -3768,10 +3768,20 @@ async function startServer() {
 
       const sql = `
         WITH scoped_clients AS (
-          SELECT u.id, u.name, u.email, u.phone, u.created_at
+          SELECT u.id, u.name, u.email, u.phone, u.city, u.state, u.created_at
           FROM users u
           WHERE u.role = 'client'
           ${agencyFilter}
+        ),
+        client_stats AS (
+          SELECT
+            p.client_id,
+            COUNT(DISTINCT p.id)::int AS processes_total,
+            COUNT(fr.id) FILTER (WHERE fr.form_id IS NOT NULL)::int AS forms_total,
+            COUNT(fr.id) FILTER (WHERE fr.form_id IS NOT NULL AND fr.status IN ('submitted', 'locked'))::int AS forms_submitted
+          FROM processes p
+          LEFT JOIN form_responses fr ON fr.process_id = p.id
+          GROUP BY p.client_id
         ),
         latest_active_process AS (
           SELECT
@@ -3810,7 +3820,12 @@ async function startServer() {
           c.name,
           c.email,
           c.phone,
+          c.city,
+          c.state,
           c.created_at,
+          COALESCE(cs.processes_total, 0) AS processes_total,
+          COALESCE(cs.forms_total, 0) AS forms_total,
+          COALESCE(cs.forms_submitted, 0) AS forms_submitted,
           p.id AS process_id,
           p.status AS process_status,
           p.internal_status AS process_internal_status,
@@ -3822,6 +3837,8 @@ async function startServer() {
           fr.response_status AS latest_form_status,
           fr.updated_at AS latest_form_updated_at
         FROM scoped_clients c
+        LEFT JOIN client_stats cs
+          ON cs.client_id = c.id
         LEFT JOIN latest_active_process p
           ON p.client_id = c.id AND p.rn = 1
         LEFT JOIN visa_types vt
@@ -3837,6 +3854,443 @@ async function startServer() {
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  const PRE_FORM_LABELS: Record<string, string> = {
+    fullName: "Nome completo", phone: "Telefone", email: "E-mail", city: "Cidade",
+    hasPassport: "Possui passaporte", hasVisaDenied: "Visto negado anteriormente",
+    travelDate: "Data da viagem", travelParty: "Companhia de viagem",
+    travelGoal: "Objetivo da viagem", dependentLevel: "Tipo de processo",
+  };
+  const PRE_FORM_TYPES: Record<string, string> = {
+    email: "email", phone: "phone", travelDate: "date", hasPassport: "boolean", hasVisaDenied: "boolean",
+  };
+
+  // Valida sessão (master/supervisor) e isolamento por agência antes de qualquer edição de cliente
+  async function loadEditableClient(req: any, res: any, clientId: number) {
+    if (!req.auth) { res.status(401).json({ error: "Sessão inválida ou expirada" }); return null; }
+    if (!["master", "supervisor"].includes(req.auth.role)) { res.status(403).json({ error: "Acesso negado" }); return null; }
+    if (!Number.isInteger(clientId) || clientId <= 0) { res.status(400).json({ error: "ID de cliente inválido" }); return null; }
+    const found = await query("SELECT id, name, email, agency_id FROM users WHERE id = $1 AND role = 'client'", [clientId]);
+    const client = found.rows[0];
+    if (!client) { res.status(404).json({ error: "Cliente não encontrado" }); return null; }
+    if (req.auth.role !== "master" && client.agency_id !== req.auth.agency_id) {
+      res.status(403).json({ error: "Acesso negado a outra agência" });
+      return null;
+    }
+    return client;
+  }
+
+  // Aceita apenas valores simples (texto, número, booleano ou vazio) e limita o tamanho
+  function cleanEditValue(value: unknown): string | number | boolean | null | undefined {
+    if (value === null) return null;
+    if (typeof value === "boolean" || typeof value === "number") return value;
+    if (typeof value === "string") return value.trim().substring(0, 2000);
+    return undefined;
+  }
+
+  async function auditClientEdit(req: any, agencyId: number | null, details: string) {
+    try {
+      await query(
+        "INSERT INTO audit_logs (agency_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+        [agencyId, req.auth?.sub ?? null, "client_profile_edited", details]
+      );
+    } catch (_) {}
+  }
+
+  // Ficha consolidada do cliente: dados cadastrais + tudo que foi preenchido em cada processo
+  app.get("/api/client-profile/:id", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      if (!Number.isInteger(clientId) || clientId <= 0) {
+        return res.status(400).json({ error: "ID de cliente inválido" });
+      }
+      if (req.auth && !["master", "supervisor"].includes(req.auth.role)) {
+        return res.status(403).json({ error: "Acesso negado" });
+      }
+
+      const clientResult = await query(
+        "SELECT id, name, email, phone, city, state, agency_id, created_at FROM users WHERE id = $1 AND role = 'client'",
+        [clientId]
+      );
+      const client = clientResult.rows[0];
+      if (!client) return res.status(404).json({ error: "Cliente não encontrado" });
+      if (req.auth && req.auth.role !== "master" && client.agency_id !== req.auth.agency_id) {
+        return res.status(403).json({ error: "Acesso negado a outra agência" });
+      }
+
+      const parseJson = (raw: any, fallback: any) => {
+        if (raw === null || raw === undefined || raw === "") return fallback;
+        if (typeof raw !== "string") return raw;
+        try { return JSON.parse(raw); } catch { return fallback; }
+      };
+
+      const processesResult = await query(
+        `SELECT
+           p.id, p.status, p.internal_status, p.process_type, p.travel_date,
+           p.created_at, p.finished_at, p.pre_form_data, p.simplified_process_answers,
+           v.name AS visa_name, d.name AS destination_name, pl.name AS plan_name,
+           cu.name AS consultant_name, an.name AS analyst_name
+         FROM processes p
+         LEFT JOIN visa_types v ON v.id = p.visa_type_id
+         LEFT JOIN destinations d ON d.id = p.destination_id
+         LEFT JOIN plans pl ON pl.id = p.plan_id
+         LEFT JOIN users cu ON cu.id = p.consultant_id
+         LEFT JOIN users an ON an.id = p.analyst_id
+         WHERE p.client_id = $1
+         ORDER BY p.created_at DESC, p.id DESC`,
+        [clientId]
+      );
+      const processRows = processesResult.rows;
+      const processIds: number[] = processRows.map((p: any) => p.id);
+
+      let formRows: any[] = [];
+      let documentRows: any[] = [];
+      let dependentRows: any[] = [];
+      let financialRows: any[] = [];
+      const dynamicMeta = new Map<string, { label: string; type: string; options: string[] }>();
+
+      if (processIds.length > 0) {
+        formRows = (await query(
+          `SELECT fr.id, fr.process_id, fr.form_id, fr.data, fr.status, fr.updated_at,
+                  f.title AS form_title, f.fields AS form_fields
+           FROM form_responses fr
+           LEFT JOIN forms f ON f.id = fr.form_id
+           WHERE fr.process_id = ANY($1::int[]) AND fr.form_id IS NOT NULL
+           ORDER BY fr.updated_at DESC NULLS LAST, fr.id DESC`,
+          [processIds]
+        )).rows;
+        documentRows = (await query(
+          `SELECT id, process_id, name, url, status, category, rejection_reason, uploaded_at
+           FROM documents WHERE process_id = ANY($1::int[]) ORDER BY uploaded_at DESC`,
+          [processIds]
+        )).rows;
+        dependentRows = (await query(
+          "SELECT * FROM dependents WHERE process_id = ANY($1::int[]) ORDER BY id ASC",
+          [processIds]
+        )).rows;
+        financialRows = (await query(
+          "SELECT process_id, amount, status FROM financials WHERE process_id = ANY($1::int[])",
+          [processIds]
+        )).rows;
+
+        // Respostas dos campos configurados pela agência guardam apenas o id do campo; resolve o rótulo e o tipo
+        const dynamicIds = new Set<number>();
+        for (const p of processRows) {
+          const pre = parseJson(p.pre_form_data, {});
+          if (!pre || typeof pre !== "object" || Array.isArray(pre)) continue;
+          // Formato gravado pelo fluxo do cliente: ids numéricos direto na raiz do objeto
+          Object.keys(pre).forEach((k) => { if (/^\d+$/.test(k)) dynamicIds.add(Number(k)); });
+          // Formato aninhado (compatibilidade)
+          if (pre.dynamicResponses && typeof pre.dynamicResponses === "object") {
+            Object.keys(pre.dynamicResponses).forEach((k) => { if (/^\d+$/.test(k)) dynamicIds.add(Number(k)); });
+          }
+        }
+        if (dynamicIds.size > 0) {
+          const labels = await query(
+            "SELECT id, label, type, options FROM form_fields WHERE id = ANY($1::int[]) AND agency_id = $2",
+            [Array.from(dynamicIds), client.agency_id]
+          );
+          labels.rows.forEach((r: any) => {
+            const options = parseJson(r.options, []);
+            dynamicMeta.set(String(r.id), { label: r.label, type: r.type || "text", options: Array.isArray(options) ? options : [] });
+          });
+        }
+      }
+
+      const buildAnswers = (fields: any[], data: Record<string, any>) => {
+        const used = new Set<string>();
+        const answers = fields.map((f: any) => {
+          const key = String(f.id !== undefined ? f.id : f.label);
+          used.add(key);
+          return {
+            key,
+            label: f.label,
+            type: f.type || "text",
+            required: !!f.required,
+            options: Array.isArray(f.options) ? f.options : [],
+            value: data[key] ?? null,
+          };
+        });
+        // Respostas de campos que foram removidos do formulário continuam preservadas
+        Object.entries(data).forEach(([key, value]) => {
+          if (used.has(key)) return;
+          answers.push({
+            key,
+            label: /^\d+$/.test(key) ? `Campo removido #${key}` : key,
+            type: "text",
+            required: false,
+            options: [],
+            value: value ?? null,
+          });
+        });
+        return answers;
+      };
+
+      const profileProcesses = processRows.map((p: any) => {
+        const preData = parseJson(p.pre_form_data, {});
+        const preForm: Array<{ key: string; label: string; type: string; options: string[]; value: any }> = [];
+        if (preData && typeof preData === "object" && !Array.isArray(preData)) {
+          Object.entries(preData).forEach(([key, value]) => {
+            if (PRE_FORM_LABELS[key]) {
+              preForm.push({ key, label: PRE_FORM_LABELS[key], type: PRE_FORM_TYPES[key] || "text", options: [], value });
+            } else if (/^\d+$/.test(key)) {
+              const meta = dynamicMeta.get(key);
+              preForm.push({ key, label: meta?.label || `Campo #${key}`, type: meta?.type || "text", options: meta?.options || [], value });
+            }
+          });
+          if (preData.dynamicResponses && typeof preData.dynamicResponses === "object") {
+            Object.entries(preData.dynamicResponses).forEach(([fieldId, value]) => {
+              const meta = dynamicMeta.get(fieldId);
+              preForm.push({
+                key: `dynamicResponses.${fieldId}`,
+                label: meta?.label || `Campo #${fieldId}`,
+                type: meta?.type || "text",
+                options: meta?.options || [],
+                value,
+              });
+            });
+          }
+        }
+
+        const simplified = parseJson(p.simplified_process_answers, []);
+        const simplifiedAnswers = Array.isArray(simplified)
+          ? simplified.filter((a: any) => a && a.type !== "file").map((a: any) => ({ label: a.label, type: a.type, value: a.value ?? null }))
+          : [];
+
+        const seenForms = new Set<number>();
+        const forms = formRows
+          .filter((fr: any) => fr.process_id === p.id)
+          .filter((fr: any) => (seenForms.has(fr.form_id) ? false : (seenForms.add(fr.form_id), true)))
+          .map((fr: any) => {
+            const fields = parseJson(fr.form_fields, []);
+            const data = parseJson(fr.data, {});
+            const answers = buildAnswers(Array.isArray(fields) ? fields : [], data && typeof data === "object" && !Array.isArray(data) ? data : {});
+            const required = answers.filter((a) => a.required);
+            const filledRequired = required.filter((a) => a.value !== null && String(a.value).trim() !== "");
+            return {
+              response_id: fr.id,
+              form_id: fr.form_id,
+              title: fr.form_title || "Formulário",
+              status: fr.status,
+              updated_at: fr.updated_at,
+              progress: required.length > 0
+                ? Math.round((filledRequired.length / required.length) * 100)
+                : (answers.some((a) => a.value !== null && String(a.value).trim() !== "") ? 100 : 0),
+              answers,
+            };
+          });
+
+        let dependents = dependentRows
+          .filter((d: any) => d.process_id === p.id)
+          .map((d: any) => ({
+            name: d.name, relationship: d.relationship ?? null,
+            birth_date: d.birth_date ?? null, age: d.age ?? null, passport: d.passport ?? null,
+          }));
+        if (dependents.length === 0 && Array.isArray(preData?.dependents)) {
+          dependents = preData.dependents
+            .filter((d: any) => d && d.name)
+            .map((d: any) => ({
+              name: d.name, relationship: d.relationship ?? null,
+              birth_date: d.birth_date ?? d.birthDate ?? null, age: d.age ?? null, passport: d.passport ?? null,
+            }));
+        }
+
+        const financial = financialRows.find((f: any) => f.process_id === p.id);
+
+        return {
+          id: p.id,
+          status: p.status,
+          internal_status: p.internal_status,
+          process_type: p.process_type,
+          travel_date: p.travel_date,
+          created_at: p.created_at,
+          finished_at: p.finished_at,
+          visa_name: p.visa_name,
+          destination_name: p.destination_name,
+          plan_name: p.plan_name,
+          consultant_name: p.consultant_name,
+          analyst_name: p.analyst_name,
+          financial: financial ? { amount: Number(financial.amount) || 0, status: financial.status } : null,
+          pre_form: preForm,
+          simplified_answers: simplifiedAnswers,
+          dependents,
+          forms,
+          documents: documentRows.filter((d: any) => d.process_id === p.id),
+        };
+      });
+
+      res.json({ client, processes: profileProcesses });
+    } catch (err: any) {
+      console.error("[CLIENT PROFILE]", err);
+      res.status(500).json({ error: "Erro ao carregar a ficha do cliente" });
+    }
+  });
+
+  // Corrige dados cadastrais do cliente (nome, e-mail, telefone, cidade, estado)
+  app.patch("/api/client-profile/:id", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const client = await loadEditableClient(req, res, clientId);
+      if (!client) return;
+
+      const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().substring(0, max) : undefined);
+      const name = req.body.name !== undefined ? text(req.body.name, 200) : undefined;
+      const email = req.body.email !== undefined ? text(req.body.email, 200)?.toLowerCase() : undefined;
+      const phone = req.body.phone !== undefined ? text(req.body.phone, 40) : undefined;
+      const city = req.body.city !== undefined ? text(req.body.city, 120) : undefined;
+      const state = req.body.state !== undefined ? text(req.body.state, 60) : undefined;
+
+      if (name !== undefined && name === "") return res.status(400).json({ error: "O nome é obrigatório" });
+      if (email !== undefined) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Informe um e-mail válido" });
+        const dup = await query("SELECT id FROM users WHERE LOWER(email) = $1 AND id <> $2", [email, clientId]);
+        if (dup.rows.length > 0) return res.status(409).json({ error: "Já existe um usuário com este e-mail" });
+      }
+
+      const sets: string[] = [];
+      const values: any[] = [];
+      const add = (column: string, value: string | undefined, emptyToNull = false) => {
+        if (value === undefined) return;
+        values.push(emptyToNull && value === "" ? null : value);
+        sets.push(`${column} = $${values.length}`);
+      };
+      add("name", name);
+      add("email", email);
+      add("phone", phone, true);
+      add("city", city, true);
+      add("state", state, true);
+      if (sets.length === 0) return res.status(400).json({ error: "Nenhum dado para atualizar" });
+
+      values.push(clientId);
+      const updated = await query(
+        `UPDATE users SET ${sets.join(", ")} WHERE id = $${values.length} RETURNING id, name, email, phone, city, state, agency_id, created_at`,
+        values
+      );
+      await auditClientEdit(req, client.agency_id, `Cadastro do cliente #${clientId} (${client.name}) corrigido`);
+      res.json(updated.rows[0]);
+    } catch (err: any) {
+      console.error("[CLIENT PROFILE PATCH]", err);
+      res.status(500).json({ error: "Erro ao atualizar o cadastro do cliente" });
+    }
+  });
+
+  // Corrige respostas do pré-formulário de um processo do cliente
+  app.patch("/api/client-profile/:id/processes/:processId/pre-form", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const client = await loadEditableClient(req, res, clientId);
+      if (!client) return;
+
+      const incoming = req.body?.values;
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+        return res.status(400).json({ error: "Dados inválidos" });
+      }
+
+      const processResult = await query(
+        "SELECT id, pre_form_data FROM processes WHERE id = $1 AND client_id = $2",
+        [Number(req.params.processId), clientId]
+      );
+      const processRow = processResult.rows[0];
+      if (!processRow) return res.status(404).json({ error: "Processo não encontrado" });
+
+      let preData: any = {};
+      try { preData = JSON.parse(processRow.pre_form_data || "{}"); } catch { preData = {}; }
+      if (!preData || typeof preData !== "object" || Array.isArray(preData)) preData = {};
+
+      for (const [key, raw] of Object.entries(incoming)) {
+        const value = cleanEditValue(raw);
+        if (value === undefined) return res.status(400).json({ error: `Valor inválido para "${key}"` });
+        if (PRE_FORM_LABELS[key]) {
+          preData[key] = value;
+        } else if (/^\d+$/.test(key)) {
+          // Campos configurados pela agência ficam na raiz; só edita os que já existem
+          if (!(key in preData)) return res.status(400).json({ error: `Campo não encontrado: ${key}` });
+          preData[key] = value;
+        } else if (/^dynamicResponses\.\d+$/.test(key)) {
+          const fieldId = key.split(".")[1];
+          if (fieldId in preData) {
+            preData[fieldId] = value;
+          } else {
+            if (!preData.dynamicResponses || typeof preData.dynamicResponses !== "object") preData.dynamicResponses = {};
+            preData.dynamicResponses[fieldId] = value;
+          }
+        } else {
+          return res.status(400).json({ error: `Campo não editável: ${key}` });
+        }
+      }
+
+      await query("UPDATE processes SET pre_form_data = $1 WHERE id = $2", [JSON.stringify(preData), processRow.id]);
+      await auditClientEdit(req, client.agency_id, `Pré-formulário do processo #${processRow.id} corrigido pela ficha do cliente #${clientId}`);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[CLIENT PROFILE PRE-FORM PATCH]", err);
+      res.status(500).json({ error: "Erro ao atualizar o pré-formulário" });
+    }
+  });
+
+  // Corrige respostas de um formulário preenchido pelo cliente
+  app.patch("/api/client-profile/:id/forms/:responseId", async (req, res) => {
+    try {
+      const clientId = Number(req.params.id);
+      const client = await loadEditableClient(req, res, clientId);
+      if (!client) return;
+
+      const incoming = req.body?.values;
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+        return res.status(400).json({ error: "Dados inválidos" });
+      }
+
+      const responseResult = await query(
+        `SELECT fr.id, fr.data, fr.status, f.fields AS form_fields
+         FROM form_responses fr
+         JOIN processes p ON p.id = fr.process_id
+         LEFT JOIN forms f ON f.id = fr.form_id
+         WHERE fr.id = $1 AND p.client_id = $2`,
+        [Number(req.params.responseId), clientId]
+      );
+      const response = responseResult.rows[0];
+      if (!response) return res.status(404).json({ error: "Resposta não encontrada" });
+
+      let data: any = {};
+      try { data = JSON.parse(response.data || "{}"); } catch { data = {}; }
+      if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+      let fields: any[] = [];
+      try { fields = JSON.parse(response.form_fields || "[]"); } catch { fields = []; }
+      if (!Array.isArray(fields)) fields = [];
+
+      const knownKeys = new Set<string>([
+        ...fields.map((f: any) => String(f.id !== undefined ? f.id : f.label)),
+        ...Object.keys(data),
+      ]);
+      for (const [key, raw] of Object.entries(incoming)) {
+        const value = cleanEditValue(raw);
+        if (value === undefined) return res.status(400).json({ error: `Valor inválido para "${key}"` });
+        if (!knownKeys.has(key)) return res.status(400).json({ error: `Campo não encontrado no formulário: ${key}` });
+        data[key] = value;
+      }
+
+      const isFilled = (v: any) => v !== undefined && v !== null && String(v).trim() !== "";
+      const required = fields.filter((f: any) => f.required);
+      const filledRequired = required.filter((f: any) => isFilled(data[f.id !== undefined ? f.id : f.label]));
+      const hasAnyData = Object.values(data).some(isFilled);
+      const computed = required.length === filledRequired.length && hasAnyData ? "submitted" : hasAnyData ? "in_progress" : "open";
+      const status = response.status === "locked" ? "locked" : computed;
+
+      await query(
+        "UPDATE form_responses SET data = $1, status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [JSON.stringify(data), status, response.id]
+      );
+      await auditClientEdit(req, client.agency_id, `Respostas do formulário (resposta #${response.id}) corrigidas pela ficha do cliente #${clientId}`);
+      res.json({
+        success: true,
+        status,
+        progress: required.length > 0 ? Math.round((filledRequired.length / required.length) * 100) : (hasAnyData ? 100 : 0),
+      });
+    } catch (err: any) {
+      console.error("[CLIENT PROFILE FORM PATCH]", err);
+      res.status(500).json({ error: "Erro ao atualizar as respostas do formulário" });
     }
   });
 

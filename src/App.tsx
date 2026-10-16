@@ -92,6 +92,7 @@ import { SimplifiedProcessModal } from './features/simplifiedProcess/SimplifiedP
 import { ClientTrackingPage } from './features/simplifiedProcess/ClientTrackingPage';
 import { ProcessPopupPage } from './features/simplifiedProcess/ProcessPopupPage';
 import { ClientsRegistryPanel } from './features/clientsRegistry/ClientsRegistryPanel';
+import { ClientsPanel } from './features/clients/ClientsPanel';
 
 /**
  * Check if user is consultant, supervisor, or master
@@ -5074,148 +5075,28 @@ export default function App() {
           )}
 
           {view === 'leads' && (user?.role === 'master' || user?.role === 'supervisor') && (
-            <motion.div 
+            <motion.div
               key="leads"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="space-y-8"
             >
-              <div className="bg-[var(--bg-card)]/50 rounded-3xl border border-[var(--border-color)] overflow-hidden">
-                <div className="p-6 border-b border-[var(--border-color)] flex justify-between items-center">
-                  <h3 className="font-black text-lg uppercase tracking-tighter">Clientes da Agência</h3>
-                  <p className="text-xs text-[var(--text-muted)] font-bold uppercase tracking-widest">Total: {leads.length}</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] border-b border-[var(--border-color)]">
-                        <th className="px-6 py-4">Cliente</th>
-                        <th className="px-6 py-4">E-mail</th>
-                        <th className="px-6 py-4">Telefone</th>
-                        <th className="px-6 py-4">Data Cadastro</th>
-                        <th className="px-6 py-4">Status Processo</th>
-                        <th className="px-6 py-4">Formulário Atual</th>
-                        <th className="px-6 py-4">Status Interno</th>
-                        <th className="px-6 py-4 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--border-color)]">
-                      {(() => {
-                        const term = clientsSearchTerm.trim().toLowerCase();
-                        const normalize = (s: string) => (s || '').replace(/\D/g, '');
-                        const filteredLeads = term
-                          ? leads.filter(lead =>
-                              (lead.name || '').toLowerCase().includes(term) ||
-                              (lead.email || '').toLowerCase().includes(term) ||
-                              normalize(lead.phone || '').includes(normalize(term))
-                            )
-                          : leads;
-
-                        if (leads.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={8} className="px-6 py-20 text-center">
-                                <Contact className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
-                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente cadastrado.</p>
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        if (filteredLeads.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={8} className="px-6 py-20 text-center">
-                                <Search className="mx-auto text-[var(--text-muted)] opacity-20 mb-4" size={48} />
-                                <p className="text-[var(--text-muted)] font-bold">Nenhum cliente encontrado para <span className="text-emerald-400">"{clientsSearchTerm}"</span>.</p>
-                                <p className="text-[var(--text-muted)] text-xs mt-1">Tente buscar por nome, e-mail ou telefone.</p>
-                              </td>
-                            </tr>
-                          );
-                        }
-
-                        return filteredLeads.map((lead) => (
-                        <tr key={lead.id} className="hover:bg-[var(--bg-input)] transition-colors group">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 brand-gradient rounded-full flex items-center justify-center text-black font-black text-xs">
-                                {(lead?.name || "L").charAt(0).toUpperCase()}
-                              </div>
-                              <span className="font-bold">{lead.name}</span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]">{lead.email}</td>
-                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]" data-testid={`lead-phone-${lead.id}`}>{lead.phone || '-'}</td>
-                          <td className="px-6 py-4 text-sm text-[var(--text-muted)]">
-                            {new Date(lead.created_at).toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4">
-                            {lead.process_status ? (
-                              <StatusBadge status={lead.process_status} />
-                            ) : (
-                              <span className="text-[10px] font-black uppercase tracking-widest text-red-400 bg-red-400/10 px-2 py-1 rounded-md">Não Iniciado</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {lead.latest_form_title ? (
-                              <div>
-                                <p className="text-xs font-bold text-[var(--text-main)] leading-tight">{lead.latest_form_title}</p>
-                                <p className="text-[10px] text-[var(--text-muted)] mt-1">
-                                  {lead.latest_form_updated_at ? new Date(lead.latest_form_updated_at).toLocaleDateString() : '-'}
-                                </p>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">Sem resposta</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)]">
-                              {lead.process_internal_status || '-'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              {!lead.process_id ? (
-                                <button 
-                                  onClick={() => {
-                                    setProcessForm({ ...processForm, client_id: String(lead.id) });
-                                    setEditingProcess(null);
-                                    setShowProcessModal(true);
-                                  }}
-                                  className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
-                                  title="Iniciar Processo"
-                                >
-                                  <Plus size={18} />
-                                </button>
-                              ) : (
-                                <>
-                                  <button 
-                                    onClick={() => {
-                                      if (lead.process_id) openProcessEditById(lead.process_id);
-                                    }}
-                                    className="p-2 hover:bg-blue-500/20 rounded-lg transition-all text-blue-400"
-                                    title="Editar Processo"
-                                  >
-                                    <Pencil size={18} />
-                                  </button>
-                                  <button 
-                                    onClick={() => lead.process_id != null && fetchProcessDetail(lead.process_id as number)}
-                                    className="p-2 hover:bg-emerald-500/20 rounded-lg transition-all text-emerald-400"
-                                    title="Ver Detalhes"
-                                  >
-                                    <ChevronRight size={20} />
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ));
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <ClientsPanel
+                leads={leads}
+                searchTerm={clientsSearchTerm}
+                onSearchChange={setClientsSearchTerm}
+                apiUrl={API_URL}
+                token={token}
+                resolveFileUrl={resolveFileUrl}
+                onStartProcess={(lead) => {
+                  setProcessForm({ ...processForm, client_id: String(lead.id) });
+                  setEditingProcess(null);
+                  setShowProcessModal(true);
+                }}
+                onEditProcess={(processId) => openProcessEditById(processId)}
+                onOpenProcess={(processId) => fetchProcessDetail(processId)}
+                onClientUpdated={fetchLeads}
+                notify={notify}
+              />
             </motion.div>
           )}
 
